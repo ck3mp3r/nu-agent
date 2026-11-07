@@ -21,16 +21,15 @@ use std::sync::Arc;
 use agnt_a2a::{
     A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache, PeerDiscoveryImpl,
 };
-use agnt_core::bus::{AgentEvent, AgentTx, Bus, TurnEvent};
-use agnt_core::config::{PluginConfig, ResolvedHook};
-use agnt_core::conversation::runtime::AgentConversationRuntime;
-use agnt_core::hooks::{
-    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, NuProcess, spawn_agent_hook_runner,
-    spawn_hook_runner,
+use agnt_runtime::bus::{AgentEvent, AgentTx, TurnEvent};
+use agnt_runtime::config::{PluginConfig, ResolvedHook};
+use agnt_runtime::hooks::{
+    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
+    spawn_agent_hook_runner, spawn_hook_runner,
 };
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::session_management::SessionPersistence;
-use agnt_core::utils::value_ext::extract_response_text_from_value;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::session::management::SessionPersistence;
+use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 use nu_protocol::Value;
 use tokio::task::JoinHandle;
 
@@ -99,7 +98,7 @@ pub struct TuiModeOptions {
 /// script joins it.
 pub fn spawn_configured_hooks<P>(
     config: Option<&PluginConfig>,
-    bus: &Bus,
+    sources: HookSources<'_>,
     cwd: &Path,
     config_dir: &Path,
     context: &HookAgentContext,
@@ -113,7 +112,7 @@ where
         return Vec::new();
     }
     log::debug!("Starting {} hook runner(s)", hooks.len());
-    spawn_hook_runner(bus, &hooks, cwd, context, process)
+    spawn_hook_runner(sources, &hooks, cwd, context, process)
 }
 
 /// Resolve the configured hooks, or an empty list when the config is absent or
@@ -128,7 +127,7 @@ fn resolve_hooks_or_empty(config: Option<&PluginConfig>, config_dir: &Path) -> V
     if config.hooks.is_empty() {
         return Vec::new();
     }
-    match agnt_core::config::resolve_hooks(config, config_dir) {
+    match agnt_runtime::config::resolve_hooks(config, config_dir) {
         Ok(hooks) => hooks,
         Err(e) => {
             log::warn!("Failed to resolve hooks: {e}");
@@ -171,12 +170,12 @@ where
 /// Start the configured hooks with the production [`NuProcess`].
 pub fn spawn_configured_hooks_with_nu(
     config: Option<&PluginConfig>,
-    bus: &Bus,
+    sources: HookSources<'_>,
     cwd: &Path,
     config_dir: &Path,
     context: &HookAgentContext,
 ) -> Vec<JoinHandle<()>> {
-    spawn_configured_hooks(config, bus, cwd, config_dir, context, NuProcess)
+    spawn_configured_hooks(config, sources, cwd, config_dir, context, NuProcess)
 }
 
 /// Auto-complete an A2A task based on the LLM execution result.
@@ -240,11 +239,11 @@ pub fn apply_a2a_turn_result(store: &InMemoryTaskStore, task_id: &str, result: &
 /// the path-hash prefix of the runtime's working directory) and attaches that
 /// session, creating it when it does not exist yet. Logs a warning when the
 /// attach fails; the turn still runs against the current session.
-pub async fn attach_a2a_context_session(
-    runtime_impl: &mut AgentConversationRuntime,
+pub async fn attach_a2a_context_session<R: SessionPersistence>(
+    runtime_impl: &mut R,
     context_id: &str,
 ) {
-    let prefix = agnt_core::session::prefix::dir_prefix(runtime_impl.cwd());
+    let prefix = agnt_runtime::session::prefix::dir_prefix(runtime_impl.cwd());
     let key = agnt_a2a::derive_session_key(&prefix, context_id);
     log::info!("A2A context {context_id} -> session {key}");
     if let Err(e) = runtime_impl.attach_session(&key).await {

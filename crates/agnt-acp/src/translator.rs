@@ -20,11 +20,12 @@ use agent_client_protocol::schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError, CompactionRx, TryRecvError, UiEventRx};
-use agnt_core::config::defaults;
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
-use agnt_core::transcript::ir::ContentKind;
+use agnt_render::tool_args::plain_call_text;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::{ContentKind, Display, DisplaySection};
+use agnt_runtime::bus::{ChannelError, CompactionRx, TryRecvError, UiEventRx, UiEventTx};
+use agnt_runtime::config::defaults;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -116,11 +117,14 @@ impl EventTranslator {
             SystemEvent::ToolStarted { call } => {
                 let name = call.name.0.clone();
                 let id = self.allocate_call_id(&name, &call.arguments);
-                let summary = call.call_line.to_plain_text();
+                // The call line is a derivation, not data: derive it here, once
+                // per event, exactly as the transcript entries do at build time.
+                let call_line = call.call_line();
+                let summary = plain_call_text(&call_line);
                 let title = if summary.is_empty() {
                     name.clone()
                 } else {
-                    summary
+                    summary.to_string()
                 };
                 Some(SessionUpdate::ToolCall(
                     ToolCall::new(id, title)
@@ -136,10 +140,11 @@ impl EventTranslator {
                 } else {
                     ToolCallStatus::Failed
                 };
-                let mut content = outcome
-                    .display
-                    .as_ref()
-                    .map(content_from_display)
+                // The drawer derives the body from the result data; ACP maps that
+                // body onto its own content blocks.
+                let mut content = call
+                    .result_body(Some(&outcome.result))
+                    .map(|display| content_from_display(&display))
                     .unwrap_or_default();
                 if content.is_empty()
                     && let Some(message) = outcome.message
@@ -240,7 +245,7 @@ impl EventTranslator {
 /// receiver, so it can flush the events published just before the turn
 /// completes.
 pub async fn drain_bus_to_notifications<S, P>(
-    bus: &Bus,
+    ui_event: &UiEventTx,
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
@@ -248,7 +253,7 @@ pub async fn drain_bus_to_notifications<S, P>(
     S: SessionUpdateSink,
     P: PermissionRequestSink,
 {
-    let mut rx = bus.ui_event().subscribe();
+    let mut rx = ui_event.subscribe();
     drain_receiver_to_notifications(&mut rx, sink, translator, bridge).await;
 }
 
@@ -558,7 +563,7 @@ fn compaction_update(state: &str, source: &str, detail: Option<String>) -> Sessi
 }
 
 /// Map every display section to ACP tool-call content.
-pub(crate) fn content_from_display(display: &ToolDisplay) -> Vec<ToolCallContent> {
+pub(crate) fn content_from_display(display: &Display) -> Vec<ToolCallContent> {
     display.sections.iter().map(section_content).collect()
 }
 
@@ -568,7 +573,7 @@ pub(crate) fn content_from_display(display: &ToolDisplay) -> Vec<ToolCallContent
 /// content kind. The section content is a unified diff, so the old and new
 /// sides are reconstructed from the hunk lines — the reconstruction covers the
 /// hunks only, not the untouched remainder of the file.
-fn section_content(section: &ToolDisplaySection) -> ToolCallContent {
+fn section_content(section: &DisplaySection) -> ToolCallContent {
     match &section.kind {
         ContentKind::Diff { path, .. } => {
             let (old_text, new_text) = split_unified_diff(&section.content);

@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::tools::mcp::config::McpTransportType;
+use agnt_runtime::tools::mcp::config::McpTransportType;
 use oauth2::{AccessToken, basic::BasicTokenType};
 use rmcp::transport::auth::{OAuthTokenResponse, VendorExtraTokenFields};
 

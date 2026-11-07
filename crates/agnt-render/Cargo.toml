@@ -4,5 +4,11 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-agnt-core = { workspace = true }
+agnt-kernel = { workspace = true }
+log = { workspace = true }
+pulldown-cmark = { workspace = true }
+serde_json = { workspace = true }
+syntect = { workspace = true }
 textwrap = { workspace = true }
+unicode-width = { workspace = true }
+unicodeit = { workspace = true }

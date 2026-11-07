@@ -1,5 +1,5 @@
 use super::test_helpers::create_test_call;
-use agnt_core::tools::authz::PermissionAction;
+use agnt_runtime::tools::authz::PermissionAction;
 use nu_protocol::{Value, record};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -16,7 +16,7 @@ macro_rules! args_map {
 
 #[test]
 fn resolve_effective_permissions_merges_cli_overlay_additively() -> Result<()> {
-    let plugin_config = agnt_core::config::PluginConfig {
+    let plugin_config = agnt_runtime::config::PluginConfig {
         permissions: Some(
             toml::from_str(
                 r#"

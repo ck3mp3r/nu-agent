@@ -1,5 +1,5 @@
 use super::tool_defs::assemble_tool_definitions;
-use agnt_core::conversation::builder::{
+use agnt_runtime::conversation::builder::{
     builtin_tool_definitions, list_agents_tool_definitions, messaging_tool_definitions,
     orchestrator_tool_definitions,
 };
@@ -60,7 +60,7 @@ fn orchestrator_tool_description_shows_no_agents_message_when_empty() -> Result<
 
 #[test]
 fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
-    use agnt_core::protocol::persona::PersonaSummary;
+    use agnt_runtime::protocol::persona::PersonaSummary;
     let agents = vec![
         PersonaSummary {
             name: "coder".to_string(),
@@ -183,8 +183,8 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_compat_fields()
 
 #[test]
 fn a2a_tools_absent_when_disabled() -> Result<()> {
-    let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
-    let agents_config = agnt_core::config::AgentsConfig::default();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let agents_config = agnt_runtime::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
     let assembly =
@@ -237,8 +237,8 @@ fn a2a_tools_absent_when_disabled() -> Result<()> {
 
 #[test]
 fn a2a_tools_present_when_enabled() -> Result<()> {
-    let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
-    let agents_config = agnt_core::config::AgentsConfig::default();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let agents_config = agnt_runtime::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
     let assembly =

@@ -1,6 +1,6 @@
 use super::clear::{AgentSessionClear, CwdInterface};
-use agnt_core::session::{RigStoreConfig, StoreType};
-use agnt_core::types::Message;
+use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
 use tempfile::TempDir;
@@ -33,7 +33,7 @@ async fn test_agent_session_clear_deletes_existing_session() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
     let rig = rig_at(&temp_dir);
-    let prefix = agnt_core::session::prefix::dir_prefix(temp_dir.path());
+    let prefix = agnt_runtime::session::prefix::dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-test-session");
     seed(&rig, &full_id, vec![Message::user("hello")]).await?;
 
@@ -99,7 +99,7 @@ async fn test_delete_session_removes_only_target_session() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
     let rig = rig_at(&temp_dir);
-    let prefix = agnt_core::session::prefix::dir_prefix(temp_dir.path());
+    let prefix = agnt_runtime::session::prefix::dir_prefix(temp_dir.path());
     let ids: Vec<String> = ["session-1", "session-2", "session-3"]
         .into_iter()
         .map(|name| format!("{prefix}-{name}"))
@@ -144,7 +144,7 @@ async fn clear_ignores_sessions_of_another_cwd() -> Result<()> {
     // A session of another cwd must not be reachable from this cwd.
     let foreign_id = format!(
         "{}-old-session",
-        agnt_core::session::prefix::dir_prefix(std::path::Path::new("/other/dir"))
+        agnt_runtime::session::prefix::dir_prefix(std::path::Path::new("/other/dir"))
     );
     seed(&rig, &foreign_id, vec![Message::user("hello")]).await?;
 
@@ -179,9 +179,9 @@ fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
 async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
     let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
-        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+        agnt_runtime::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);
-    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+    agnt_runtime::rig_memory::save(&*store, session_id, &mut conversation)
         .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }

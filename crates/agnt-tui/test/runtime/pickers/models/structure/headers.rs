@@ -10,7 +10,7 @@ async fn model_picker_renders_column_header_row() -> Result<()> {
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: "openai/gpt-4o".to_string(),
@@ -74,7 +74,7 @@ async fn model_picker_renders_glyph_columns_at_row_end() -> Result<()> {
     state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o".to_string(),
                 identity: "openai/gpt-4o".to_string(),
@@ -86,7 +86,7 @@ async fn model_picker_renders_glyph_columns_at_row_end() -> Result<()> {
                 provider_display_name: "OpenAI".to_string(),
                 cost: Some("$3.00/$15.00".to_string()),
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),

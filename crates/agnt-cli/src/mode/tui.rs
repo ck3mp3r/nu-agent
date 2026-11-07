@@ -1,31 +1,30 @@
 //! Interactive TUI execution mode for the `agent` CLI.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
 use agnt_a2a::{
     AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
     skill_from_persona,
 };
-use agnt_core::bus::OneshotTx;
-use agnt_core::conversation::runtime::AgentConversationRuntime;
-use agnt_core::orchestrator::{
-    AgentSwitchHook, InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
-    run_interactive_loop_with_external_prompts,
-};
-use agnt_core::protocol::event::PermissionDecision;
-use agnt_core::protocol::mcp_management::McpManagement;
-use agnt_core::protocol::picker::{
+use agnt_runtime::bus::OneshotTx;
+use agnt_runtime::conversation::contracts::{DecisionSource, RuntimeAccess};
+use agnt_runtime::orchestrator::{AgentSwitchHook, LoopConfig, run};
+use agnt_runtime::protocol::McpManagement;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::picker::{
     build_agent_picker_catalog, format_active_model_identity,
     model_picker_catalog_from_cached_startup_plugin_config,
 };
-use agnt_core::protocol::session_management::SessionPersistence;
+use agnt_runtime::session::management::{SessionPersistence, SessionState};
 use agnt_tty::policy::UiPolicy;
 use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;
 use agnt_tui::runtime::{AnsiTerminalBackend, TuiRuntimeRenderer};
 use agnt_tui::state::ActivePicker;
-use nu_protocol::{Span, Value};
+use nu_protocol::Value;
 
 use crate::error::{Error, Result};
 
@@ -53,7 +52,7 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
             // No A2A card to update; nothing further to do here.
             return;
         };
-        let mut card = card_handle.write().expect("agent_card lock");
+        let mut card = lock_card(card_handle);
         let old_name = card.name.clone();
         let skill = skill_from_persona(&name, description.as_deref());
         let new_card = rebuild_card_for_switch(&card, &name, description.as_deref(), vec![skill]);
@@ -73,7 +72,7 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
         // Re-register mDNS with the new name so other agents discover the change.
         if let (Some(discovery), Some(mesh_key)) = (self.discovery.as_ref(), self.mesh_key.as_ref())
         {
-            let mut d = discovery.lock().expect("discovery lock");
+            let mut d = lock_discovery(discovery);
             let old_fullname = d.fullname().map(|s| s.to_string());
             if let Some(old_fullname) = &old_fullname
                 && let Some(port) = self.self_port
@@ -90,14 +89,25 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
 /// Run the interactive TUI.
 ///
 /// The interactive loop reads prompts from the TUI input pane.
-pub async fn run_tui_mode(
-    runtime_impl: AgentConversationRuntime,
+pub async fn run_tui_mode<T>(
+    runtime_impl: T,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
     options: TuiModeOptions,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    T: CoreRuntime
+        + McpManagement
+        + ModelSwitching
+        + SessionPersistence
+        + SessionState
+        + DecisionSource
+        + RuntimeAccess
+        + Send
+        + 'static,
+{
     // Agent events are process-scoped: publish Started before the first turn
     // runs and spawn the agent-class hook runner once for this process.
     let agent_lifecycle = AgentLifecycle::start_configured(
@@ -106,8 +116,8 @@ pub async fn run_tui_mode(
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     )
     .await;
 
@@ -118,23 +128,35 @@ pub async fn run_tui_mode(
 }
 
 /// The TUI body, without the process-wide agent lifecycle.
-async fn run_tui_mode_inner(
-    mut runtime_impl: AgentConversationRuntime,
+async fn run_tui_mode_inner<T>(
+    mut runtime_impl: T,
     _prompt: Option<String>,
     _context: Option<String>,
     _ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
     options: TuiModeOptions,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    T: CoreRuntime
+        + McpManagement
+        + ModelSwitching
+        + SessionPersistence
+        + SessionState
+        + DecisionSource
+        + RuntimeAccess
+        + Send
+        + 'static,
+{
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
     // and the main thread (via the orchestrator's permission poll loop).
     let pending: Arc<Mutex<HashMap<String, OneshotTx<PermissionDecision>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    runtime_impl.interactive_pending = Some(Arc::clone(&pending));
-    // The TUI renders pre-authorize previews and relies on the completion
-    // display being suppressed to avoid showing the same diff twice.
-    runtime_impl.renders_tool_previews = true;
+    runtime_impl = runtime_impl
+        .with_decision_source(Some(Arc::clone(&pending)))
+        // The TUI renders pre-authorize previews and relies on the completion
+        // display being suppressed to avoid showing the same diff twice.
+        .with_tool_previews(true);
 
     let mut terminal_lifecycle =
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
@@ -150,7 +172,7 @@ async fn run_tui_mode_inner(
     // selections over this channel; the receiving task saves them fire-and-forget.
     let (theme_persist_tx, mut theme_persist_rx) = tokio::sync::mpsc::channel::<String>(8);
     tui_ui.set_theme_persist_tx(theme_persist_tx);
-    let theme_path = runtime_impl.paths.theme_path.clone();
+    let theme_path = runtime_impl.paths().theme_path.clone();
     tokio::spawn(async move {
         while let Some(name) = theme_persist_rx.recv().await {
             // Normalize to the canonical kebab-case form so the preference file
@@ -161,7 +183,7 @@ async fn run_tui_mode_inner(
             else {
                 continue;
             };
-            let pref = agnt_core::theme_pref::ThemePreference { theme: Some(kebab) };
+            let pref = agnt_runtime::theme_pref::ThemePreference { theme: Some(kebab) };
             if let Err(e) = pref.save_to(&theme_path) {
                 log::warn!("Failed to persist theme preference: {e}");
             }
@@ -205,12 +227,12 @@ async fn run_tui_mode_inner(
     if let Some(identity) = runtime_impl.agent_identity() {
         tui_ui.set_active_agent_identity(identity);
     }
-    tui_ui.set_active_persona_icon(runtime_impl.agent_icon().map(|s| s.to_string()));
+    tui_ui.set_active_persona_icon(RuntimeAccess::agent_icon(&runtime_impl).map(|s| s.to_string()));
     let caller_cwd = runtime_impl.mcp_caller_cwd().map(|p| p.to_path_buf());
     tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
     match caller_cwd {
         Some(cwd) => {
-            let skills = agnt_core::protocol::skills::discover_skill_catalog_for_cwd(&cwd);
+            let skills = agnt_runtime::protocol::skills::discover_skill_catalog_for_cwd(&cwd);
             tui_ui.set_skills_projection(skills);
         }
         None => tui_ui.mark_skills_discovery_failed(),
@@ -230,7 +252,7 @@ async fn run_tui_mode_inner(
     tui_ui.push_startup_logo();
 
     // The incoming A2A task, completion-event, and cancel channels are all
-    // `tokio::sync` receivers. They are passed directly into `InteractiveLoopConfig`,
+    // `tokio::sync` receivers. They are passed directly into `LoopConfig`,
     // and the orchestrator `select!`s over them. No std-bridge forwarder threads
     // are needed.
     let task_cancel_rx = options.a2a.task_cancel_rx;
@@ -244,14 +266,14 @@ async fn run_tui_mode_inner(
     // the task ID. A background task reads these and transitions the task.
     if let Some(store) = &options.a2a.task_store {
         let store = Arc::clone(store);
-        let bus = runtime_impl.bus.clone();
+        let bus = runtime_impl.bus_handle();
         tokio::spawn(async move {
             let mut turn_rx = bus.turn().subscribe();
             loop {
                 match turn_rx.recv().await {
                     Ok(event) => apply_turn_event_to_store(&store, &event),
-                    Err(agnt_core::bus::ChannelError::Lagged { .. }) => {}
-                    Err(agnt_core::bus::ChannelError::Closed) => break,
+                    Err(agnt_runtime::bus::ChannelError::Lagged { .. }) => {}
+                    Err(agnt_runtime::bus::ChannelError::Closed) => break,
                     Err(_) => {}
                 }
             }
@@ -271,14 +293,20 @@ async fn run_tui_mode_inner(
 
     // Start the user hook runner before the loop so the first prompt's events
     // are observed. Zero hooks spawns nothing.
+    let hook_bus = runtime_impl.bus_handle();
     let _hook_handles = spawn_configured_hooks_with_nu(
         runtime_impl.startup_plugin_config(),
-        &runtime_impl.bus,
+        agnt_runtime::hooks::HookSources {
+            turn: hook_bus.turn(),
+            ui_event: hook_bus.ui_event(),
+            compaction_tx: hook_bus.compaction(),
+            session: hook_bus.session(),
+        },
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     );
 
     terminal_lifecycle
@@ -294,34 +322,44 @@ async fn run_tui_mode_inner(
             hydration.initial_messages.clone(),
             hydration.last_total_tokens,
         );
-        let config = InteractiveLoopConfig::new(Span::unknown())
-            .with_bus(runtime_impl.bus.clone())
+        let config = LoopConfig::default()
+            .with_bus(runtime_impl.bus_handle())
             .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()))
+            .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
-        run_hydrated_interactive_loop_with_external_prompts(runtime_impl, config)
-            .await
-            .map_err(Error::from)
+        run(runtime_impl, config).await.map_err(Error::from)
     } else {
-        let config = InteractiveLoopConfig::new(Span::unknown())
-            .with_bus(runtime_impl.bus.clone())
+        let config = LoopConfig::default()
+            .with_bus(runtime_impl.bus_handle())
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()))
+            .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
-        run_interactive_loop_with_external_prompts(runtime_impl, config)
-            .await
-            .map_err(Error::from)
+        run(runtime_impl, config).await.map_err(Error::from)
     };
 
     let _ = terminal_lifecycle.restore();
     result
 }
+
+// region:    --- Support
+
+/// The server's live card, recovered if a writer panicked mid-swap.
+fn lock_card(card_handle: &Arc<RwLock<AgentCard>>) -> RwLockWriteGuard<'_, AgentCard> {
+    card_handle.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The discovery backend, recovered if a caller panicked mid-restart.
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+    discovery.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// endregion: --- Support

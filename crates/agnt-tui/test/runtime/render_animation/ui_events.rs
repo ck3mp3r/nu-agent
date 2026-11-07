@@ -1,8 +1,8 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
-use agnt_core::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
+use agnt_runtime::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
 
 /// A warning SystemEvent sets the status line and marks the frame dirty; a
 /// TurnError falls through to the transcript and finalizes the cycle.
@@ -80,7 +80,7 @@ fn reduce_ui_state_event_routing() -> Result<()> {
 
     coordinator.reduce_ui_state_event(UiStateEvent::SetMcpServerState {
         server: "gh".to_string(),
-        state: agnt_core::protocol::contracts::McpUsabilityState::Failed,
+        state: agnt_runtime::protocol::contracts::McpUsabilityState::Failed,
         error: Some("boom".to_string()),
         total: 3,
     });
@@ -141,7 +141,7 @@ fn ui_event_permission_group() -> Result<()> {
     coordinator.state.status.message.set_message("idle");
     coordinator.state.scroll.following_tail = false;
     let event = SystemEvent::PermissionRequested {
-        request_id: RequestId::new("ask-0000000000000001"),
+        request_id: RequestId::from_minted("ask-0000000000000001"),
         context: PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
@@ -152,7 +152,7 @@ fn ui_event_permission_group() -> Result<()> {
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
+            preview: None,
         },
     };
 
@@ -172,19 +172,19 @@ fn ui_event_permission_group() -> Result<()> {
     // -- Exec & Check: decision variants skip effects.
     for event in [
         SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
         },
         SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             reason: "user closed".to_string(),
         },
         SystemEvent::PermissionRequestCancelled {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
         SystemEvent::PermissionAutoResolved {
@@ -212,32 +212,28 @@ fn ui_event_permission_group() -> Result<()> {
     // -- Setup & Fixtures: a pending tool call for the pre-authorize display.
     let mut preview = RuntimeCoordinator::new(120, 40, Some(false));
     preview.reduce_system_event(SystemEvent::ToolStarted {
-        call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("write".to_string()),
-            "user",
-            "{}",
-            agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+        call: agnt_runtime::protocol::events::ToolCall::new(
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Unknown,
+            r#"{"path":"a.rs"}"#,
         ),
     });
     let context = PermissionRequestContext {
-        tool: "write".to_string(),
-        tool_key: "write\n{}".to_string(),
+        tool: "edit".to_string(),
+        tool_key: "edit\n{\"path\":\"a.rs\"}".to_string(),
         source: "user".to_string(),
-        mode: Some("edit".to_string()),
+        mode: Some("apply".to_string()),
         matched_rule_identity: "identity".to_string(),
         scope: "scope".to_string(),
         target_field: Some("target".to_string()),
         pattern: "pattern".to_string(),
         summary: "summary".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: Some("preview-title".to_string()),
-            sections: vec![],
-        }),
+        preview: Some("--- a\n+++ b\n".to_string()),
     };
 
     // -- Exec
     let handled = preview.reduce_system_event(SystemEvent::PermissionRequested {
-        request_id: RequestId::new("ask-0000000000000001"),
+        request_id: RequestId::from_minted("ask-0000000000000001"),
         context,
     });
 
@@ -247,7 +243,7 @@ fn ui_event_permission_group() -> Result<()> {
     let preview_pushed = preview.state.transcript.entries().iter().any(|entry| {
         matches!(
             entry,
-            agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+            agnt_render::transcript::entry::TranscriptEntry::Tool(tool)
                 if tool.preview.is_some()
         )
     });

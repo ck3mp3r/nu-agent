@@ -3,16 +3,15 @@
 //! Every module paints one entry through the widget backend and reads the
 //! buffer, so the assertions name pixels, not intermediate line types.
 
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{
+use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
+use agnt_render::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
 };
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Color, RenderBackend, RowRect, Theme};
+use agnt_runtime::protocol::events::ToolCall;
 
 use crate::widgets::RatatuiBackend;
 
@@ -221,7 +220,7 @@ pub(crate) fn message_entry(role: MessageRole, markdown: &str) -> TranscriptEntr
 /// renders their unified slot, `result.or(preview)`.
 pub(crate) fn tool_entry(
     name: &str,
-    summary: &str,
+    arguments: &str,
     preview: Option<Display>,
     result: Option<Display>,
     status: ItemStatus,
@@ -230,11 +229,8 @@ pub(crate) fn tool_entry(
         kind: ToolKind::from_name(&ToolName(name.to_string())),
         call: ToolCall::new(
             ToolName(name.to_string()),
-            "",
-            "",
-            CallLine {
-                summary: summary.to_string(),
-            },
+            agnt_runtime::tools::handler::ToolSource::Unknown,
+            arguments,
         ),
         preview,
         result,
@@ -244,7 +240,7 @@ pub(crate) fn tool_entry(
 
 /// A bare tool call: no display body.
 pub(crate) fn bare_tool(status: ItemStatus) -> TranscriptEntry {
-    tool_entry("read", "→ a.rs", None, None, status)
+    tool_entry("read", r#"{"path":"a.rs"}"#, None, None, status)
 }
 
 /// A task call line: the name, the subject it works on, and its status.

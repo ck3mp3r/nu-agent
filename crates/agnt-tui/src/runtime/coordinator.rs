@@ -29,13 +29,13 @@ use crate::runtime::status::{RepoBranchTracker, status_left_content, status_righ
 use crate::state::{
     AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind,
 };
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::events::Key;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
-use agnt_core::tools::mcp::runtime::McpServerLifecycle;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::orchestrator::events::UiStateEvent;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::protocol::events::Key;
+use agnt_runtime::protocol::events::SystemEvent;
+use agnt_runtime::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
+use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
 
 /// The runtime coordinator that owns the TUI application state and the render
 /// bookkeeping for the interactive render loop.
@@ -65,8 +65,9 @@ impl RuntimeCoordinator {
     pub fn new(columns: u16, _rows: u16, side_pane_visible: Option<bool>) -> Self {
         let theme_name = ThemeName::default();
         let theme = theme_name.resolve();
-        let (event_tx, _event_rx) =
-            tokio::sync::mpsc::channel::<agnt_core::orchestrator::OrchestratorEvent>(256);
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<
+            agnt_runtime::orchestrator::events::OrchestratorEvent,
+        >(256);
         let side_margin = if columns >= 8 { MAIN_SIDE_MARGIN } else { 0 };
         let last_input_content_width = columns.saturating_sub(2 * side_margin + 4) as usize;
         let mut coordinator = Self {
@@ -259,7 +260,7 @@ impl RuntimeCoordinator {
 
     pub fn event_sender(
         &self,
-    ) -> &tokio::sync::mpsc::Sender<agnt_core::orchestrator::OrchestratorEvent> {
+    ) -> &tokio::sync::mpsc::Sender<agnt_runtime::orchestrator::events::OrchestratorEvent> {
         &self.state.event_tx
     }
 
@@ -863,7 +864,7 @@ impl RuntimeCoordinator {
             || self.state.transcript.entries().iter().any(|entry| {
                 matches!(
                     entry,
-                    agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+                    agnt_render::transcript::entry::TranscriptEntry::Tool(tool)
                         if tool.status == ItemStatus::InProgress
                 )
             })

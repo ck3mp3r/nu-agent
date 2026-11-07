@@ -4,7 +4,7 @@
 //! error branches, which log a warning and never propagate.
 
 use agnt_a2a::InMemoryTaskStore;
-use agnt_core::bus::TurnEvent;
+use agnt_runtime::bus::TurnEvent;
 use nu_protocol::{Span, Value};
 
 // region:    --- Tests

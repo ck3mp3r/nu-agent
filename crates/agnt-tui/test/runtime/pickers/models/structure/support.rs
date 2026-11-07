@@ -26,8 +26,8 @@ pub(super) fn model_option(
     provider: &str,
     model: &str,
     provider_display_name: &str,
-) -> agnt_core::protocol::picker::ModelPickerOption {
-    agnt_core::protocol::picker::ModelPickerOption {
+) -> agnt_runtime::protocol::picker::ModelPickerOption {
+    agnt_runtime::protocol::picker::ModelPickerOption {
         provider: provider.to_string(),
         model: model.to_string(),
         identity: format!("{provider}/{model}"),
@@ -47,8 +47,8 @@ pub(super) fn model_option_with_window(
     model: &str,
     provider_display_name: &str,
     context_window: Option<u32>,
-) -> agnt_core::protocol::picker::ModelPickerOption {
-    agnt_core::protocol::picker::ModelPickerOption {
+) -> agnt_runtime::protocol::picker::ModelPickerOption {
+    agnt_runtime::protocol::picker::ModelPickerOption {
         context_window,
         ..model_option(provider, model, provider_display_name)
     }

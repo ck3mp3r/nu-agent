@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// Lane 1 reports only the model identity: no agent name, no pipe separator.
 #[test]
@@ -78,7 +78,7 @@ fn hydrate_transcript_tokens_and_markdown() -> Result<()> {
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .flat_map(|l| l.spans.into_iter())
         .any(|s| {
-            s.text == "bold" && matches!(s.hint, agnt_core::transcript::ir::StyleHint::MdBold)
+            s.text == "bold" && matches!(s.hint, agnt_render::transcript::ir::StyleHint::MdBold)
         });
     assert!(has_bold);
 
@@ -106,7 +106,7 @@ fn hydrate_transcript_tokens_and_markdown() -> Result<()> {
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .flat_map(|l| l.spans.into_iter())
         .any(|s| {
-            s.text == "italic" && matches!(s.hint, agnt_core::transcript::ir::StyleHint::MdItalic)
+            s.text == "italic" && matches!(s.hint, agnt_render::transcript::ir::StyleHint::MdItalic)
         });
     assert!(has_italic);
     Ok(())

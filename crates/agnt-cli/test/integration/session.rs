@@ -5,10 +5,10 @@
 
 use super::*;
 
-use agnt_core::session::prefix::dir_prefix;
-use agnt_core::session::{RigStoreConfig, StoreType};
-use agnt_core::types::{Message, Text, UserContent};
-use agnt_core::utils::paths::APP_DIR_NAME;
+use agnt_runtime::session::prefix::dir_prefix;
+use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::types::{Message, Text, UserContent};
+use agnt_runtime::utils::paths::APP_DIR_NAME;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -19,12 +19,12 @@ async fn seed_session(prefix: &str, bare_id: &str) -> Result<()> {
     let rig = RigStoreConfig::new(StoreType::Sqlite);
     let id = format!("{prefix}-{bare_id}");
     let store = rig.open(&id).await?;
-    let mut conversation = agnt_core::rig_memory::load(&*store, &id)?;
+    let mut conversation = agnt_runtime::rig_memory::load(&*store, &id)?;
     conversation.extend([Message::User {
         content: vec![UserContent::Text(Text::new("seeded prompt"))],
     }]);
-    agnt_core::rig_memory::save(&*store, &id, &mut conversation)?;
-    agnt_core::session::rig_state::write_state_records(
+    agnt_runtime::rig_memory::save(&*store, &id, &mut conversation)?;
+    agnt_runtime::session::rig_state::write_state_records(
         std::sync::Arc::clone(&store),
         "test/model".to_string(),
         Some("seeded prompt".to_string()),

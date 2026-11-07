@@ -10,6 +10,7 @@ pub mod spinner;
 pub use factory::{StderrUiFactory, UiRendererFactory};
 pub use policy::{UiPolicy, Verbosity};
 pub use progress::StderrProgressUi;
+pub use renderer::UiRenderer;
 pub use renderer::backend::TtyBackend;
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Queued-message stack rendering: position, wrapping, rail, and height.
 
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
 use agnt_render::{RenderBackend, Theme};
 
 use super::bottom_box_support::*;

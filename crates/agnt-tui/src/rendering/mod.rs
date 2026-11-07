@@ -1,4 +1,4 @@
-pub use agnt_core::transcript::highlight;
+pub use agnt_render::transcript::highlight;
 pub mod chrome;
 pub mod layout;
 pub mod modal;

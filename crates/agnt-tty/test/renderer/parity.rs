@@ -2,7 +2,7 @@
 //! accounting equals the painted row count over the gallery corpus, and every
 //! planned rect is exactly what the backend measured.
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::{Gallery, LayoutPlanner, RenderBackend, Theme};
 
 use crate::renderer::backend::TtyBackend;

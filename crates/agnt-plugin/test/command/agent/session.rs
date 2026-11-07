@@ -114,7 +114,7 @@ mod session_validation_tests {
 
 #[cfg(test)]
 mod tui_session_resolution_tests {
-    use agnt_core::session::resolver::{
+    use agnt_runtime::session::resolver::{
         SessionRequest, generate_session_id, resolve_session_request,
     };
     use nu_protocol::{Span, Value};

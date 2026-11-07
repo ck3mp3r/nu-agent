@@ -8,15 +8,12 @@ use agent_client_protocol::schema::v1::{
     PermissionOption, RequestPermissionOutcome, SelectedPermissionOutcome, SessionUpdate,
     ToolCallUpdate,
 };
-use agnt_core::bus::{OneshotRx, OneshotTx};
-use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplaySection,
-};
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::{ContentKind, ToolName};
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::bus::{OneshotRx, OneshotTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -28,40 +25,12 @@ pub fn translator() -> EventTranslator {
     EventTranslator::new(SESSION)
 }
 
-pub fn call_line(summary: &str) -> CallLine {
-    CallLine {
-        summary: summary.to_string(),
-    }
-}
-
-pub fn text_section(label: &str, content: &str) -> ToolDisplaySection {
-    ToolDisplaySection {
-        label: Some(label.to_string()),
-        kind: ContentKind::Plain,
-        content: content.to_string(),
-        stats: None,
-    }
-}
-
-pub fn diff_section(label: &str, content: &str) -> ToolDisplaySection {
-    ToolDisplaySection {
-        label: Some(label.to_string()),
-        kind: ContentKind::Diff {
-            language: "diff".to_string(),
-            path: label.to_string(),
-        },
-        content: content.to_string(),
-        stats: None,
-    }
-}
-
 pub fn tool_started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
-            call_line("→ read src/lib.rs"),
         ),
     }
 }
@@ -70,9 +39,8 @@ pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent
     SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
-            call_line("→ read src/lib.rs"),
         ),
         outcome: ToolOutcome {
             success,
@@ -82,7 +50,6 @@ pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent
                 ToolStatus::Failed
             },
             result: "{}".to_string(),
-            display: None,
             error_kind: None,
             message: None,
         },
@@ -100,7 +67,7 @@ pub fn permission_context() -> PermissionRequestContext {
         target_field: None,
         pattern: "*".to_string(),
         summary: "→ edit".to_string(),
-        pre_authorize_display: None,
+        preview: None,
     }
 }
 

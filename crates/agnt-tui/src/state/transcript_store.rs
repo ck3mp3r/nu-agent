@@ -15,11 +15,11 @@
 //! [`TranscriptStore::frame_plan`] hands the render layer the entry rows it
 //! paints.
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::Display;
 use agnt_render::RenderBackend;
 use agnt_render::backend::RowRect;
 use agnt_render::planner::{EntryFamily, FramePlan, LayoutPlanner, PlannedEntry};
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::Display;
 
 use crate::widgets::RatatuiBackend;
 

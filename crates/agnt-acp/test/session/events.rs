@@ -8,12 +8,12 @@
 use super::*;
 
 /// Drain every event currently buffered on the session channel.
-fn take_session_events(rx: &mut agnt_core::bus::SessionRx) -> Vec<SessionEvent> {
+fn take_session_events(rx: &mut agnt_runtime::bus::SessionRx) -> Vec<SessionEvent> {
     let mut events = Vec::new();
     loop {
         match rx.try_recv() {
             Ok(event) => events.push(event),
-            Err(agnt_core::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
@@ -24,7 +24,7 @@ fn take_session_events(rx: &mut agnt_core::bus::SessionRx) -> Vec<SessionEvent> 
 async fn test_session_manager_open_session_publishes_started() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let bus = create_bus();
+    let bus = Bus::default();
     let manager = manager_with_bus(temp.path(), bus.clone()).await?;
     let mut session_rx = bus.session().subscribe();
     let cwd = session_cwd(temp.path(), "session-cwd")?;
@@ -49,7 +49,7 @@ async fn test_session_manager_open_session_publishes_started_hydrated_for_a_pers
 -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let bus = create_bus();
+    let bus = Bus::default();
     let (manager, rig) = manager_with_bus_and_rig_store(temp.path(), bus.clone()).await?;
     let mut session_rx = bus.session().subscribe();
     let session_id = "persisted-session";
@@ -75,7 +75,7 @@ async fn test_session_manager_open_session_publishes_started_hydrated_for_a_pers
 async fn test_session_manager_close_session_publishes_ended() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let bus = create_bus();
+    let bus = Bus::default();
     let manager = manager_with_bus(temp.path(), bus.clone()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
@@ -100,7 +100,7 @@ async fn test_session_manager_close_session_publishes_ended() -> Result<()> {
 async fn test_session_manager_delete_session_publishes_ended_for_a_live_session() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let bus = create_bus();
+    let bus = Bus::default();
     let manager = manager_with_bus(temp.path(), bus.clone()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
@@ -126,7 +126,7 @@ async fn test_session_manager_delete_session_without_a_live_session_publishes_no
 -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let bus = create_bus();
+    let bus = Bus::default();
     let (manager, rig) = manager_with_bus_and_rig_store(temp.path(), bus.clone()).await?;
     let mut session_rx = bus.session().subscribe();
     let session_id = "persisted-session";
@@ -152,7 +152,7 @@ async fn test_session_manager_delete_session_without_a_live_session_publishes_no
 async fn test_session_manager_ended_reports_each_sessions_own_usage() -> Result<()> {
     // -- Setup & Fixtures: two persisted sessions, one of them carrying usage.
     let temp = tempfile::tempdir()?;
-    let bus = create_bus();
+    let bus = Bus::default();
     let used_session = "used-session";
     let (manager, rig) =
         manager_with_usage_for_session(temp.path(), bus.clone(), used_session, 30, 12).await?;

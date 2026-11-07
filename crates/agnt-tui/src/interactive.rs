@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use agnt_core::bus::TryRecvError;
-use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_runtime::bus::{CompactionTx, SessionTx, TryRecvError, UiEventTx, UiStateTx};
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
@@ -21,10 +21,15 @@ pub struct TuiInteractiveUi {
     theme_persist_tx: Option<mpsc::Sender<String>>,
 }
 
-/// Auxiliary receivers the render loop drains alongside terminal events.
-pub(crate) struct RenderLoopChannels {
+/// Auxiliary channels the render loop drains and publishes on, alongside
+/// terminal events.
+pub(crate) struct RenderLoopChannels<'a> {
     pub(crate) branch_rx: mpsc::Receiver<()>,
     pub(crate) theme_persist_tx: Option<mpsc::Sender<String>>,
+    pub(crate) ui_event: &'a UiEventTx,
+    pub(crate) compaction: &'a CompactionTx,
+    pub(crate) session: &'a SessionTx,
+    pub(crate) ui_state: &'a UiStateTx,
 }
 
 /// The render loop's only timer: the busy spinner's own cadence. A tick
@@ -74,14 +79,14 @@ impl TuiInteractiveUi {
 
     pub fn set_mcp_lifecycle_projection(
         &mut self,
-        projection: Vec<agnt_core::tools::mcp::runtime::McpServerLifecycle>,
+        projection: Vec<agnt_runtime::tools::mcp::runtime::McpServerLifecycle>,
     ) {
         self.renderer.set_mcp_lifecycle_projection(projection);
     }
 
     pub fn set_skills_projection(
         &mut self,
-        skills: Vec<agnt_core::protocol::skills::DiscoverableSkill>,
+        skills: Vec<agnt_runtime::protocol::skills::DiscoverableSkill>,
     ) {
         self.renderer.set_skills_projection(skills);
     }
@@ -98,7 +103,7 @@ impl TuiInteractiveUi {
 
     pub fn hydrate_transcript(
         &mut self,
-        messages: Vec<agnt_core::protocol::contracts::UiMessageSnapshot>,
+        messages: Vec<agnt_runtime::protocol::contracts::UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
     ) {
         self.renderer
@@ -177,7 +182,7 @@ impl TuiInteractiveUi {
 
     pub fn make_render_loop_spawner(
         &mut self,
-        bus: agnt_core::bus::Bus,
+        bus: agnt_runtime::bus::Bus,
     ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
         let coordinator = std::mem::replace(
             &mut self.renderer.coordinator,
@@ -214,10 +219,13 @@ impl TuiInteractiveUi {
                 let channels = RenderLoopChannels {
                     branch_rx,
                     theme_persist_tx,
+                    ui_event: bus.ui_event(),
+                    compaction: bus.compaction(),
+                    session: bus.session(),
+                    ui_state: bus.ui_state(),
                 };
                 run_render_loop(
                     &mut coordinator,
-                    &bus,
                     &cancel_controller,
                     event_tx,
                     terminal_rx,
@@ -285,17 +293,16 @@ pub(crate) async fn run_render_loop<
     B: ratatui::backend::Backend + crate::runtime::backend::FrameSync,
 >(
     coordinator: &mut RuntimeCoordinator,
-    bus: &agnt_core::bus::Bus,
     cancel_controller: &CancelController,
     event_tx: mpsc::Sender<OrchestratorEvent>,
     mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
     live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
-    mut channels: RenderLoopChannels,
+    mut channels: RenderLoopChannels<'_>,
 ) {
-    let mut ui_event_rx = bus.ui_event().subscribe();
-    let mut compaction_rx = bus.compaction().subscribe();
-    let mut session_rx = bus.session().subscribe();
-    let mut ui_state_rx = bus.ui_state().subscribe();
+    let mut ui_event_rx = channels.ui_event.subscribe();
+    let mut compaction_rx = channels.compaction.subscribe();
+    let mut session_rx = channels.session.subscribe();
+    let mut ui_state_rx = channels.ui_state.subscribe();
     let mut render_timer = tokio::time::interval(RENDER_TICK);
 
     loop {
@@ -312,7 +319,7 @@ pub(crate) async fn run_render_loop<
                 drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
                 let ui_state_events = coordinator.state.take_pending_ui_state_events();
                 for ev in ui_state_events {
-                    let _ = bus.ui_state().send(ev).await;
+                    let _ = channels.ui_state.send(ev).await;
                 }
                 if coordinator.state.quit_requested {
                     let _ = event_tx.send(OrchestratorEvent::Quit).await;
@@ -356,7 +363,7 @@ pub(crate) async fn run_render_loop<
                         drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
                         let ui_state_events = coordinator.state.take_pending_ui_state_events();
                         for ev in ui_state_events {
-                            let _ = bus.ui_state().send(ev).await;
+                            let _ = channels.ui_state.send(ev).await;
                         }
                         coordinator.mark_render_needed();
                         let _ = coordinator.render_if_needed(live_terminal);
@@ -391,7 +398,7 @@ pub(crate) async fn run_render_loop<
                     drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
                     let ui_state_events = coordinator.state.take_pending_ui_state_events();
                     for ev in ui_state_events {
-                        let _ = bus.ui_state().send(ev).await;
+                        let _ = channels.ui_state.send(ev).await;
                     }
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);

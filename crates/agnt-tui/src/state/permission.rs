@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use agnt_core::protocol::event::{
+use agnt_runtime::protocol::event::{
     PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext,
 };
 

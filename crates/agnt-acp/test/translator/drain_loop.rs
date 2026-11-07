@@ -1,7 +1,7 @@
 //! Drain-loop behaviour: streaming, flushing, and transport failure.
 
 use agent_client_protocol::schema::v1::SessionUpdate;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::protocol::events::{CompactionSource, SystemEvent};
 
 use super::support::*;
 use crate::translator::{
@@ -14,7 +14,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn test_translator_run_turn_streams_events_and_returns_turn_output() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
@@ -58,7 +58,7 @@ async fn test_translator_run_turn_streams_events_and_returns_turn_output() -> Re
 #[tokio::test]
 async fn test_translator_run_turn_flushes_events_published_before_completion() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
@@ -97,7 +97,7 @@ async fn test_translator_run_turn_flushes_events_published_before_completion() -
 #[tokio::test]
 async fn test_translator_run_turn_stops_draining_when_sink_fails() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::failing();
     let mut translator = translator();
@@ -138,9 +138,9 @@ async fn test_translator_run_turn_stops_draining_when_sink_fails() -> Result<()>
 async fn test_translator_run_turn_stops_polling_a_closed_compaction_channel() -> Result<()> {
     // -- Setup & Fixtures: a compaction channel whose sender is already gone,
     // so its receiver reports Closed before the drain starts.
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
-    let compaction_tx = agnt_core::bus::CompactionTx::new("compaction", 16);
+    let compaction_tx = agnt_runtime::bus::CompactionTx::new("compaction", 16);
     let compaction_rx = compaction_tx.subscribe();
     drop(compaction_tx);
     let mut compaction_rx = Some(compaction_rx);
@@ -175,7 +175,7 @@ async fn test_translator_run_turn_stops_polling_a_closed_compaction_channel() ->
 #[tokio::test]
 async fn test_translator_run_turn_reports_a_compaction_request() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let mut compaction_rx = Some(bus.compaction().subscribe());
     let sink = RecordingSink::default();
@@ -194,7 +194,7 @@ async fn test_translator_run_turn_reports_a_compaction_request() -> Result<()> {
             publisher
                 .compaction()
                 .send(SystemEvent::CompactionRequested {
-                    source: "auto".to_string(),
+                    source: CompactionSource::Auto,
                 })
                 .await
                 .ok();
@@ -219,7 +219,7 @@ async fn test_translator_run_turn_reports_a_compaction_request() -> Result<()> {
 #[tokio::test]
 async fn test_translator_run_turn_reports_no_compaction_request() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let mut compaction_rx = Some(bus.compaction().subscribe());
     let sink = RecordingSink::default();
@@ -249,7 +249,7 @@ async fn test_translator_run_turn_reports_no_compaction_request() -> Result<()> 
 #[tokio::test]
 async fn test_translator_drain_receiver_stops_on_closed_bus() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
@@ -274,7 +274,7 @@ async fn test_translator_drain_receiver_stops_on_closed_bus() -> Result<()> {
 #[tokio::test]
 async fn test_translator_drain_bus_subscribes_and_forwards_events() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let sink = std::sync::Arc::new(RecordingSink::default());
     let publisher = bus.clone();
     let drain_sink = std::sync::Arc::clone(&sink);
@@ -282,7 +282,7 @@ async fn test_translator_drain_bus_subscribes_and_forwards_events() -> Result<()
         let mut translator = EventTranslator::new(SESSION);
         let mut bridge = permission_bridge(selected("allow-once"), empty_pending());
         drain_bus_to_notifications(
-            &publisher,
+            publisher.ui_event(),
             drain_sink.as_ref(),
             &mut translator,
             &mut bridge,

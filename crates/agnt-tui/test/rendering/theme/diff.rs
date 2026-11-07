@@ -1,7 +1,7 @@
 use ratatui::style::Color;
 
 use crate::rendering::theme::{CatppuccinPalette, TuiTheme, diff_tint_to_bg};
-use agnt_core::transcript::ir::DiffTint;
+use agnt_render::transcript::ir::DiffTint;
 
 // ========== diff tint backgrounds (task 669b4dac) ==========
 

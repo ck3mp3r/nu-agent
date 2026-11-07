@@ -1,5 +1,7 @@
 //! The per-entry attribution: rig's `MessageKey` of each entry a turn persisted,
-//! pointing at the turn that persisted it.
+//! pointing at the turn that persisted it. The transcript rows the store keeps
+//! are the message rows of a session, so they land through the same service —
+//! the transcript half of it lives in [`super::transcript`].
 
 // region:    --- Modules
 
@@ -54,6 +56,17 @@ impl Entries {
 }
 
 // endregion: --- Constructors
+
+// region:    --- Accessors
+
+impl Entries {
+    /// The engine the service writes through.
+    pub(super) fn storage(&self) -> Arc<Storage> {
+        Arc::clone(&self.storage)
+    }
+}
+
+// endregion: --- Accessors
 
 // region:    --- Operations
 

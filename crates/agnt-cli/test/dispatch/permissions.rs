@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::tools::authz::PermissionAction;
+use agnt_runtime::tools::authz::PermissionAction;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

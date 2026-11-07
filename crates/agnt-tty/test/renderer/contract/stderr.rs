@@ -2,13 +2,12 @@
 
 use super::super::StderrUiRenderer;
 use super::tool_call;
-use agnt_core::protocol::events::{
+use crate::renderer::UiRenderer;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{
     RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage,
 };
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::renderer::UiRenderer;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use crate::policy::{UiPolicy, Verbosity};
 
@@ -245,11 +244,8 @@ fn spinner_omits_arrow_when_call_line_summary_is_empty() {
         renderer.emit(&SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("nu".to_string()),
-                "builtin",
-                r#"{"command":"ls"}"#,
-                CallLine {
-                    summary: String::new(),
-                },
+                agnt_runtime::tools::handler::ToolSource::Builtin,
+                "",
             ),
         });
 
@@ -283,23 +279,20 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
     renderer.emit(&SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName("gh__list_prs".to_string()),
-            "mcp",
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             "{}",
-            CallLine::from_json_summary("{}"),
         ),
     });
     renderer.emit(&SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("gh__list_prs".to_string()),
-            "mcp",
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             "{}",
-            CallLine::from_json_summary("{}"),
         ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
             result: "[]".to_string(),
-            display: None,
             error_kind: None,
             message: None,
         },
@@ -328,23 +321,20 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
         renderer.emit(&SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("gh__list_prs".to_string()),
-                "mcp",
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
-                CallLine::from_json_summary("{}"),
             ),
         });
         renderer.emit(&SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 ToolName("gh__list_prs".to_string()),
-                "mcp",
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
-                CallLine::from_json_summary("{}"),
             ),
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
                 result: payload.to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -455,7 +445,7 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
 fn permission_request_cancelled_renders_line_and_quiet_suppresses() {
     // -- Setup & Fixtures
     let event = SystemEvent::PermissionRequestCancelled {
-        request_id: RequestId::new("perm-0000000000000001"),
+        request_id: RequestId::from_minted("perm-0000000000000001"),
         matched_rule_identity: "global:*".to_string(),
     };
 

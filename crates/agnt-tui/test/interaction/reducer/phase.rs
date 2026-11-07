@@ -1,8 +1,8 @@
 use super::*;
 
-use agnt_core::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 #[test]
 fn submit_and_lock_table() {
@@ -197,13 +197,13 @@ fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Resul
     // -- Setup & Fixtures: a busy turn with a permission card up.
     let mut state = busy_state_with_clean_transcript();
     open_permission_card(&mut state);
-    let open_request_id = RequestId::new("ask-0000000000000001");
+    let open_request_id = RequestId::from_minted("ask-0000000000000001");
 
     // -- Exec: a timeout for a different request.
     reduce_ui(
         &mut state,
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000002"),
+            request_id: RequestId::from_minted("ask-0000000000000002"),
         },
     );
 
@@ -262,23 +262,20 @@ fn completion_finalize_table() {
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                "mcp",
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
-                CallLine::from_json_summary("{}"),
             ),
         },
         SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                "mcp",
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
-                CallLine::from_json_summary("{}"),
             ),
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
                 result: "[]".to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },

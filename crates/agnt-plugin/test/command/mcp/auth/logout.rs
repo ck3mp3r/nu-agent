@@ -5,8 +5,8 @@ use std::sync::Arc;
 use rmcp::transport::auth::StoredCredentials;
 use tempfile::TempDir;
 
-use agnt_core::config::file_backend::FileBackend;
-use agnt_core::config::vault::{Vault, VaultBackendKind};
+use agnt_runtime::config::file_backend::FileBackend;
+use agnt_runtime::config::vault::{Vault, VaultBackendKind};
 
 use super::logout::perform_logout;
 

@@ -40,7 +40,7 @@ async fn test_runtime_build_acp_runtime_resolves_a_custom_named_compaction_spec(
 
     // -- Check
     let spec = runtime
-        .compaction
+        .compaction()
         .spec()
         .ok_or("the planning spec must resolve for a custom-named provider")?;
     assert_eq!(
@@ -76,7 +76,7 @@ async fn test_runtime_build_acp_runtime_resolves_a_rig_id_compaction_spec() -> R
 
     // -- Check
     let spec = runtime
-        .compaction
+        .compaction()
         .spec()
         .ok_or("the planning spec must resolve for a rig provider id")?;
     assert_eq!(

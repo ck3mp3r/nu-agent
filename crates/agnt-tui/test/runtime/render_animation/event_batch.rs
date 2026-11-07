@@ -1,7 +1,7 @@
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// Build a chunk with the producer's two facts kept apart: `delta` is the new
 /// suffix, `aggregated` the accumulated text.
@@ -53,16 +53,15 @@ fn tool_entries(coordinator: &RuntimeCoordinator) -> Vec<&TranscriptEntry> {
 fn read_call() -> ToolCall {
     ToolCall::new(
         ToolName("read".to_string()),
-        "user",
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         "{}",
-        CallLine::from_json_summary("{}"),
     )
 }
 
 /// A permission request for the coalescing-bypass test.
 fn permission_requested(request_id: &str) -> SystemEvent {
     SystemEvent::PermissionRequested {
-        request_id: RequestId::new(request_id),
+        request_id: RequestId::from_minted(request_id),
         context: PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
@@ -73,7 +72,7 @@ fn permission_requested(request_id: &str) -> SystemEvent {
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
+            preview: None,
         },
     }
 }
@@ -201,7 +200,6 @@ fn test_coordinator_reduce_event_batch_reduces_non_chunk_events_in_order() -> Re
                 success: true,
                 status: ToolStatus::Success,
                 result: "{}".to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -274,7 +272,7 @@ fn test_coordinator_reduce_event_batch_unchanged_folds_do_not_mark_the_render() 
 
     // -- Exec
     let changed = coordinator.reduce_event_batch([SystemEvent::CompactionRequested {
-        source: "auto".to_string(),
+        source: agnt_runtime::protocol::events::CompactionSource::Auto,
     }]);
 
     // -- Check

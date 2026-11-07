@@ -9,18 +9,22 @@
 
 // region:    --- Modules
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::sync::{MutexGuard, PoisonError};
 
 use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     SessionId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::UiEventTx;
-use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
-use agnt_core::protocol::events::{RequestId, SystemEvent};
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::bus::{OneshotTx, UiEventTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::protocol::events::{RequestId, SystemEvent, ToolCall};
+use agnt_runtime::tools::handler::ToolSource;
 
 use crate::error::Result;
 use crate::translator::content_from_display;
@@ -145,7 +149,7 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             }
             decision
         };
-        if let Some(tx) = self.pending.lock().unwrap().remove(request_id) {
+        if let Some(tx) = self.lock_pending().remove(request_id) {
             let _ = tx.send(decision);
         } else if let Some(ui_events) = &self.ui_events {
             // The request timed out, was cancelled, or was already resolved.
@@ -154,7 +158,7 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             // earlier `permission_requested` event by `request_id`.
             let _ = ui_events
                 .send(SystemEvent::PermissionDecisionIgnored {
-                    request_id: RequestId::new(request_id),
+                    request_id: RequestId::from_minted(request_id),
                     reason: REASON_REQUEST_NOT_PENDING.to_string(),
                 })
                 .await;
@@ -174,10 +178,15 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
     /// [`Self::handle_permission_request`] are gone from the map and are left
     /// untouched.
     pub fn deny_all_pending(&mut self) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         for (_, tx) in pending.drain() {
             let _ = tx.send(PermissionDecision::Deny);
         }
+    }
+
+    /// The pending-request map, recovered if a submitter panicked mid-insert.
+    fn lock_pending(&self) -> MutexGuard<'_, HashMap<String, OneshotTx<PermissionDecision>>> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -234,8 +243,19 @@ fn build_tool_call(context: &PermissionRequestContext) -> ToolCallUpdate {
     let mut fields = ToolCallUpdateFields::new()
         .title(context.summary.clone())
         .status(ToolCallStatus::Pending);
-    if let Some(display) = &context.pre_authorize_display {
-        fields = fields.content(content_from_display(display));
+    // The card is the drawer's derivation: the call names the tool and its
+    // arguments, and the context adds only the content the producer alone can
+    // compute. The drawn sections map onto ACP's own content blocks.
+    let (name, arguments) = context
+        .tool_key
+        .split_once('\n')
+        .unwrap_or((context.tool_key.as_str(), ""));
+    let call = ToolCall::new(ToolName(name.to_string()), ToolSource::Unknown, arguments);
+    if let Some(display) = call.preview_body(context.preview.as_deref()) {
+        let content = content_from_display(&display);
+        if !content.is_empty() {
+            fields = fields.content(content);
+        }
     }
     ToolCallUpdate::new(context.tool_key.clone(), fields)
 }

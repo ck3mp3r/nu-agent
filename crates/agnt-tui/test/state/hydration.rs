@@ -8,15 +8,29 @@ use super::*;
 
 use crate::interaction::cancel::CancelController;
 use crate::interaction::reducer::reduce;
-use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::{ContentKind, MessageRole};
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::{Display, MessageRole};
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
+use agnt_runtime::protocol::events::SystemEvent;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// One display flattened to the text a backend draws, line by line.
+fn display_text(display: &Display) -> String {
+    display
+        .project_lines()
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 // region:    --- Fixtures
 
@@ -34,39 +48,43 @@ fn assistant(text: &str, usage: Option<UiMessageUsageSnapshot>) -> UiMessageSnap
     snapshot
 }
 
-fn tool(name: &str, arguments: &str, success: Option<bool>) -> UiMessageSnapshot {
-    UiMessageSnapshot::new("tool", format!("-> {arguments}"))
+/// One persisted tool row: the call it names, the result the model received,
+/// and the verdict the store recorded. The content IS the tool's data — the
+/// surface derives the body from it, live and on replay alike.
+fn tool(name: &str, arguments: &str, result: &str, success: Option<bool>) -> UiMessageSnapshot {
+    UiMessageSnapshot::new("tool", result.to_string())
         .with_tool_name(name.to_string())
-        .with_tool_details(Some(arguments.to_string()), None, success)
+        .with_tool_details(
+            Some(arguments.to_string()),
+            Some(result.to_string()),
+            success,
+        )
 }
 
-fn diff_display(title: &str, content: &str) -> ToolDisplay {
-    ToolDisplay {
-        title: Some(title.to_string()),
-        sections: vec![ToolDisplaySection {
-            label: Some(title.to_string()),
-            kind: ContentKind::Diff {
-                language: "diff".to_string(),
-                path: "a.rs".to_string(),
-            },
-            content: content.to_string(),
-            stats: None,
-        }],
-    }
+/// The result text an `edit` call leaves in the transcript: the path it changed
+/// and the diff it made, as the handler returned them.
+fn edit_result(path: &str, diff: &str) -> String {
+    // `serde_json` is not a test dependency here: build the handler's own shape.
+    let escaped = diff
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("{{\"path\":\"{path}\",\"diff\":\"{escaped}\"}}")
 }
 
-fn tool_display(display: ToolDisplay) -> UiMessageSnapshot {
-    UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(display)
-}
-
-/// A two-turn persisted session: prose, a finished tool call with its display,
-/// a compaction summary, and prose after it.
+/// A two-turn persisted session: prose, a finished tool call with its result, a
+/// compaction summary, and prose after it.
 fn persisted_session() -> Vec<UiMessageSnapshot> {
+    let diff = "--- a\n+++ b\n";
     vec![
         UiMessageSnapshot::new("user", "first question"),
         assistant("first answer", Some(usage(3, 2, 5))),
-        tool("nu", r#"{"command":"ls"}"#, Some(true)),
-        tool_display(diff_display("ls", "--- a\n+++ b\n")),
+        tool(
+            "edit",
+            r#"{"path":"a.rs"}"#,
+            &edit_result("a.rs", diff),
+            Some(true),
+        ),
         UiMessageSnapshot::new("user", "second question"),
         UiMessageSnapshot::new("compaction", "## Summary\n- alpha"),
         assistant("third answer", None),
@@ -187,33 +205,35 @@ fn test_state_hydration_projection_maps_assistant_chunk_and_usage() {
 /// its gate preview, and its displayless completion; a later call's display
 /// never lands on the earlier call.
 #[test]
-fn test_state_hydration_projection_maps_tool_pair_with_display() {
+fn test_state_hydration_projection_maps_tool_row_to_its_events() {
     // -- Setup & Fixtures
+    let result = r#"{"path":"a.rs","diff":"--- a\\n+++ b\\n"}"#;
     let messages = vec![
-        tool("edit", r#"{"path":"a.rs"}"#, Some(true)),
-        tool_display(diff_display("edit a.rs", "--- a\n+++ b\n")),
-        tool("read_file", r#"{"path":"b.txt"}"#, Some(true)),
+        tool("edit", r#"{"path":"a.rs"}"#, result, Some(true)),
+        tool("read_file", r#"{"path":"b.txt"}"#, "b", Some(true)),
     ];
 
     // -- Exec
     let log = projected_events(messages);
 
-    // -- Check: start, gate preview, displayless completion per call, and the
-    // display rides its OWN call.
+    // -- Check: start, gate preview, completion per call. A replayed preview
+    // carries no content — the gate's preview was never in the transcript.
     let Some(SystemEvent::ToolStarted { call: first_start }) = log.first() else {
         panic!("expected the first start");
     };
     let Some(SystemEvent::PreviewRequested {
         call: first_preview,
-        ..
+        preview,
     }) = log.get(1)
     else {
         panic!("expected the first gate preview");
     };
     assert_eq!(
-        first_start.id, first_preview.id,
+        first_start.id(),
+        first_preview.id(),
         "the preview names the call"
     );
+    assert!(preview.is_none(), "a replay carries no gate content");
     let Some(SystemEvent::ToolCompleted {
         call: first_end,
         outcome,
@@ -221,42 +241,29 @@ fn test_state_hydration_projection_maps_tool_pair_with_display() {
     else {
         panic!("expected the first completion");
     };
-    assert_eq!(first_start.id, first_end.id, "the pair names one call");
-    assert!(
-        outcome.display.is_none(),
-        "the display is the gate preview, not the completion"
+    assert_eq!(first_start.id(), first_end.id(), "the pair names one call");
+    assert_eq!(
+        outcome.result, result,
+        "the completion carries the persisted result text"
     );
     let Some(SystemEvent::ToolStarted { call: second_start }) = log.get(3) else {
         panic!("expected the second start");
     };
-    let Some(SystemEvent::ToolCompleted { outcome, .. }) = log.get(4) else {
+    let Some(SystemEvent::ToolCompleted { outcome, .. }) = log.get(5) else {
         panic!("expected the second completion");
     };
     assert_eq!(second_start.name.0, "read_file");
-    assert!(outcome.display.is_none(), "no display for the second call");
-    assert_eq!(log.len(), 6, "two pairs, one preview, the turn boundary");
+    assert_eq!(outcome.result, "b", "the second row's own result");
+    assert_eq!(log.len(), 7, "two triples, and the turn boundary");
 }
 
-/// A hydrated tool display is a GATE PREVIEW, not a completion — for every
-/// outcome. The replayed log carries it through `PreviewRequested` (the event
-/// the live permission gate emits) and completes displayless with the status
-/// semantics only, so the entry keeps the preview slot main's hydration used and
-/// the widget keeps banding the code surface.
+/// Every persisted tool row replays through the gate-preview event and then
+/// completes with the status the store recorded. The preview carries no
+/// content: the gate's preview was never in the transcript, so the surface
+/// derives whatever the call alone supports.
 #[test]
-fn test_state_hydration_projection_routes_every_tool_display_to_the_gate_preview() -> Result<()> {
-    // -- Setup & Fixtures: one persisted pair per outcome, as a cancelled run,
-    // a failed run, and a successful run leave them behind.
-    let display = ToolDisplay {
-        title: None,
-        sections: vec![ToolDisplaySection {
-            label: None,
-            kind: ContentKind::Code {
-                language: "nu".to_string(),
-            },
-            content: "ls | select name".to_string(),
-            stats: None,
-        }],
-    };
+fn test_state_hydration_projection_routes_every_tool_row_through_the_gate_preview() -> Result<()> {
+    // -- Setup & Fixtures: one persisted row per outcome.
     let cases: [(&str, ToolStatus); 3] = [
         ("cancelled", ToolStatus::Cancelled),
         ("failed", ToolStatus::Failed),
@@ -265,36 +272,33 @@ fn test_state_hydration_projection_routes_every_tool_display_to_the_gate_preview
 
     for (label, status) in cases {
         let success = Some(matches!(status, ToolStatus::Success));
-        let snapshot =
-            tool("nu", r#"{"command":"ls | select name"}"#, success).with_tool_status(status);
-        let messages = vec![snapshot, tool_display(display.clone())];
+        let snapshot = tool("nu", r#"{"command":"ls | select name"}"#, "out", success)
+            .with_tool_status(status);
+        let messages = vec![snapshot];
 
         // -- Exec
         let log = projected_events(messages);
 
-        // -- Check: start, gate preview, displayless completion, turn boundary.
-        assert_eq!(
-            log.len(),
-            4,
-            "{label}: one pair plus its preview and the boundary"
-        );
+        // -- Check: start, gate preview, completion, turn boundary.
+        assert_eq!(log.len(), 4, "{label}: one triple plus the boundary");
         let Some(SystemEvent::ToolStarted { call: started }) = log.first() else {
             return Err("expected the tool start".into());
         };
         let Some(SystemEvent::PreviewRequested {
             call: previewed,
-            display: preview,
+            preview,
         }) = log.get(1)
         else {
             return Err("expected the gate preview".into());
         };
         assert_eq!(
-            previewed.id, started.id,
+            previewed.id(),
+            started.id(),
             "{label}: the preview names the call"
         );
-        assert_eq!(
-            preview, &display,
-            "{label}: the persisted display rides the preview channel"
+        assert!(
+            preview.is_none(),
+            "{label}: a replay carries no gate content"
         );
         let Some(SystemEvent::ToolCompleted {
             call: ended,
@@ -304,12 +308,9 @@ fn test_state_hydration_projection_routes_every_tool_display_to_the_gate_preview
             return Err("expected the completion".into());
         };
         assert_eq!(
-            ended.id, started.id,
+            ended.id(),
+            started.id(),
             "{label}: the completion names the call"
-        );
-        assert!(
-            outcome.display.is_none(),
-            "{label}: the completion carries no display"
         );
         assert_eq!(
             outcome.status, status,
@@ -390,9 +391,10 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
         "one entry per persisted fact: the compaction call line plus its summary"
     );
 
-    // -- Check: main's hydrated shape. The hand-builder docked every persisted
-    // display in the tool entry's PREVIEW slot and never set `result`, so a
-    // hydrated row renders banded whatever its verdict.
+    // -- Check: the completion body is derived from the persisted result data,
+    // the same derivation the live path runs — an `edit` row shows its diff —
+    // and the gate-preview slot stays empty, because the gate's diff was never
+    // in the transcript.
     let tool = replayed
         .transcript
         .entries()
@@ -403,13 +405,11 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
         })
         .ok_or("should have the replayed tool entry")?;
     assert_eq!(tool.status, ItemStatus::Done, "the persisted verdict");
+    assert!(tool.preview.is_none(), "the replay carries no gate content");
+    let result = tool.result.as_ref().ok_or("should have the edit body")?;
     assert!(
-        tool.preview.is_some(),
-        "main docked the display in the preview slot"
-    );
-    assert!(
-        tool.result.is_none(),
-        "main's hydration never set a completion display"
+        display_text(result).contains("+++ b"),
+        "the persisted diff is the completion body"
     );
 
     // -- Check: the compaction bookkeeping is the live bookkeeping.
@@ -433,21 +433,23 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
     Ok(())
 }
 
-/// A replayed tool call holds ONE terminal entry carrying the persisted display
-/// in its gate-preview slot — main's hydrated arrangement, which is also the
-/// live path's shape.
+/// A replayed tool call holds ONE terminal entry whose completion body is
+/// derived from the persisted result data — the same shape the live path leaves.
 #[test]
 fn test_state_hydration_replay_lands_one_terminal_tool_entry() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
+    let diff = "--- a\n+++ b\n";
 
     // -- Exec
     hydrate_by_replay(
         &mut state,
-        vec![
-            tool("edit", r#"{"path":"a.rs"}"#, Some(true)),
-            tool_display(diff_display("edit a.rs", "--- a\n+++ b\n")),
-        ],
+        vec![tool(
+            "edit",
+            r#"{"path":"a.rs"}"#,
+            &edit_result("a.rs", diff),
+            Some(true),
+        )],
         None,
     );
 
@@ -462,27 +464,15 @@ fn test_state_hydration_replay_lands_one_terminal_tool_entry() -> Result<()> {
         return Err("expected a Tool entry".into());
     };
     assert_eq!(tool.status, ItemStatus::Done);
+    assert!(tool.preview.is_none(), "the replay carries no gate content");
+    let result = tool
+        .result
+        .as_ref()
+        .ok_or("should have the completion body")?;
     assert!(
-        tool.preview.is_some(),
-        "the persisted display docks in the gate-preview slot"
+        display_text(result).contains("+++ b"),
+        "the persisted diff is the completion body"
     );
-    assert!(
-        tool.result.is_none(),
-        "a hydrated completion carries no display of its own"
-    );
-    let preview = tool.preview.as_ref().ok_or("should have the preview")?;
-    let text: String = preview
-        .project_lines()
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.text.as_str())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(text.contains("+++ b"), "the persisted diff is the preview");
     Ok(())
 }
 

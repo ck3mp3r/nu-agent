@@ -10,7 +10,8 @@ integration = []
 agent-client-protocol = { version = "3", features = ["stdio"] }
 chrono = { workspace = true }
 log = { workspace = true }
-agnt-core = { workspace = true }
+agnt-render = { workspace = true }
+agnt-runtime = { workspace = true }
 nu-protocol = { workspace = true }
 rig-memory = { workspace = true }
 serde = { workspace = true }

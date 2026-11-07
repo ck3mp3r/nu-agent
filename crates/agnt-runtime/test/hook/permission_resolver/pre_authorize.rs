@@ -1,0 +1,346 @@
+use super::*;
+// ---------------------------------------------------------------------------
+// Nu preview: a nu Ask-path request carries NO producer-side preview. The code
+// block a gate card shows is derived by the surface from the command in the
+// call's own arguments.
+// ---------------------------------------------------------------------------
+
+/// A nu Builtin call on the Ask path publishes a context with no preview: the
+/// command is already data in the arguments, so the drawer derives the block.
+#[tokio::test]
+async fn interactive_resolver_nu_call_carries_no_producer_preview() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve(
+                    "nu",
+                    r#"{"command": "ls | where size > 1mb"}"#,
+                    None,
+                    bus.ui_event(),
+                    bus.cancel(),
+                )
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+
+    // Unblock the resolver after inspecting the event.
+    submit_decision(
+        &resolver_clone,
+        request_id.as_str(),
+        ProtocolPermissionDecision::AllowOnce,
+    );
+    let decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    // A nu call's card is derived by the surface from the command in the
+    // arguments, so the context carries no producer-side preview.
+    assert!(
+        context.preview.is_none(),
+        "nu carries no producer preview; the drawer derives the code block"
+    );
+    Ok(())
+}
+
+/// The Ask-path context must carry the exact call key
+/// (`{tool_name}\n{raw_arguments}`) so the TUI can match the pending call
+/// byte-for-byte. `tool` is a decorated display name and cannot be used for
+/// that match.
+#[tokio::test]
+async fn interactive_resolver_ask_path_context_carries_exact_tool_key() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    let arguments = r#"{"command": "ls | where size > 1mb"}"#;
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        let arguments = arguments.to_string();
+        async move {
+            resolver
+                .resolve("nu", &arguments, None, bus.ui_event(), bus.cancel())
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    submit_decision(
+        &resolver_clone,
+        request_id.as_str(),
+        ProtocolPermissionDecision::Deny,
+    );
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert_eq!(
+        context.tool_key,
+        format!("nu\n{arguments}"),
+        "tool_key must be the exact `{{tool_name}}\\n{{raw_arguments}}` key"
+    );
+    assert_ne!(
+        context.tool, context.tool_key,
+        "tool is the decorated display name, not the call key"
+    );
+    Ok(())
+}
+
+/// Non-nu tools keep `pre_authorize_display: None` on the Ask path.
+#[tokio::test]
+async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    submit_decision(
+        &resolver_clone,
+        request_id.as_str(),
+        ProtocolPermissionDecision::AllowOnce,
+    );
+    let decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert!(
+        context.preview.is_none(),
+        "non-nu Ask-path context must not carry a pre-authorize display"
+    );
+    Ok(())
+}
+
+/// A nu call with a missing/non-string command still prompts normally, without a display.
+#[tokio::test]
+async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve("nu", "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    submit_decision(
+        &resolver_clone,
+        request_id.as_str(),
+        ProtocolPermissionDecision::AllowOnce,
+    );
+    let decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert!(
+        context.preview.is_none(),
+        "nu with missing command must prompt without a preview"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Edit pre-authorize preview: the Ask path must carry a diff before the
+// user is prompted (regression: pre_authorize was never wired into the
+// interactive resolver, so edit prompts had no preview at all).
+// ---------------------------------------------------------------------------
+
+/// An edit-apply call that would create a file, on the Ask path, must carry
+/// a `pre_authorize_display` diff so the user sees the change before
+/// approving/denying — mirroring the coverage already present for the
+/// no-preview (nu) case above.
+#[tokio::test]
+async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("new-file.txt");
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    let args = serde_json::json!({
+        "path": target.to_string_lossy(),
+        "mode": "apply",
+        "operation": {"type": "create", "content": "hello\n"}
+    })
+    .to_string();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve("edit", &args, None, bus.ui_event(), bus.cancel())
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    submit_decision(
+        &resolver_clone,
+        request_id.as_str(),
+        ProtocolPermissionDecision::Deny,
+    );
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    let preview = context
+        .preview
+        .as_deref()
+        .ok_or("edit apply Ask-path context must carry the proposed diff")?;
+    assert!(
+        preview.contains("+hello"),
+        "diff must contain the created content, got: {preview:?}"
+    );
+    Ok(())
+}
+
+/// A search_replace edit-apply call that omits `expected_version` (the edit
+/// tool schema does not require it) must still carry a diff on the Ask path.
+/// Pre-authorize resolves the preview version from the file on disk.
+#[tokio::test]
+async fn interactive_resolver_edit_apply_search_replace_without_expected_version_carries_pre_authorize_display()
+-> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("existing.txt");
+    std::fs::write(&target, "hello\nworld\n")?;
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    let args = serde_json::json!({
+        "path": target.to_string_lossy(),
+        "mode": "apply",
+        "operation": {
+            "type": "search_replace",
+            "search": "world",
+            "replacement": "there"
+        }
+    })
+    .to_string();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve("edit", &args, None, bus.ui_event(), bus.cancel())
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    submit_decision(
+        &resolver_clone,
+        request_id.as_str(),
+        ProtocolPermissionDecision::Deny,
+    );
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    let preview = context
+        .preview
+        .as_deref()
+        .ok_or("search_replace Ask-path context must carry the proposed diff")?;
+    assert!(
+        preview.contains("-world") && preview.contains("+there"),
+        "diff must contain the replacement, got: {preview:?}"
+    );
+    Ok(())
+}

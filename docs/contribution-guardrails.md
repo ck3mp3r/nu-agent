@@ -109,7 +109,7 @@ Tests/docs before review:
 
 ## 6) Bus channel topology and UI event dispatch
 
-`Bus` (`crates/agnt-core/src/bus/hub.rs`) exposes these channels:
+`Bus` (`crates/agnt-runtime/src/bus/hub.rs`) exposes these channels:
 
 | Channel | Event type | Role |
 |---|---|---|

@@ -3,9 +3,9 @@ use std::path::Path;
 
 use nu_protocol::{LabeledError, Value};
 
-use agnt_core::config::{self, Config, PluginConfig};
+use agnt_runtime::config::{self, Config, PluginConfig};
 
-pub(crate) use agnt_core::conversation::runtime_build::{
+pub(crate) use agnt_runtime::conversation::runtime_build::{
     apply_persona_config, apply_persona_model, build_preamble_cache,
 };
 
@@ -19,7 +19,7 @@ fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
 /// Resolve configuration from all sources with proper precedence.
 ///
 /// `config_path` is the config file the entry point discovered from the resolved
-/// [`Paths`](agnt_core::config::Paths); this function never re-derives it.
+/// [`Paths`](agnt_runtime::config::Paths); this function never re-derives it.
 ///
 /// Resolution pipeline:
 /// 1. Load PluginConfig from config.toml and resolve the active model role

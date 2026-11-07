@@ -1,5 +1,6 @@
 use super::*;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// Coordinator hydration skips blank lines, shows a role outside the persisted
 /// vocabulary as a system notice, reconstructs tool rows matching the live
@@ -60,7 +61,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = tool_entry else {
         return Err("expected Tool variant".into());
     };
-    assert!(tool.call.call_line.summary.contains("namespace"));
+    assert!(tool.call.call_line().contains("namespace"));
     assert_eq!(tool_status_of(tool_entry), Some(ItemStatus::Done));
 
     // -- Setup & Fixtures: a nu tool call.
@@ -86,7 +87,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(tool.call.call_line.summary, "⏱ 120s");
+    assert_eq!(tool.call.call_line(), "⏱ 120s");
 
     // -- Setup & Fixtures: an edit tool call.
     let mut edit = RuntimeCoordinator::new(120, 30, Some(true));
@@ -114,7 +115,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(tool.call.call_line.summary, "→ a.rs (diff)");
+    assert_eq!(tool.call.call_line(), "→ a.rs (diff)");
 
     Ok(())
 }
@@ -334,42 +335,43 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     Ok(())
 }
 
-/// A tool display snapshot that directly follows its owning tool call lands in
-/// that call's gate-preview slot — no companion display entry is pushed.
+/// A stray persisted display row names no call and adds nothing: each hydrated
+/// row's card comes from its own arguments, and its completion body from its own
+/// result data.
 #[test]
-fn hydration_pairs_tool_display_with_owning_call() -> Result<()> {
+fn hydration_ignores_a_stray_display_row() -> Result<()> {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let display = ToolDisplay {
-        title: None,
-        sections: vec![agnt_core::protocol::event::ToolDisplaySection {
-            label: None,
-            kind: agnt_core::transcript::ir::ContentKind::Code {
-                language: "nu".to_string(),
-            },
-            content: "ls".to_string(),
-            stats: None,
-        }],
-    };
 
     // -- Exec
     coordinator.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "→ \"ls\"")
+            UiMessageSnapshot::new("tool", "out")
                 .with_tool_name("nu".to_string())
-                .with_tool_details(Some(r#"{"command":"ls"}"#.to_string()), None, Some(true)),
-            UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(display),
-            UiMessageSnapshot::new("tool", "→ \"a.txt\"")
+                .with_tool_details(
+                    Some(r#"{"command":"ls"}"#.to_string()),
+                    Some("out".to_string()),
+                    Some(true),
+                ),
+            UiMessageSnapshot::new("tool_display", String::new()),
+            UiMessageSnapshot::new("tool", "a.txt")
                 .with_tool_name("read_file".to_string())
-                .with_tool_details(Some(r#"{"path":"a.txt"}"#.to_string()), None, Some(true)),
+                .with_tool_details(
+                    Some(r#"{"path":"a.txt"}"#.to_string()),
+                    Some("a.txt".to_string()),
+                    Some(true),
+                ),
         ],
         None,
     );
 
-    // -- Check: two tool entries; the display lands in the FIRST call's
-    // gate-preview slot, and the second call keeps no display.
+    // -- Check: two tool entries; the stray display row adds none.
     let entries = coordinator.state().transcript.entries();
-    assert_eq!(entries.len(), 2, "the display pushes no companion entry");
+    assert_eq!(
+        entries.len(),
+        2,
+        "the display row pushes no companion entry"
+    );
     let TranscriptEntry::Tool(first) = &entries[0] else {
         return Err("expected Tool entry".into());
     };
@@ -378,15 +380,12 @@ fn hydration_pairs_tool_display_with_owning_call() -> Result<()> {
     };
     assert!(
         first.preview.is_some(),
-        "the display must attach to its owning call's preview slot"
+        "the nu card derives from the call's own arguments"
     );
+    assert!(second.preview.is_none(), "a generic tool draws no card");
     assert!(
-        first.result.is_none(),
-        "a hydrated completion carries no display of its own"
-    );
-    assert!(
-        second.preview.is_none(),
-        "the next call must not receive the display"
+        first.result.is_none() && second.result.is_none(),
+        "neither tool draws a result body"
     );
     Ok(())
 }

@@ -1,6 +1,6 @@
 use ratatui::text::{Line, Span};
 
-use agnt_core::transcript::ir::ContentLine;
+use agnt_render::transcript::ir::ContentLine;
 
 use crate::rendering::theme::TuiTheme;
 use crate::runtime::panels::wrap_panel_lines;

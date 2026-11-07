@@ -2,15 +2,15 @@
 //! the foregrounds they keep on top.
 
 use super::support::*;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 
 // region:    --- Fixtures
 
 /// A tool entry whose preview is the one-hunk diff.
-fn diff_entry() -> agnt_core::transcript::entry::TranscriptEntry {
+fn diff_entry() -> agnt_render::transcript::entry::TranscriptEntry {
     tool_entry(
         "edit",
-        "→ a.rs",
+        r#"{"path":"a.rs"}"#,
         Some(diff_display(SIMPLE_DIFF)),
         None,
         ItemStatus::Done,
@@ -79,7 +79,7 @@ fn test_renderer_diff_tint_context_line_keeps_the_surface() -> Result<()> {
     let theme = test_theme();
     let entry = tool_entry(
         "edit",
-        "→ a.rs",
+        r#"{"path":"a.rs"}"#,
         Some(diff_display(
             "--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+omega\n",
         )),
@@ -138,7 +138,7 @@ fn test_renderer_diff_tint_keeps_the_syntax_foreground() -> Result<()> {
     let theme = test_theme();
     let entry = tool_entry(
         "edit",
-        "→ a.rs",
+        r#"{"path":"a.rs"}"#,
         Some(diff_display(
             "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+let x = 1;\n",
         )),

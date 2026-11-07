@@ -16,6 +16,15 @@
 //! - There is no mid-stream TCP fault injection. A connection cannot be reset
 //!   after the first frame. A test that needs byte-level write control stays
 //!   hand-rolled raw-TCP.
+//!
+//! It also carries the architecture assertions in [`architecture`]: the
+//! structural properties the workspace is accepted against.
+
+// region:    --- Modules
+
+pub mod architecture;
+
+// endregion: --- Modules
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -233,6 +242,10 @@ fn json_string(value: &str) -> String {
 // endregion: --- Support
 
 // region:    --- Tests
+
+#[cfg(test)]
+#[path = "../test/architecture/test.rs"]
+mod architecture_test;
 
 #[cfg(test)]
 #[path = "../test/lib.rs"]

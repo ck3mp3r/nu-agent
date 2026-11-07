@@ -1,8 +1,8 @@
 use super::*;
 
-use agnt_core::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 #[test]
 fn table_driven_ui_event_matrix_covers_all_variants() {
@@ -35,9 +35,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             SystemEvent::ToolStarted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    "mcp",
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
-                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
                 ),
             },
         );
@@ -70,9 +69,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             event: SystemEvent::ToolStarted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    "mcp",
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     "{}",
-                    CallLine::from_json_summary("{}"),
                 ),
             },
             pre: busy_empty_status,
@@ -82,15 +80,13 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             event: SystemEvent::ToolCompleted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    "mcp",
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
-                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
                 ),
                 outcome: ToolOutcome {
                     success: true,
                     status: ToolStatus::Success,
                     result: "[]".to_string(),
-                    display: None,
                     error_kind: None,
                     message: None,
                 },
@@ -238,12 +234,12 @@ fn permission_request_table() -> Result<()> {
         target_field: None,
         pattern: "edit".to_string(),
         summary: "→ {...}".to_string(),
-        pre_authorize_display: None,
+        preview: None,
     };
     reduce_ui(
         &mut state,
         SystemEvent::PermissionRequested {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             context,
         },
     );
@@ -260,19 +256,18 @@ fn permission_request_table() -> Result<()> {
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("edit".to_string()),
-                "builtin",
-                "{}",
-                CallLine::from_json_summary("{}"),
+                agnt_runtime::tools::handler::ToolSource::Builtin,
+                r#"{"path":"test.rs"}"#,
             ),
         },
     );
     reduce_ui(
         &mut state,
         SystemEvent::PermissionRequested {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
-                tool_key: "edit\n{}".to_string(),
+                tool_key: "edit\n{\"path\":\"test.rs\"}".to_string(),
                 source: "builtin".to_string(),
                 mode: None,
                 matched_rule_identity: "tool:edit".to_string(),
@@ -280,18 +275,7 @@ fn permission_request_table() -> Result<()> {
                 target_field: None,
                 pattern: "edit".to_string(),
                 summary: "test".to_string(),
-                pre_authorize_display: Some(ToolDisplay {
-                    title: Some("file (diff)".to_string()),
-                    sections: vec![ToolDisplaySection {
-                        label: Some("diff".to_string()),
-                        kind: agnt_core::transcript::ir::ContentKind::Diff {
-                            language: "diff".to_string(),
-                            path: "test.rs".to_string(),
-                        },
-                        content: "--- a\n+++ b\n".to_string(),
-                        stats: None,
-                    }],
-                }),
+                preview: Some("--- a\n+++ b\n".to_string()),
             },
         },
     );

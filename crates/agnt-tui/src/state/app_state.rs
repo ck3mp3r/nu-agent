@@ -3,9 +3,9 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
-use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::transcript::entry::{BannerEntry, TranscriptEntry};
+use agnt_render::transcript::entry::{BannerEntry, TranscriptEntry};
+use agnt_runtime::orchestrator::events::{OrchestratorEvent, UiRequest, UiStateEvent};
+use agnt_runtime::protocol::contracts::SharedUiAction;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -246,7 +246,7 @@ pub struct ImmediateSubmission {
 pub struct ToolCallLine {
     pub id: u64,
     pub status: ToolCallStatus,
-    pub key: agnt_core::protocol::events::ToolCallId,
+    pub key: agnt_runtime::protocol::events::ToolCallId,
     pub block_index: Option<usize>,
 }
 
@@ -325,13 +325,14 @@ pub struct AppState {
     pub turn: TurnState,
     pub theme: TuiTheme,
     pub(crate) theme_name: ThemeName,
-    pub event_tx: tokio::sync::mpsc::Sender<agnt_core::orchestrator::OrchestratorEvent>,
+    pub event_tx: tokio::sync::mpsc::Sender<agnt_runtime::orchestrator::events::OrchestratorEvent>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        let (event_tx, _event_rx) =
-            tokio::sync::mpsc::channel::<agnt_core::orchestrator::OrchestratorEvent>(256);
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<
+            agnt_runtime::orchestrator::events::OrchestratorEvent,
+        >(256);
         Self {
             phase: UiPhase::Idle,
             input_locked: false,
@@ -483,7 +484,8 @@ impl AppState {
                 // One scan feeds both surfaces: the picker rows and the Tab cycle.
                 self.status.identity.agent_cycle_names =
                     summaries.iter().map(|s| s.name.clone()).collect();
-                let catalog = agnt_core::protocol::picker::build_agent_picker_catalog(&summaries);
+                let catalog =
+                    agnt_runtime::protocol::picker::build_agent_picker_catalog(&summaries);
                 let tui_options: Vec<PickerOption> =
                     catalog.into_iter().map(PickerOption::from).collect();
                 self.set_picker_options(ActivePicker::Agent, tui_options);

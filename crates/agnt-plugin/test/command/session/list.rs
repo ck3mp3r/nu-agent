@@ -1,7 +1,7 @@
 use super::list::{AgentSessionList, CwdInterface};
-use agnt_core::session::prefix::dir_prefix;
-use agnt_core::session::{RigStoreConfig, StoreType};
-use agnt_core::types::Message;
+use agnt_runtime::session::prefix::dir_prefix;
+use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
 use tempfile::TempDir;
@@ -185,11 +185,11 @@ fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
 async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
     let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
-        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+        agnt_runtime::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);
-    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+    agnt_runtime::rig_memory::save(&*store, session_id, &mut conversation)
         .map_err(|e| format!("{e:?}"))?;
-    agnt_core::session::rig_state::write_state_records(
+    agnt_runtime::session::rig_state::write_state_records(
         std::sync::Arc::clone(&store),
         "test/model".to_string(),
         Some("hello".to_string()),

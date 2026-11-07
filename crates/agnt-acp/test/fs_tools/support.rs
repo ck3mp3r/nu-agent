@@ -10,9 +10,9 @@ pub(super) use agent_client_protocol::schema::v1::{
     ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, on_receive_request};
-pub(super) use agnt_core::conversation::builder::builtin_tool_definitions;
-pub(super) use agnt_core::tools::fs::core::version_token;
-pub(super) use agnt_core::types::{
+pub(super) use agnt_runtime::conversation::builder::builtin_tool_definitions;
+pub(super) use agnt_runtime::tools::fs::core::version_token;
+pub(super) use agnt_runtime::types::{
     DynamicTool, ToolContext, ToolDefinition, ToolExecutionError, ToolOutput, ToolSet,
 };
 

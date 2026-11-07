@@ -2,8 +2,8 @@
 //! caller passes, never from a default.
 
 use super::support::*;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::MessageRole;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// WHEN the renderer receives a caller-provided theme, THE diff tint SHALL
 /// resolve from that theme.

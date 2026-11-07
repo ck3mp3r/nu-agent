@@ -2,7 +2,7 @@
 
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 #[test]
 fn tool_display_renders_diff_with_stats() {
@@ -15,35 +15,22 @@ fn tool_display_renders_diff_with_stats() {
         },
         false,
     );
-    let display = agnt_core::protocol::event::ToolDisplay {
-        title: Some("edit file".to_string()),
-        sections: vec![agnt_core::protocol::event::ToolDisplaySection {
-            label: Some("diff".to_string()),
-            kind: agnt_core::transcript::ir::ContentKind::Diff {
-                language: "diff".to_string(),
-                path: "test.rs".to_string(),
-            },
-            content: "+added\n-removed\nunchanged".to_string(),
-            stats: Some(agnt_core::protocol::event::ToolDisplayStats {
-                files_changed: Some(2),
-                insertions: Some(3),
-                deletions: Some(1),
-                ..Default::default()
-            }),
-        }],
-    };
+    // The result the `edit` handler returns: the diff it made and its
+    // counters. The renderer derives every row from it.
+    let result = concat!(
+        "{\"path\":\"test.rs\",\"diff\":\"+added\\n-removed\\nunchanged\",",
+        "\"stats\":{\"files_changed\":2,\"insertions\":3,\"deletions\":1}}"
+    );
     renderer.emit(&SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "code",
-            "{}",
-            CallLine::from_json_summary("{}"),
+            agnt_runtime::tools::handler::ToolSource::Unknown,
+            r#"{"path":"test.rs"}"#,
         ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
-            result: "ok".to_string(),
-            display: Some(display),
+            result: result.to_string(),
             error_kind: None,
             message: None,
         },

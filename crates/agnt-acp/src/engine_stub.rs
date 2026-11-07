@@ -8,6 +8,6 @@
 /// evaluation. The stub supplies the session working directory — the only
 /// engine capability the runtime needs — and reports every other capability as
 /// unavailable.
-pub use agnt_core::tools::closure::CwdEngine as AcpEngineStub;
+pub use agnt_runtime::tools::closure::CwdEngine as AcpEngineStub;
 
 // endregion: --- Types

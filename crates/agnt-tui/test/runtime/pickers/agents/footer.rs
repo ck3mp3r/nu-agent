@@ -15,7 +15,7 @@ async fn test_agent_picker_footer_pins_to_bottom_edge() -> Result<()> {
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "reviewer".to_string(),
             description: Some("Runs reviews".to_string()),
             display: "reviewer".to_string(),
@@ -62,7 +62,7 @@ async fn test_agent_picker_footer_renders_fg_only_text() -> Result<()> {
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "reviewer".to_string(),
             description: Some("Runs reviews".to_string()),
             display: "reviewer".to_string(),
@@ -128,7 +128,7 @@ async fn test_agent_picker_footer_shows_full_name_and_description() -> Result<()
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: name.clone(),
             description: Some(description.clone()),
             display: name.clone(),
@@ -185,7 +185,7 @@ async fn test_agent_picker_name_cell_keeps_marker_at_width_45() -> Result<()> {
     let mut driver = RenderLoopDriver::new(47, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: name.clone(),
             description: Some("d".repeat(40)),
             display: name.clone(),
@@ -230,7 +230,7 @@ async fn test_agent_picker_footer_leaves_a_gap_row_above_the_text() -> Result<()
     // -- Setup & Fixtures
     let theme = TuiTheme::default();
     let options = (0..20)
-        .map(|idx| agnt_core::protocol::picker::AgentPickerOption {
+        .map(|idx| agnt_runtime::protocol::picker::AgentPickerOption {
             name: format!("agent-{idx}"),
             description: Some(format!("description {idx}")),
             display: format!("agent-{idx}"),
@@ -297,7 +297,7 @@ async fn test_agent_picker_footer_wraps_to_two_rows_at_inner_height_eight() -> R
     let mut driver = RenderLoopDriver::new(92, 14);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: name.clone(),
             description: Some(description.clone()),
             display: name.clone(),
@@ -361,7 +361,7 @@ async fn test_agent_picker_footer_aligns_the_text_with_the_table_column() -> Res
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "reviewer".to_string(),
             description: Some("Runs reviews".to_string()),
             display: "reviewer".to_string(),

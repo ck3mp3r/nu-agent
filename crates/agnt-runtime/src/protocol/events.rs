@@ -1,0 +1,256 @@
+//! The one typed event vocabulary for a session.
+//!
+//! `SystemEvent` is the model-update message of the transcript state fold. The
+//! variant list comes from the session fact inventory: every fact the pre-wave
+//! `UiEvent`, the bus event enums, and `UserAction` carried appears here exactly
+//! once, with typed payloads. Those three vocabularies are deleted; this enum
+//! replaced them.
+
+/// Re-exported so a surface can name the source `run_compaction` takes
+/// without depending on the kernel crate directly.
+pub use agnt_kernel::CompactionSource;
+/// Re-exported so the transcript, the permission gate, and every surface share
+/// one call identity with the kernel's stream records.
+pub use agnt_kernel::{RequestId, ToolCall, ToolCallId, ToolName};
+
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
+use crate::session::tool_status::ToolStatus;
+
+// region:    --- Types
+
+/// Everything that happens to a session, as one typed vocabulary.
+///
+/// The reducer folds these events into state. Nothing else writes state and
+/// no consumer sniffs rendered strings.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SystemEvent {
+    // user — input-boundary facts
+    /// A key the reducer interprets. The terminal layer maps raw keys here.
+    KeyPressed { key: Key },
+    /// A mouse-wheel scroll at a terminal cell.
+    WheelScrolled { up: bool, column: u16, row: u16 },
+    /// The terminal was resized.
+    Resized { width: u16, height: u16 },
+    /// A permission card decision. The reducer resolves the active request id.
+    PermissionDecided { decision: PermissionDecision },
+    /// The user submitted prompt text, with the footer facts its carrier holds:
+    /// the submit instant and the then-active identities. The reducer parses
+    /// slash commands; a replay folds the stamped facts into the entry verbatim.
+    PromptSubmitted {
+        text: String,
+        /// When the prompt was submitted, in Unix milliseconds, when known.
+        stamp_millis: Option<i64>,
+        /// The model identity active at submission, when known.
+        stamp_model: Option<String>,
+        /// The agent identity active at submission, when known.
+        stamp_agent: Option<String>,
+    },
+
+    // inference
+    /// An inference call started.
+    InferenceStarted,
+    /// One streamed delta of the inference response.
+    ///
+    /// `delta` is the newly received text. `aggregated` is the accumulated
+    /// response text so far. A non-streaming producer emits one chunk with
+    /// both fields equal to the full text.
+    InferenceChunk { delta: String, aggregated: String },
+    /// The inference call finished; `usage` carries every reported total.
+    InferenceCompleted { usage: Usage },
+    /// A hook stopped the run.
+    InferenceStopped { reason: String },
+
+    // tools
+    /// A tool call started.
+    ToolStarted { call: ToolCall },
+    /// The permission gate produced a preview for a tool call: the content only
+    /// the producer could compute (an edit's proposed diff). The surface draws it.
+    PreviewRequested {
+        call: ToolCall,
+        preview: Option<String>,
+    },
+    /// A tool call finished.
+    ToolCompleted {
+        call: ToolCall,
+        outcome: ToolOutcome,
+    },
+
+    // permission lifecycle
+    /// A permission prompt was opened.
+    PermissionRequested {
+        request_id: RequestId,
+        context: PermissionRequestContext,
+    },
+    /// A decision was submitted for a request.
+    PermissionDecisionSubmitted {
+        request_id: RequestId,
+        decision: PermissionDecision,
+        matched_rule_identity: String,
+    },
+    /// A request expired without a decision.
+    PermissionDecisionTimedOut { request_id: RequestId },
+    /// A submitted decision was discarded.
+    PermissionDecisionIgnored {
+        request_id: RequestId,
+        reason: String,
+    },
+    /// A pending request was abandoned because the turn was cancelled.
+    PermissionRequestCancelled {
+        request_id: RequestId,
+        matched_rule_identity: String,
+    },
+    /// The policy resolved a call without prompting the user.
+    PermissionAutoResolved {
+        matched_rule_identity: String,
+        action: AutoResolutionAction,
+        reason: Option<String>,
+    },
+
+    // system
+    /// A system message shown to the user.
+    SystemMessage { kind: SystemKind, text: String },
+    /// Compaction was decided for a turn.
+    CompactionRequested { source: CompactionSource },
+    /// Compaction started.
+    CompactionStarted { source: String },
+    /// One streamed delta of the compaction summary.
+    CompactionSummaryChunk {
+        source: String,
+        delta: String,
+        aggregated: String,
+    },
+    /// Compaction finished.
+    CompactionCompleted {
+        source: String,
+        summary_preview: String,
+        summary_body: String,
+    },
+    /// Compaction failed.
+    CompactionFailed { source: String, message: String },
+
+    // turn
+    /// The turn finished; the totals sum across its calls.
+    TurnCompleted {
+        tool_calls: usize,
+        input_tokens: u64,
+        output_tokens: u64,
+        /// The total the wire reported, or `None` when it reported none.
+        total_tokens: Option<u64>,
+        /// What the call cost in USD, when anything priced it.
+        cost: Option<f64>,
+        /// Whether `cost` is the whole charge rather than a lower bound.
+        cost_complete: bool,
+        duration_ms: u64,
+    },
+
+    // environment
+    /// The idle tick woke the render loop.
+    Tick,
+}
+
+/// The result of a finished tool call.
+///
+/// `status` is the structural classification the transcript renders by; the
+/// other fields are the call's content and the handler's own vocabulary, which
+/// never substitute for the status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolOutcome {
+    pub success: bool,
+    pub status: ToolStatus,
+    /// The tool's result, exactly as the model received it. The surface derives
+    /// the display from it; nothing here is drawn.
+    pub result: String,
+    pub error_kind: Option<String>,
+    pub message: Option<String>,
+}
+
+/// The usage of one inference call and the totals of a completed turn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Usage {
+    pub response_chars: usize,
+    pub tool_calls: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// The total the wire reported, or `None` when it reported none.
+    pub total_tokens: Option<u64>,
+    /// What this call cost in USD, when anything priced it.
+    pub cost: Option<f64>,
+    /// Whether `cost` is the whole charge rather than a lower bound.
+    pub cost_complete: bool,
+}
+
+/// A key the reducer interprets. Core owns this enum so no terminal
+/// library type crosses the crate boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    Char(char),
+    Enter,
+    AltEnter,
+    ShiftEnter,
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    CtrlU,
+    CtrlD,
+    CtrlP,
+    CtrlN,
+    CtrlJ,
+    CtrlK,
+    Tab,
+    BackTab,
+    Esc,
+    CtrlC,
+}
+
+/// What kind of system message this is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemKind {
+    Warning,
+    TurnError,
+}
+
+/// The action a policy resolved a tool call to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoResolutionAction {
+    Allow,
+    Deny,
+}
+
+// endregion: --- Types
+
+// region:    --- Fns
+
+/// The text the hub's compaction events carry for `source`.
+///
+/// `CompactionRequested` names the source as an enum, because the orchestrator
+/// acts on the distinction. The started, chunk, completed, and failed events
+/// still carry the text the transcript and the hook envelopes print, so this
+/// one function derives it.
+pub fn compaction_source_text(source: CompactionSource) -> &'static str {
+    match source {
+        CompactionSource::Auto => "auto",
+        CompactionSource::Manual => "slash",
+    }
+}
+
+// endregion: --- Fns
+
+// region:    --- Impls
+
+impl AutoResolutionAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+// endregion: --- Impls

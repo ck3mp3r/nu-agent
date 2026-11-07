@@ -44,10 +44,9 @@ use crate::{
     },
     state::{AppState, InputMode, InputState, PaneFocus, PromptStatus, ScrollState, UiPhase},
 };
-use agnt_core::protocol::event::{PermissionRequestContext, ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::{Key, SystemEvent};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
+use agnt_runtime::protocol::event::PermissionRequestContext;
+use agnt_runtime::protocol::events::{Key, SystemEvent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

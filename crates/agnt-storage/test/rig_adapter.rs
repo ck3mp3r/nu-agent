@@ -17,6 +17,9 @@ mod logs;
 #[path = "rig_adapter/sessions.rs"]
 mod sessions;
 
+#[path = "rig_adapter/transcript.rs"]
+mod transcript;
+
 // endregion: --- Modules
 
 use std::path::Path;

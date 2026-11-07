@@ -1,16 +1,14 @@
 //! Shared fixtures for the widget suite.
 
-use agnt_core::protocol::event::ToolDisplayStats;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{
+use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
-    ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
+use agnt_render::transcript::ir::{
+    ContentKind, Display, DisplaySection, DisplayStats, MessageRole, NoticeKind, ToolName,
 };
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Color, RenderBackend, RowRect, Theme};
+use agnt_runtime::protocol::events::ToolCall;
 
 use crate::widgets::RatatuiBackend;
 
@@ -146,11 +144,8 @@ pub(super) fn tool_entry(
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
-            "",
-            "{}",
-            CallLine {
-                summary: "→ a.rs".to_string(),
-            },
+            agnt_runtime::tools::handler::ToolSource::Unknown,
+            r#"{"path":"a.rs"}"#,
         ),
         preview,
         result,
@@ -206,11 +201,11 @@ pub(super) fn stat_display() -> Display {
             label: None,
             kind: ContentKind::Plain,
             content: "body".to_string(),
-            stats: Some(ToolDisplayStats {
+            stats: Some(DisplayStats {
                 files_changed: Some(1),
                 insertions: Some(2),
                 deletions: Some(0),
-                ..ToolDisplayStats::default()
+                ..DisplayStats::default()
             }),
         }],
     }

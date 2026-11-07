@@ -1,8 +1,8 @@
 //! The ignored-decision event: a decision for a request that is not pending.
 
-use agnt_core::bus::create_bus;
-use agnt_core::protocol::event::PermissionDecision;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::bus::Bus;
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::events::SystemEvent;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -12,7 +12,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn test_permission_bridge_unknown_request_publishes_ignored() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingPermissionSink::new(selected("allow-once"));
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending())
@@ -44,7 +44,7 @@ async fn test_permission_bridge_unknown_request_publishes_ignored() -> Result<()
 #[tokio::test]
 async fn test_permission_bridge_without_ui_events_publishes_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingPermissionSink::new(selected("allow-once"));
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
@@ -66,7 +66,7 @@ async fn test_permission_bridge_without_ui_events_publishes_nothing() -> Result<
 #[tokio::test]
 async fn test_permission_bridge_pending_request_publishes_no_ignored() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingPermissionSink::new(selected("allow-once"));
     let pending = empty_pending();

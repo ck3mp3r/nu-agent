@@ -6,3 +6,5 @@ version.workspace = true
 [dependencies]
 wiremock = "0.6.5"
 serde_json = { workspace = true }
+syn = { workspace = true }
+proc-macro2 = { workspace = true }

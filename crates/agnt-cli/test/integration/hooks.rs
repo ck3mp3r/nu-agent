@@ -7,8 +7,8 @@
 
 use super::*;
 
-use agnt_core::bus::TurnEvent;
-use agnt_core::hooks::HookProcessError;
+use agnt_runtime::bus::TurnEvent;
+use agnt_runtime::hooks::HookProcessError;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -29,7 +29,7 @@ impl RecordingProcess {
     }
 }
 
-impl agnt_core::hooks::HookProcess for RecordingProcess {
+impl agnt_runtime::hooks::HookProcess for RecordingProcess {
     async fn run(
         &self,
         _script: &std::path::Path,
@@ -82,21 +82,26 @@ async fn test_integration_hooks_zero_hooks_spawns_no_runner() -> Result<()> {
     // -- Setup & Fixtures
     let env = support::TestEnv::new().await?;
     env.write_default_config()?;
-    let config = agnt_core::config::toml_config::load_from(&env.config_path())?;
-    let bus = agnt_core::bus::create_bus();
+    let config = agnt_runtime::config::toml_config::load_from(&env.config_path())?;
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
 
     // -- Exec
     let handles = crate::mode::spawn_configured_hooks(
         Some(&config),
-        &bus,
+        agnt_runtime::hooks::HookSources {
+            turn: bus.turn(),
+            ui_event: bus.ui_event(),
+            compaction_tx: bus.compaction(),
+            session: bus.session(),
+        },
         env.config_path()
             .parent()
             .ok_or("config path has no parent")?,
         env.config_path()
             .parent()
             .ok_or("config path has no parent")?,
-        &agnt_core::hooks::HookAgentContext::default(),
+        &agnt_runtime::hooks::HookAgentContext::default(),
         process.clone(),
     );
 
@@ -118,8 +123,8 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
         "[models.default]\nmodel = \"ollama/llama3\"\n\n[providers.ollama]\nbase_url = \"{}\"\n\n[[hooks]]\nname = \"audit\"\nevents = [\"turn_started\"]\nscript = \"audit.nu\"\n",
         env.llm().uri()
     ))?;
-    let config = agnt_core::config::toml_config::load_from(&env.config_path())?;
-    let bus = agnt_core::bus::create_bus();
+    let config = agnt_runtime::config::toml_config::load_from(&env.config_path())?;
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
     let config_dir = env
         .config_path()
@@ -130,10 +135,15 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
     // -- Exec
     let handles = crate::mode::spawn_configured_hooks(
         Some(&config),
-        &bus,
+        agnt_runtime::hooks::HookSources {
+            turn: bus.turn(),
+            ui_event: bus.ui_event(),
+            compaction_tx: bus.compaction(),
+            session: bus.session(),
+        },
         &config_dir,
         &config_dir,
-        &agnt_core::hooks::HookAgentContext::default(),
+        &agnt_runtime::hooks::HookAgentContext::default(),
         process.clone(),
     );
     let _ = bus

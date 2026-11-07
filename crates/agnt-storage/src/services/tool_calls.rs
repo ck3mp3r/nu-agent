@@ -104,7 +104,7 @@ impl ToolCallStatus {
     }
 
     /// The status `stored` names; `None` when it names none of them.
-    fn parse(stored: &str) -> Option<Self> {
+    pub(crate) fn parse(stored: &str) -> Option<Self> {
         match stored {
             "success" => Some(Self::Success),
             "failed" => Some(Self::Failed),

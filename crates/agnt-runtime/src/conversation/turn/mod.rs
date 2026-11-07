@@ -1,0 +1,45 @@
+//! Conversation turn execution using agent hooks.
+//!
+//! This module provides `execute_turn` which handles a single conversation turn:
+//! sending user input to the LLM, executing tool calls via hooks, and returning
+//! the final response. Permission and lifecycle events flow to consumers through
+//! the shared `Bus`; core never threads a `ProgressUi` through the turn.
+//!
+//! It also carries the chars/4 token estimate the compaction decision thresholds
+//! on.
+
+// region:    --- Modules
+
+mod context;
+mod execute;
+mod proxy;
+
+pub use context::*;
+pub use execute::*;
+
+pub mod executor;
+
+pub mod feedback;
+
+pub(crate) mod error;
+pub use error::TurnError;
+
+pub mod token_estimate;
+
+// endregion: --- Modules
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/unit.rs"]
+mod unit_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../test/conversation/turn/test.rs"]
+mod test;
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/cancel.rs"]
+mod cancel_test;
+
+// endregion: --- Tests

@@ -2,8 +2,8 @@
 //! status mutated in place, and a replay that never spins.
 
 use super::*;
-use agnt_core::transcript::ir::NoticeKind;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::NoticeKind;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// The transcript's compaction task lines, in order.
 fn task_lines(state: &AppState) -> Vec<(String, String, ItemStatus)> {
@@ -120,7 +120,7 @@ fn compaction_finish_finds_the_line_after_cap_eviction() -> Result<()> {
     let mut state = AppState::default();
     for index in 0..1_990 {
         state.transcript.push_entry(TranscriptEntry::Message(
-            agnt_core::transcript::entry::MessageEntry {
+            agnt_render::transcript::entry::MessageEntry {
                 role: MessageRole::Assistant,
                 markdown: format!("line {index}"),
                 timestamp_millis: None,
@@ -133,7 +133,7 @@ fn compaction_finish_finds_the_line_after_cap_eviction() -> Result<()> {
     // Overflow the cap: the head entries are evicted, the line shifts with them.
     for index in 0..40 {
         state.transcript.push_entry(TranscriptEntry::Message(
-            agnt_core::transcript::entry::MessageEntry {
+            agnt_render::transcript::entry::MessageEntry {
                 role: MessageRole::Assistant,
                 markdown: format!("tail {index}"),
                 timestamp_millis: None,

@@ -1,22 +1,21 @@
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 // ---------------------------------------------------------------------------
 // Eviction shifts domain block_index bookkeeping (task 7f67b85b)
 // ---------------------------------------------------------------------------
 
 use crate::interaction::reducer::reduce;
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
+use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
 
 /// A `ToolStarted` event for `name`/`arguments`.
 fn started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            "mcp",
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             arguments,
-            CallLine::from_json_summary(arguments),
         ),
     }
 }
@@ -26,15 +25,13 @@ fn completed(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            "closure",
+            agnt_runtime::tools::handler::ToolSource::Closure,
             arguments,
-            CallLine::from_json_summary(arguments),
         ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
             result: "{}".to_string(),
-            display: None,
             error_kind: None,
             message: None,
         },
@@ -80,7 +77,7 @@ fn shift_bookkeeping_after_eviction_shifts_or_drops_tool_call_block_index() -> R
         state.tool.calls.push(ToolCallLine {
             id: 1,
             status: ToolCallStatus::InProgress,
-            key: ToolCallId::of("edit", "{}"),
+            key: ToolCallId::new("edit", "{}"),
             block_index: initial,
         });
 
@@ -241,7 +238,7 @@ fn eviction_then_set_tool_preview_lands_on_shifted_tool_entry() -> Result<()> {
     let len_before = state.transcript.len();
     assert!(state.tool.set_tool_preview(
         &mut state.transcript,
-        &ToolCallId::of("edit", edit_arguments),
+        &ToolCallId::new("edit", edit_arguments),
         &preview,
     ));
 

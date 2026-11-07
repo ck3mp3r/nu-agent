@@ -1,6 +1,9 @@
 // region:    --- Modules
 
 pub mod backend;
+mod ui_renderer;
+
+pub use ui_renderer::UiRenderer;
 
 // endregion: --- Modules
 
@@ -11,10 +14,10 @@ mod contract_test;
 #[path = "../../test/renderer/streaming/test.rs"]
 mod streaming_test;
 
-use agnt_core::protocol::event::ToolDisplay;
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
-use agnt_core::renderer::UiRenderer;
-use agnt_core::transcript::ir::{StyleHint, annotate_diff_hint};
+use agnt_render::tool_args::plain_call_text;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::{Display, StyleHint, annotate_diff_hint};
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -23,6 +26,29 @@ use crate::formatter::{ToolEndView, format_tool_start};
 use crate::markdown_buffer::StreamingMarkdownBuffer;
 use crate::policy::{UiPolicy, Verbosity};
 use crate::spinner::SpinnerState;
+
+/// The call line the TTY prints for `call`: derived from the call's name and
+/// raw arguments, with the arrow the terminal adds itself stripped.
+fn call_line_for(call: &agnt_runtime::protocol::events::ToolCall) -> String {
+    let line = call.call_line();
+    plain_call_text(&line).to_string()
+}
+
+/// The label this renderer prints for a tool source.
+trait ToolSourceLabel {
+    fn label(self) -> &'static str;
+}
+
+impl ToolSourceLabel for agnt_runtime::tools::handler::ToolSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Closure => "closure",
+            Self::Mcp => "mcp",
+            Self::Builtin => "builtin",
+            Self::Unknown => "unknown",
+        }
+    }
+}
 
 pub struct StderrUiRenderer<W: Write> {
     writer: W,
@@ -99,7 +125,7 @@ impl<W: Write> StderrUiRenderer<W> {
     /// annotation routes through the shared `annotate_diff_hint` helper —
     /// the same function the markdown diff projection uses — so both paths
     /// style diff lines identically (hunk, file-meta, add, remove).
-    fn render_tool_display(&mut self, display: &ToolDisplay) {
+    fn render_tool_display(&mut self, display: &Display) {
         if self.policy.quiet {
             return;
         }
@@ -182,8 +208,8 @@ impl<W: Write> StderrUiRenderer<W> {
                     Some(format_tool_start(
                         self.policy.verbosity,
                         &call.name.0,
-                        &call.source,
-                        &call.call_line.to_plain_text(),
+                        call.source.label(),
+                        &call_line_for(call),
                     ))
                 }
             }
@@ -195,7 +221,7 @@ impl<W: Write> StderrUiRenderer<W> {
                         ToolEndView {
                             verbosity: self.policy.verbosity,
                             name: &call.name.0,
-                            source: &call.source,
+                            source: call.source.label(),
                             arguments: &call.arguments,
                             success: outcome.success,
                             result: &outcome.result,
@@ -386,7 +412,7 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 if self.spinner.is_enabled() && !self.policy.quiet =>
             {
                 self.active_tool_name = Some(call.name.0.clone());
-                self.active_tool_args = Some(call.call_line.to_plain_text());
+                self.active_tool_args = Some(call_line_for(call));
                 self.spinner.start();
                 self.draw_spinner();
             }
@@ -427,9 +453,9 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.active_tool_name = None;
                 self.active_tool_args = None;
             }
-            SystemEvent::ToolCompleted { outcome, .. } if !self.policy.quiet => {
-                if let Some(display) = &outcome.display {
-                    self.render_tool_display(display);
+            SystemEvent::ToolCompleted { call, outcome } if !self.policy.quiet => {
+                if let Some(display) = call.result_body(Some(&outcome.result)) {
+                    self.render_tool_display(&display);
                 }
             }
             SystemEvent::InferenceCompleted { usage } if self.streaming_started => {

@@ -77,13 +77,13 @@ fn theme_pref_kebab_value_resolves_after_round_trip() -> Result<()> {
     // -- Setup & Fixtures
     let dir = tempfile::TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
     let path = dir.path().join("theme.json");
-    let pref = agnt_core::theme_pref::ThemePreference {
+    let pref = agnt_runtime::theme_pref::ThemePreference {
         theme: Some("catppuccin-frappe".to_string()),
     };
 
     // -- Exec
     pref.save_to(&path)?;
-    let loaded = agnt_core::theme_pref::ThemePreference::load_from(&path)?;
+    let loaded = agnt_runtime::theme_pref::ThemePreference::load_from(&path)?;
     let name = loaded
         .theme
         .as_deref()

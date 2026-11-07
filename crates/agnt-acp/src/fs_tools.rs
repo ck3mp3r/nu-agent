@@ -10,15 +10,15 @@ use std::path::{Path, PathBuf};
 
 use agent_client_protocol::schema::v1::{ReadTextFileRequest, SessionId, WriteTextFileRequest};
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::tools::fs::core::{
+use agnt_runtime::tools::fs::core::{
     EditMatchMode, EditOccurrence, EditOperation, EditPlan, plan_create_from_content,
     plan_search_replace_from_content, split_lines_preserving_terminators, version_token,
 };
-use agnt_core::tools::fs::diff::compute_edit_unified_diff;
-use agnt_core::tools::handler::edit::{EditToolMode, parse_edit_mode};
-use agnt_core::tools::handler::resolve_fs_path_for_cwd;
-use agnt_core::tools::limits::truncate_tool_output;
-use agnt_core::types::{DynamicTool, ToolDefinition, ToolExecutionError, ToolOutput};
+use agnt_runtime::tools::fs::diff::compute_edit_unified_diff;
+use agnt_runtime::tools::handler::edit::{EditToolMode, parse_edit_mode};
+use agnt_runtime::tools::handler::resolve_fs_path_for_cwd;
+use agnt_runtime::tools::limits::truncate_tool_output;
+use agnt_runtime::types::{DynamicTool, ToolDefinition, ToolExecutionError, ToolOutput};
 
 // endregion: --- Modules
 
@@ -77,7 +77,7 @@ enum ResolvedEditOperation {
 ///
 /// The tool keeps the standard read tool's name, description, and parameters,
 /// so the model cannot tell the two apart. The returned JSON has the same shape
-/// as [`agnt_core::tools::handler::read::ReadTool`]: `path`, `content`,
+/// as [`agnt_runtime::tools::handler::read::ReadTool`]: `path`, `content`,
 /// `total_lines`, `offset`, `limit`, and `version`.
 pub fn make_acp_read_tool(
     def: ToolDefinition,
@@ -148,7 +148,7 @@ pub fn make_acp_read_tool(
 ///
 /// The tool keeps the standard edit tool's name, description, and parameters,
 /// so the model cannot tell the two apart. The returned JSON has the same shape
-/// as [`agnt_core::tools::handler::edit::EditTool`]: `path`, `mode`, `applied`,
+/// as [`agnt_runtime::tools::handler::edit::EditTool`]: `path`, `mode`, `applied`,
 /// `would_change`, `diff`, `stats`, `diagnostics`, `changed`, `replacements`,
 /// `wrote`, `noop`, `conflict`, `expected_version`, `previous_version`, and
 /// `new_version`.

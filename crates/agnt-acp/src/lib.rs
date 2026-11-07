@@ -35,11 +35,11 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_receive_request};
-use agnt_core::bus::{AgentEvent, AgentTx};
-use agnt_core::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
-use agnt_core::hooks::HookAgentContext;
-use agnt_core::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
+use agnt_runtime::bus::{AgentEvent, AgentTx};
+use agnt_runtime::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
+use agnt_runtime::hooks::HookAgentContext;
+use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 /// The session registry shared by every protocol handler.
 ///
@@ -61,15 +61,15 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     // every application path derived from it. The load below reads the file the
     // resolution names, so this entry point never re-derives a base.
     let loaded = toml_config::load();
-    let paths = agnt_core::config::Paths::resolve_for_process(
+    let paths = agnt_runtime::config::Paths::resolve_for_process(
         loaded
             .as_ref()
             .ok()
             .and_then(|config| config.paths.as_ref()),
     )
     .map_err(|err| AcpError::Config(format!("failed to resolve application paths: {err}")))?;
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let config_dir = paths.config_dir();
     let models_cache = match ModelsCache::load_from(&paths.models_cache_path) {
         Ok(cache) => Some(Arc::new(cache)),
@@ -85,7 +85,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     // process-level agent hook envelopes carry.
     let (hooks, agent_hook_context) = match &loaded {
         Ok(config) => {
-            let hooks = match agnt_core::config::resolve_hooks(config, config_dir) {
+            let hooks = match agnt_runtime::config::resolve_hooks(config, config_dir) {
                 Ok(hooks) => hooks,
                 Err(err) => {
                     log::warn!("Failed to resolve hooks: {err}");
@@ -108,18 +108,18 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     };
     // The rig-memory store of each session is the store path the resolution
     // carries.
-    let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite)
+    let rig = agnt_runtime::session::RigStoreConfig::new(agnt_runtime::config::StoreType::Sqlite)
         .with_store_path(paths.store_path.clone());
     // Agent events are process-scoped, so they ride a standalone channel rather
     // than the per-session bus. The agent-class hook runner is spawned once for
     // this process; hooks with no agent-class event spawn nothing.
     let agent_tx = AgentTx::new("agent", 16);
-    let agent_hook_handles = agnt_core::hooks::spawn_agent_hook_runner(
+    let agent_hook_handles = agnt_runtime::hooks::spawn_agent_hook_runner(
         &agent_tx,
         &hooks,
         &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
         &agent_hook_context,
-        agnt_core::hooks::NuProcess,
+        agnt_runtime::hooks::NuProcess,
     );
     let sessions: SharedSessions = Arc::new(
         AcpSessionManager::new(rig, paths, tokio::runtime::Handle::current())
@@ -141,7 +141,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
             {
                 let client_fs = Arc::clone(&client_fs);
                 async move |request: InitializeRequest, responder, connection| {
-                    *client_fs.lock().unwrap() = Some(ClientFsState {
+                    *lock_client_fs(&client_fs) = Some(ClientFsState {
                         connection,
                         capabilities: request.client_capabilities.fs.clone(),
                     });
@@ -320,7 +320,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
         .await;
     drop(agent_tx);
     for handle in agent_hook_handles {
-        let _ = tokio::time::timeout(agnt_core::hooks::HOOK_DRAIN_TIMEOUT, handle).await;
+        let _ = tokio::time::timeout(agnt_runtime::hooks::HOOK_DRAIN_TIMEOUT, handle).await;
     }
     result?;
 
@@ -330,6 +330,13 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
 // endregion: --- Public Functions
 
 // region:    --- Support
+
+/// The client's filesystem state, recovered if its writer panicked.
+fn lock_client_fs(
+    client_fs: &Arc<StdMutex<Option<ClientFsState>>>,
+) -> std::sync::MutexGuard<'_, Option<ClientFsState>> {
+    client_fs.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn agent_info() -> Implementation {
     Implementation::new("nu-agent", env!("CARGO_PKG_VERSION")).title("nu-agent")
@@ -355,9 +362,9 @@ fn persona_slug(
 /// Returns an empty string when the role does not resolve: the server cannot
 /// serve a session then either, and a hook envelope must never fail a run.
 fn active_model_identity(plugin_config: &PluginConfig) -> String {
-    let env = agnt_core::utils::env_map::process_env();
-    match agnt_core::config::resolve_role_config(plugin_config, None, &env) {
-        Ok(config) => agnt_core::protocol::picker::format_active_model_identity(
+    let env = agnt_runtime::utils::env_map::process_env();
+    match agnt_runtime::config::resolve_role_config(plugin_config, None, &env) {
+        Ok(config) => agnt_runtime::protocol::picker::format_active_model_identity(
             &config.provider,
             &config.model,
         ),

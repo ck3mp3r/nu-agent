@@ -9,6 +9,23 @@ cargo clippy --workspace --tests -- -D warnings   # warnings are errors
 cargo fmt -- --check
 ```
 
+## Tool Discipline
+
+**Symbol truth comes from the AST tools. `grep` is for discovering files, nothing else.**
+
+| Question | Tool |
+|---|---|
+| Which files are involved? | `glob` |
+| Where is `X` declared? What impls does it have? | `ast_nodes` (`struct_item`, `enum_item`, `impl_item`, `function_item`) |
+| Who calls `obj.method(…)`? | `ast_query` over `call_expression` + `field_expression` |
+| Where does the identifier `X` appear? | `ast_refs` |
+| What is this file's shape? | `ast_tree` |
+| What does this line say? | `read` |
+
+- `ast_query` / `ast_nodes` / `ast_refs` / `ast_tree` take **one file**. Discover the file set with `glob`, never with a recursive `grep`.
+- A recursive `grep` for a symbol answers "which files mention this text" and nothing more: it misses type positions, macro-generated names and re-export paths, and cannot tell a definition from a comment.
+- Query gotchas: a `#eq?` predicate must sit **last** inside the node pattern; the grammar rejects `value:` on `field_expression` as an impossible pattern; a predicate on a bare `(identifier)` is silently ignored and returns every identifier in the file.
+
 ## Testing Philosophy
 
 ### Test-Driven Development (TDD)
@@ -229,6 +246,9 @@ cargo llvm-cov --workspace --html --output-dir coverage/
 - Each test should verify one behavior
 - Refactor only when tests are green
 - No hidden global mutable state — use explicit state via structs
+- **Crate splits need a forbidden edge.** A crate boundary exists to make an illegal dependency impossible to express — kernel → rig/orchestration/surface vocabulary; storage → runtime; render → terminal libraries; surface ↔ surface. "Different concern" is not a reason: name the forbidden edge before creating a crate, and if there is none, it is a module. A composition root is meant to be a monolith; what keeps it honest is the enforced walls around it, not fragmentation inside it.
+- **No temporary seams.** A migration never parks a forbidden dependency in the destination crate "for now". A seam is a half-built thing — the same family as a half-built config. Order the work so the wall stands before anything crosses it: if moving a module would make an illegal edge expressible, the code that would express it is removed first, in its own change. The test for a proposed seam is simple: ask what deletes it, and if the answer is "a later step of the same migration", it is not a seam, it is a deferred violation.
+- **Lift sweep before adoption.** Before a module moves into another crate, run the sweep on it: (a) single-expression free functions (`fn x(..) -> T { expr }` — the one-line wrapper), (b) string comparisons on identifiers (`== "vendor"`, `contains("…")`, `starts_with("…")`). Resolve what it surfaces in the lift commit itself: inline or delete helper wrappers, isolate identifier sniffing into one named adapter with a doc note. Never promote either into the new crate. The sweep nominates; it does not mandate. Keep a wrapper when it separates a pure, testable unit from a side effect — deleting it would move the side effect into the pure function and cost the test its subject.
 
 ### Constructor Patterns
 
@@ -245,7 +265,7 @@ Follow the rust10x fluid API conventions:
 
 ### Method & API Design
 
-These laws bind every crate; they record the ADR rulings D7/D8/D11 (ADR note 64cbfced).
+These laws bind every crate; they record the architecture rulings D2/D7/D8/D11 plus the data-only and no-sniffing laws.
 
 **Behavior lives on the owner of the data.**
 - ❌ NO: free functions that hug properties — reading fields of another type, combining fields, or forwarding to a method (a `combine_foo(x: &X)` beside `X`).
@@ -263,6 +283,27 @@ These laws bind every crate; they record the ADR rulings D7/D8/D11 (ADR note 64c
 **Fewer functions, composable traits.**
 - ❌ NO: variant-function families, second ways in, companion free-function modules beside a trait.
 - ✅ YES: one well-named method per behavior; a second entry point is a trait seam, not another function; the public fn count tends to the minimum.
+
+**The substrate carries data only — never display.**
+- ❌ NO: rendered lines, display blocks, preview blobs, style/layout hints, or call-line summaries inside records and data types (kernel or adapter layer).
+- ✅ YES: data granular enough that a consumer which has never seen the producer's code derives every display state from the record's presence + content: identity (stable, derived handles), classification (enumerated kind), payload (raw arguments, result text, deltas, counts), enumerated disposition, causal anchors, order. The record's variant IS the display instruction; how to render it is the consumer's business.
+
+**A producer ships data; the drawer derives the display.**
+- ❌ NO: a rendered payload built by the producer and carried outward — a display block, a section list, stats rows, a language tag, a preview a surface only has to paste. A type that exists so producer and drawer can share a picture is the defect, and moving it to a third crate is not a fix: there is no crate both may see, and that is the design saying the payload is wrong.
+- ✅ YES: the producer emits its own result data (the tool's payload) plus the enumerated disposition; the layer that draws owns `Section`, `ContentKind`, `DisplayStats` and derives them from that payload. A tool is identity, input, output, and a possible side effect — nothing about it is drawn.
+- ✅ YES: the drawer's vocabulary lives in the drawer. When two crates each need a shape, they each own one and the seam converts between them; the kernel is for what is genuinely shared and data — identity and enumerated classification.
+
+**One trait impl for the data; static dispatch.**
+- ❌ NO: a bare free function that takes a name or a kind and matches to pick behaviour — `tool_display_from_result(name, payload)`, `render_for(call)` over a `match kind`. Every call site re-decides what the type already knew.
+- ❌ NO: a `&dyn Trait` / `Box<dyn Trait>` table of per-tool implementations. A runtime discriminator does not justify a vtable: it makes the dispatch dynamic, and the workspace bans trait objects outside the named boundaries.
+- ✅ YES: the behaviour lives in a trait the drawer owns, implemented **for the data type** — `impl ToolView for ToolCall`, where the trait is local and the type is foreign (orphan-legal). Call sites are extension methods: `call.call_line()`, `call.result_body(payload)`, `call.preview_body(content)`. The concrete type is known at every call site, so dispatch is **static**.
+- ✅ YES: the match happens inside the impl, on use. Resolution is derivation, and derivation may not be stored — a `ToolView { call, kind }` cache, or a wrapper whose `new(call)` resolves nothing, is the same defect as any other cached derivative.
+- ✅ YES: adding a tool that draws something is one arm in `call_line` and, when it draws one, one arm in `result_body`/`preview_body`; the drawer's view module is the only file that changes, and nothing downstream learns a new branch.
+- ✅ YES: the *event* that announces a drawable thing carries only what a surface cannot derive. `PreviewRequested` is published for a call whose gate has a card — an `edit` always, a `nu` command when the arguments name one — and never for a tool that draws none; whether a card exists is a flag on the gate context (`shows_preview`), and the content beside it is optional.
+
+**No string sniffing, ever.**
+- ❌ NO: deciding behavior by parsing text — `reason.starts_with(PREFIX)`, suffix checks, pattern matches over message/result strings, sentinel strings.
+- ✅ YES: the producer that knows a distinction emits an enum variant (`StopCause::DoomLoop`, `ToolStatus::Cancelled`); text fields are content for display only. A distinction no consumer acts on does not get an enum.
 
 ### Code Structure (rust10x regions)
 
@@ -339,8 +380,9 @@ build failures. `#[allow(...)]` is never acceptable — fix the code instead.
 - ❌ NO: `unwrap()` or `expect("...")` in production code
 - ❌ NO: `unwrap()` or `expect("...")` in test or example code
 - ✅ YES: `unwrap_or`, `unwrap_or_else`, `if let`, `?`, `.ok_or("should have ...")?`
-- ✅ YES: `mutex.lock().unwrap()` — mutex poison is a fatal internal
-  inconsistency and panicking is correct (the ONLY exception)
+- ✅ YES: locking a `std` mutex or `RwLock` through an owner method or a file-private helper
+  containing `.lock().unwrap_or_else(|e| e.into_inner())`; production code recovers from
+  poison and SHALL NOT `.unwrap()` or `.expect()` a lock result
 - For tests, use `.ok_or("should be ...")?` with `type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>`
 
 ### Nested `if` Statements
@@ -539,9 +581,30 @@ fn test_module_function_variant() -> Result<()> {
 - Test support functions at the end under `// -- Test Support` (inline) or `// region: --- Test Support` (dedicated file)
 - For temp data files, use paths like `tests-data/.tmp/test_function_name/`
 
+## Design Choices
+
+Before adding a crate, a layer, an event, or a rendering path, read `docs/design-choices.md`. It states the patterns this workspace follows — forbidden edges, the kernel as a data plane, producer-ships-data/drawer-derives-display, text parsed once at the boundary, the builder-gated composition root, the loop owner, the store-owned transcript ETL — and where a new thing belongs. Each rule is marked *enforced* or *direction*; do not cite a direction as if it already exists.
+
+The properties the **target** must satisfy — and the numbered checks (`ARCH-1` … `ARCH-12`) that fail the build when one stops holding — are in `docs/target-architecture.md`. A slice is accepted against those assertions, never against "tests pass".
+
+## Reviewing a change
+
+A review is the judgement the author cannot supply about their own work. It is not a second test run.
+
+- ✅ **Diff against the spec**, including every change the report does not mention — the unreported change is the highest-yield finding.
+- ✅ **Load-bearing claims checked by inspection**: a lockfile delta, a moved import, a count that must be exact. Use a targeted command only where reading cannot answer — `git diff -- <path>`, `cargo metadata --no-deps`, `cargo tree -p <crate> --edges normal`.
+- ✅ **The laws**: no `#[allow(...)]`, no `unwrap()`/`expect()`, no new dependency edge, no test-only code in production, symbol truth from the AST tools.
+- ✅ **Test adequacy**: does a test fail *without* this change? If the behaviour is unpinned, say so — that is a finding.
+- ❌ Re-running the full suite the developer already ran on the same tree. It answers a question the diff already answers, and it makes the reviewer certify behaviour, which a green suite cannot do.
+- ❌ Restating the developer's report as the verdict. A review that agrees with the report has verified nothing.
+
 ## Docs Guardrails (Tool/Authz/TUI changes)
 
 When changing tool handler modules, permission UX, or TUI transcript rendering:
 
 - Follow `docs/contribution-guardrails.md` checklist (inline permission card, viewport invariants, sticky controls)
 - Keep `docs/usage.md` aligned with user-visible behavior changes
+
+**Repo files never reference internal notes.**
+- ❌ NO: note IDs, ADR-note citations, or session-note links in `AGENTS.md`, `docs/`, code comments, or commit messages.
+- ✅ YES: the law stands on its own text; provenance lives in the session ledger, and notes may reference repo files — never the reverse.

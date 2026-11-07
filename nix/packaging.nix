@@ -37,7 +37,7 @@
 
   # Build the entire workspace in one derivation. No `-p` flag means cargo
   # builds every workspace member, so both binaries land in $out/bin and
-  # agnt-core is compiled once.
+  # every shared crate is compiled once.
   combinedPackages = inputs.rustnix.lib.rust.buildTargetOutputs {
     inherit
       cargoToml

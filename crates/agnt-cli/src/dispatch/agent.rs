@@ -3,23 +3,23 @@
 use std::io::IsTerminal;
 use std::sync::Arc;
 
-use agnt_core::config::defaults;
-use agnt_core::conversation::builder::{
+use agnt_runtime::config::defaults;
+use agnt_runtime::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, ToolAssembly, assemble_tool_definitions,
     merge_compaction_configs,
 };
-use agnt_core::conversation::runtime_build::{
+use agnt_runtime::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
     build_runtime,
 };
-use agnt_core::hooks::HookAgentContext;
-use agnt_core::session::resolver::{
+use agnt_runtime::hooks::HookAgentContext;
+use agnt_runtime::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
-use agnt_core::tools::closure::{ClosureRegistry, CwdEngine};
-use agnt_core::tools::handler::McpToolRegistry;
-use agnt_core::tools::mcp::config::McpConfig;
-use agnt_core::types::ToolServer;
+use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::config::McpConfig;
+use agnt_runtime::types::ToolServer;
 use nu_protocol::Span;
 
 use crate::AgentArgs;
@@ -70,20 +70,20 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
 
     // Discovery comes first: the file the ladder selects carries the `[paths]`
     // values the full resolution below applies.
-    let discovery = agnt_core::config::Paths::resolve_for_process(None)
+    let discovery = agnt_runtime::config::Paths::resolve_for_process(None)
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let (mut config, plugin_config) = resolve_config_from_clap(args, &discovery.config_path)?;
 
     let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
-    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+    let paths = agnt_runtime::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let theme_path = paths.theme_path.clone();
-    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+    let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.
@@ -152,7 +152,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         None
     } else {
         Some(
-            agnt_core::tools::mcp::runtime::connect_servers(
+            agnt_runtime::tools::mcp::runtime::connect_servers(
                 &tool_server_handle,
                 &mcp_config.mcp,
                 Some(cwd.as_path()),
@@ -205,7 +205,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         .map_err(Error::from)?;
 
     // Signal bus shared by tool registration and the runtime.
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
 
     let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
 
@@ -213,10 +213,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
     let merged_compaction =
         merge_compaction_configs(plugin_config.compaction.as_ref(), &cli_compaction);
 
-    let BuildArtifacts {
-        merged_compaction,
-        render_registry,
-    } = AgentRuntimeBuilder::new(BuildInput {
+    let BuildArtifacts { merged_compaction } = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
         closure_registry: &closure_registry,
         cwd: cwd.clone(),
@@ -271,8 +268,8 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         cwd: cwd.clone(),
         paths,
         bus: bus.clone(),
-        render_registry,
         hook_context,
+        compactor_model: None,
     })
     .await
     .map_err(Error::from)?;
@@ -324,7 +321,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
 /// Mirrors the plugin: TUI when no prompt is piped and both stdin and stderr
 /// are terminals; stderr rendering otherwise.
 fn resolve_mode(input_is_nothing: bool) -> CliMode {
-    use agnt_core::conversation::mode_logic::{AgentMode, resolve_agent_mode};
+    use agnt_runtime::conversation::mode_logic::{AgentMode, resolve_agent_mode};
     let stdin_is_tty = std::io::stdin().is_terminal();
     let stderr_is_tty = std::io::stderr().is_terminal();
     match resolve_agent_mode(input_is_nothing, stdin_is_tty, stderr_is_tty) {

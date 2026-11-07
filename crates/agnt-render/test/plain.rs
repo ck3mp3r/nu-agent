@@ -3,11 +3,10 @@ use crate::backend::RowRect;
 use crate::gallery::Gallery;
 use crate::plain::PlainBackend;
 use crate::theme::Theme;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::{ContentKind, Display, DisplaySection, MessageRole, ToolName};
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use crate::transcript::ir::{ContentKind, Display, DisplaySection, MessageRole, ToolName};
+use crate::transcript::renderer::ItemStatus;
+use agnt_kernel::ToolCall;
 
 // ---------------------------------------------------------------------------
 // Flat output
@@ -42,7 +41,7 @@ fn test_plain_backend_renders_flat_text() -> Result<()> {
 #[test]
 fn test_plain_backend_tool_renders_call_line_and_preview() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = tool_entry("→ a.rs", code_display());
+    let entry = tool_entry("a.rs", code_display());
     let rows = PlainBackend::default().measure(&entry, 40);
     let mut backend = PlainBackend::default();
 
@@ -133,16 +132,13 @@ fn user_entry(markdown: &str) -> TranscriptEntry {
     })
 }
 
-fn tool_entry(summary: &str, preview: Display) -> TranscriptEntry {
+fn tool_entry(path: &str, preview: Display) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
-            "",
-            "{}",
-            CallLine {
-                summary: summary.to_string(),
-            },
+            agnt_kernel::ToolSource::Unknown,
+            format!(r#"{{"path":"{path}"}}"#),
         ),
         preview: Some(preview),
         result: None,

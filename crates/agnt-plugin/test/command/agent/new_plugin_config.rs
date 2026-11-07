@@ -3,7 +3,7 @@ use super::test_helpers::{
     test_provider,
 };
 
-use agnt_core::config::{ModelConfig, ModelLimits, ProviderConfig};
+use agnt_runtime::config::{ModelConfig, ModelLimits, ProviderConfig};
 use nu_plugin::SimplePluginCommand;
 use nu_protocol::Value;
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 mod new_plugin_config_tests {
     use super::*;
-    use agnt_core::protocol::picker::format_active_model_identity;
+    use agnt_runtime::protocol::picker::format_active_model_identity;
 
     #[test]
     fn signature_has_model_flag_for_provider_model_format() -> Result<()> {
@@ -114,7 +114,7 @@ GIT_PAGER = ""
 "#,
         )
         .unwrap();
-        let parsed = agnt_core::tools::mcp::config::McpConfig::from_toml(&mcp_value)
+        let parsed = agnt_runtime::tools::mcp::config::McpConfig::from_toml(&mcp_value)
             .map_err(|e| format!("{e:?}"))?;
         assert_eq!(parsed.mcp.len(), 2);
 
@@ -293,7 +293,7 @@ GIT_PAGER = ""
 
     #[test]
     fn resolve_config_new_flow_falls_back_to_global_preamble_on_complete_miss() -> Result<()> {
-        use agnt_core::protocol::preamble::PreambleDefaults;
+        use agnt_runtime::protocol::preamble::PreambleDefaults;
         use std::collections::HashMap;
 
         let mut models = HashMap::new();

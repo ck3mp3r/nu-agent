@@ -6,10 +6,10 @@
 pub(super) use crate::interaction::reducer::reduce;
 pub(super) use crate::state::AppState;
 pub(super) use crate::test_support::entry_text;
-pub(super) use agnt_core::protocol::events::SystemEvent;
-pub(super) use agnt_core::transcript::entry::TranscriptEntry;
-pub(super) use agnt_core::transcript::ir::MessageRole;
-pub(super) use agnt_core::transcript::ir::StyleHint;
+pub(super) use agnt_render::transcript::entry::TranscriptEntry;
+pub(super) use agnt_render::transcript::ir::MessageRole;
+pub(super) use agnt_render::transcript::ir::StyleHint;
+pub(super) use agnt_runtime::protocol::events::SystemEvent;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

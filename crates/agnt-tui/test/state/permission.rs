@@ -1,9 +1,8 @@
 use crate::state::*;
-use agnt_core::protocol::event::PermissionDecision;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::{MessageRole, ToolName};
+use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use agnt_render::transcript::ir::{MessageRole, ToolName};
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::events::ToolCall;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -29,21 +28,18 @@ fn push_assistant(state: &mut AppState, text: &str) {
     state.transcript.push_entry(entry);
 }
 
-fn push_tool_summary(state: &mut AppState, summary: &str) {
+fn push_tool_entry(state: &mut AppState, arguments: &str) {
     let call = ToolCall::new(
         ToolName("read".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: summary.to_string(),
-        },
+        agnt_runtime::tools::handler::ToolSource::Unknown,
+        arguments,
     );
     let entry = TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,
         preview: None,
         result: None,
-        status: agnt_core::transcript::renderer::ItemStatus::Done,
+        status: agnt_render::transcript::renderer::ItemStatus::Done,
     });
     state.transcript.push_entry(entry);
 }
@@ -54,7 +50,7 @@ fn permission_prompt_open_sets_presence_without_scrolling() {
     let mut state = AppState::default();
     push_user(&mut state, "msg1");
     push_assistant(&mut state, "msg2");
-    push_tool_summary(&mut state, "tool1");
+    push_tool_entry(&mut state, "tool1");
     state.scroll.scroll_transcript_to_top();
     assert!(!state.scroll.following_tail);
 

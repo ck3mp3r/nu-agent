@@ -1,7 +1,7 @@
 use super::{ToolCallLine, ToolCallStatus};
-use agnt_core::protocol::events::ToolCallId;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::events::ToolCallId;
 use std::collections::{HashMap, VecDeque};
 
 pub(super) struct ToolCallBookkeeping<'a> {

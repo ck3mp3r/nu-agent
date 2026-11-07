@@ -2,8 +2,8 @@
 //! ACP equivalent.
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
-use agnt_core::protocol::event::{PermissionDecision, ToolDisplay};
-use agnt_core::protocol::events::{RequestId, SystemEvent, SystemKind, Usage};
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::events::{RequestId, SystemEvent, SystemKind, Usage};
 
 use super::support::*;
 use crate::translator::EventTranslator;
@@ -102,7 +102,7 @@ fn test_translator_llm_completed_default_context_size_is_builtin_default() -> Re
     assert_eq!(usage.used, 7);
     assert_eq!(
         usage.size,
-        agnt_core::config::defaults::MAX_CONTEXT_TOKENS as u64
+        agnt_runtime::config::defaults::MAX_CONTEXT_TOKENS as u64
     );
     Ok(())
 }
@@ -289,16 +289,12 @@ fn test_translator_llm_started_produces_none() -> Result<()> {
 fn test_translator_tool_preview_produces_none() -> Result<()> {
     // -- Setup & Fixtures
     let event = SystemEvent::PreviewRequested {
-        call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("edit".to_string()),
-            "builtin",
+        call: agnt_runtime::protocol::events::ToolCall::new(
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit src/file.txt"),
         ),
-        display: ToolDisplay {
-            title: Some("edit src/file.txt".to_string()),
-            sections: vec![diff_section("src/file.txt", "--- a\n+++ b\n")],
-        },
+        preview: None,
     };
 
     // -- Exec & Check
@@ -367,7 +363,7 @@ fn test_translator_compaction_summary_chunk_produces_none() -> Result<()> {
 fn test_translator_permission_requested_produces_none() -> Result<()> {
     // -- Setup & Fixtures
     let event = SystemEvent::PermissionRequested {
-        request_id: RequestId::new("perm-1"),
+        request_id: RequestId::from_minted("perm-1"),
         context: permission_context(),
     };
 
@@ -381,15 +377,15 @@ fn test_translator_permission_decision_events_produce_none() -> Result<()> {
     // -- Setup & Fixtures
     let events = [
         SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "rule".to_string(),
         },
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
         },
         SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
             reason: "superseded".to_string(),
         },
     ];

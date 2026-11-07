@@ -3,10 +3,12 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agnt_core::bus::CancelEvent;
-use agnt_core::conversation::runtime::AgentConversationRuntime;
-use agnt_core::orchestrator::run_single_turn;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::bus::CancelEvent;
+use agnt_runtime::conversation::contracts::RuntimeAccess;
+use agnt_runtime::orchestrator::run_single_turn;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::events::SystemEvent;
+use agnt_runtime::session::management::SessionPersistence;
 use agnt_tty::policy::UiPolicy;
 use agnt_tty::{StderrUiFactory, UiRendererFactory};
 use nu_protocol::{Span, Value};
@@ -28,33 +30,42 @@ use super::{
 /// best-effort: the hook tasks are detached and the process exits as soon as
 /// this returns, so an in-flight hook subprocess gets a bounded moment to
 /// finish.
-pub async fn run_stderr_mode(
-    runtime_impl: &mut AgentConversationRuntime,
+pub async fn run_stderr_mode<R>(
+    runtime_impl: &mut R,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
     a2a: A2aContext,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    R: CoreRuntime + RuntimeAccess + SessionPersistence,
+{
     let config = runtime_impl.startup_plugin_config();
     let cwd = runtime_impl
         .mcp_caller_cwd()
         .unwrap_or(std::path::Path::new("."));
 
     // Zero hooks spawns nothing.
+    let hook_bus = runtime_impl.bus_handle();
     let hook_handles = spawn_configured_hooks_with_nu(
         config,
-        &runtime_impl.bus,
+        agnt_runtime::hooks::HookSources {
+            turn: hook_bus.turn(),
+            ui_event: hook_bus.ui_event(),
+            compaction_tx: hook_bus.compaction(),
+            session: hook_bus.session(),
+        },
         cwd,
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     );
     let agent_lifecycle = AgentLifecycle::start_configured(
         "stderr",
         config,
         cwd,
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     )
     .await;
 
@@ -74,14 +85,17 @@ pub async fn run_stderr_mode(
 }
 
 /// The stderr-mode body, without the hook runner setup and drain.
-async fn run_stderr_mode_inner(
-    runtime_impl: &mut AgentConversationRuntime,
+async fn run_stderr_mode_inner<R>(
+    runtime_impl: &mut R,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
     mut a2a: A2aContext,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    R: CoreRuntime + RuntimeAccess + SessionPersistence,
+{
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
     // Build the stderr renderer. In stderr mode core emits domain events on the
@@ -136,8 +150,11 @@ async fn run_stderr_mode_inner(
 /// `compaction`, emits each event on the stderr renderer while the turn runs,
 /// and bridges the user's Ctrl+C (via `cancel_flag`) into a `CancelEvent` on
 /// `bus.cancel()`.
-async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
-    runtime_impl: &mut AgentConversationRuntime,
+async fn run_stderr_turn<
+    RU: CoreRuntime + RuntimeAccess,
+    R: agnt_tty::renderer::UiRenderer + Send + 'static,
+>(
+    runtime_impl: &mut RU,
     renderer: R,
     cancel_flag: &Arc<AtomicBool>,
     prompt: String,
@@ -145,7 +162,7 @@ async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
 ) -> Result<Value> {
     use std::sync::atomic::Ordering as AtomicOrdering;
 
-    let bus = runtime_impl.bus.clone();
+    let bus = runtime_impl.bus_handle();
     // The renderer is shared between the drain task and the final flush.
     let shared = Arc::new(std::sync::Mutex::new(renderer));
     let stop = Arc::new(AtomicBool::new(false));
@@ -204,7 +221,7 @@ async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
 
     // Drive the turn. Core publishes events on the bus; the drain task forwards
     // them to the renderer as they arrive.
-    let result = run_single_turn(runtime_impl, &bus, prompt, context, Span::unknown())
+    let result = run_single_turn(runtime_impl, bus.turn(), prompt, context, Span::unknown())
         .await
         .map_err(Error::from);
 

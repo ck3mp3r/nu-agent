@@ -3,8 +3,8 @@
 //! scroll math.
 
 use super::support::*;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::MessageRole;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// WHEN a short markdown entry is measured and painted, THE painted row count
 /// SHALL equal the measured one.
@@ -45,7 +45,7 @@ fn test_renderer_measure_code_preview_includes_surface_margins() -> Result<()> {
     // -- Setup & Fixtures: one call row and a three-line code body.
     let entry = tool_entry(
         "nu",
-        "→ ls",
+        r#"{"command":"ls"}"#,
         Some(code_display("nu", "alpha\nbeta\ngamma")),
         None,
         ItemStatus::Done,
@@ -78,7 +78,7 @@ fn test_renderer_measure_diff_preview_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
     let entry = tool_entry(
         "edit",
-        "→ a.rs",
+        r#"{"path":"a.rs"}"#,
         Some(diff_display(SIMPLE_DIFF)),
         None,
         ItemStatus::Done,
@@ -123,7 +123,7 @@ fn test_renderer_measure_plain_display_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
     let entry = tool_entry(
         "read",
-        "→ a.rs",
+        r#"{"path":"a.rs"}"#,
         Some(plain_display("one plain body line")),
         None,
         ItemStatus::Done,

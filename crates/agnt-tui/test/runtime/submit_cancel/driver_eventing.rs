@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// The render loop hands a submitted prompt to the orchestrator channel exactly
 /// once, forwards Quit on Ctrl+C, and a global abort cancels active and pending

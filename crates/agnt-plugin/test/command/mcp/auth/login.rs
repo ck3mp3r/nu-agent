@@ -1,4 +1,4 @@
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 use super::login::validate_login_config;
 

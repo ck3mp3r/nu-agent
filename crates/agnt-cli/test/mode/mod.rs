@@ -26,8 +26,8 @@ mod support;
 use super::*;
 
 use agnt_a2a::{InMemoryTaskStore, Task, TaskState};
-use agnt_core::bus::{AgentEvent, AgentTx};
-use agnt_core::config::{HookEvent, ResolvedHook};
+use agnt_runtime::bus::{AgentEvent, AgentTx};
+use agnt_runtime::config::{HookEvent, ResolvedHook};
 use nu_protocol::Span;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

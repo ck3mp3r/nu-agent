@@ -40,10 +40,11 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
     let sink = RecordingSink::default();
-    let bus = manager
+    let compaction = manager
         .get_session(&session_id)
         .ok_or("session must exist")?
-        .bus()
+        .channels()
+        .compaction
         .clone();
 
     // Park the turn on the session's runtime lock. `prompt()` subscribes its
@@ -65,22 +66,19 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
     );
 
     // -- Exec
-    let _ = bus
-        .compaction()
+    let _ = compaction
         .send(SystemEvent::CompactionStarted {
             source: "auto".to_string(),
         })
         .await;
-    let _ = bus
-        .compaction()
+    let _ = compaction
         .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: "the session covered the parser rewrite".to_string(),
             summary_body: "the session covered the parser rewrite in full detail".to_string(),
         })
         .await;
-    let _ = bus
-        .compaction()
+    let _ = compaction
         .send(SystemEvent::CompactionFailed {
             source: "auto".to_string(),
             message: "the summarizer returned nothing".to_string(),

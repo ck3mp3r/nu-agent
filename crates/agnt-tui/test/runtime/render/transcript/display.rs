@@ -2,10 +2,9 @@ use super::*;
 
 use crate::interaction::reducer::reduce;
 use crate::widgets::RatatuiBackend;
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::{SystemEvent, ToolOutcome};
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::RenderBackend;
+use agnt_runtime::protocol::events::{SystemEvent, ToolOutcome};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// The pane width every fixture renders at. The list area is two columns
 /// narrower: one margin column on each side.
@@ -39,7 +38,7 @@ fn test_transcript_display_completion_paints_once_after_a_rebuild() -> Result<()
         "the fixture transcript must start without the display"
     );
     start_call(&mut coord);
-    complete_call_with_display(&mut coord);
+    complete_call(&mut coord);
 
     // -- Exec: paint, then force a height-index rebuild with a resize.
     let before_rebuild = render_transcript_pane_to_backend(&mut coord, COLUMNS, ROWS, true, 0);
@@ -80,7 +79,7 @@ fn test_transcript_display_completion_remeasures_the_height_index() -> Result<()
     start_call(&mut coord);
 
     // -- Exec: the completion records the display on the entry in place.
-    complete_call_with_display(&mut coord);
+    complete_call(&mut coord);
 
     // -- Check: the in-place mutation re-measures the entry and leaves the
     // index valid — no wholesale rebuild is needed for the next paint.
@@ -123,26 +122,11 @@ fn test_transcript_display_completion_remeasures_the_height_index() -> Result<()
 
 /// The fixture tool call: an edit of `a.rs`, started and completed with one key.
 fn fixture_call() -> ToolCall {
-    let arguments = r#"{"path":"a.rs"}"#;
     ToolCall::new(
         ToolName("edit".to_string()),
-        "mcp",
-        arguments,
-        CallLine::from_json_summary(arguments),
+        agnt_runtime::tools::handler::ToolSource::Mcp,
+        r#"{"path":"a.rs"}"#,
     )
-}
-
-/// The completion display: one plain section carrying the two marker lines.
-fn completion_display() -> ToolDisplay {
-    ToolDisplay {
-        title: None,
-        sections: vec![ToolDisplaySection {
-            label: None,
-            kind: ContentKind::Plain,
-            content: format!("{ALPHA}\n{BETA}"),
-            stats: None,
-        }],
-    }
 }
 
 /// Fold a `ToolStarted` event for the fixture call through the reducer.
@@ -157,9 +141,9 @@ fn start_call(coord: &mut RuntimeCoordinator) {
     assert!(changed, "starting a tool call must report a change");
 }
 
-/// Fold a `ToolCompleted` event carrying the fixture completion display through
-/// the reducer.
-fn complete_call_with_display(coord: &mut RuntimeCoordinator) {
+/// Fold a `ToolCompleted` event whose result carries the fixture diff through
+/// the reducer. The surface derives the completion body from that data.
+fn complete_call(coord: &mut RuntimeCoordinator) {
     let changed = reduce(
         &mut coord.state,
         SystemEvent::ToolCompleted {
@@ -167,8 +151,7 @@ fn complete_call_with_display(coord: &mut RuntimeCoordinator) {
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
-                result: "{}".to_string(),
-                display: Some(completion_display()),
+                result: format!("{{\"path\":\"a.rs\",\"diff\":\"{ALPHA}\\n{BETA}\"}}"),
                 error_kind: None,
                 message: None,
             },

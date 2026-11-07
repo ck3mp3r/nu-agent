@@ -1,8 +1,8 @@
 //! The stderr renderer's `permission_auto_resolved` line.
 
 use super::super::super::StderrUiRenderer;
-use agnt_core::protocol::events::{AutoResolutionAction, SystemEvent};
-use agnt_core::renderer::UiRenderer;
+use crate::renderer::UiRenderer;
+use agnt_runtime::protocol::events::{AutoResolutionAction, SystemEvent};
 
 use crate::policy::{UiPolicy, Verbosity};
 

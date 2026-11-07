@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use chrono::Utc;
 use tokio::sync::mpsc;
@@ -40,6 +40,69 @@ impl Default for InMemoryTaskStore {
             update_seq: RwLock::new(HashMap::new()),
             next_seq: AtomicU64::new(0),
         }
+    }
+}
+
+impl InMemoryTaskStore {
+    // -----------------------------------------------------------------------
+    // Lock accessors
+    // -----------------------------------------------------------------------
+
+    /// The task map, recovered if a writer panicked mid-insert.
+    fn read_tasks(&self) -> RwLockReadGuard<'_, HashMap<String, Task>> {
+        self.tasks.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The task map, recovered if a reader panicked mid-read.
+    fn write_tasks(&self) -> RwLockWriteGuard<'_, HashMap<String, Task>> {
+        self.tasks.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The subscription map, recovered if a writer panicked mid-insert.
+    fn read_subscriptions(
+        &self,
+    ) -> RwLockReadGuard<'_, HashMap<String, Vec<mpsc::Sender<TaskEvent>>>> {
+        self.subscriptions.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The subscription map, recovered if a reader panicked mid-read.
+    fn write_subscriptions(
+        &self,
+    ) -> RwLockWriteGuard<'_, HashMap<String, Vec<mpsc::Sender<TaskEvent>>>> {
+        self.subscriptions
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The push-config map, recovered if a writer panicked mid-insert.
+    fn read_push_configs(
+        &self,
+    ) -> RwLockReadGuard<'_, HashMap<String, Vec<PushNotificationConfig>>> {
+        self.push_configs.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The push-config map, recovered if a reader panicked mid-read.
+    fn write_push_configs(
+        &self,
+    ) -> RwLockWriteGuard<'_, HashMap<String, Vec<PushNotificationConfig>>> {
+        self.push_configs.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The idempotency map, recovered if a writer panicked mid-insert.
+    fn write_idempotency_keys(&self) -> RwLockWriteGuard<'_, HashMap<String, String>> {
+        self.idempotency_keys
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The per-task update sequence, recovered if a writer panicked mid-insert.
+    fn read_update_seq(&self) -> RwLockReadGuard<'_, HashMap<String, u64>> {
+        self.update_seq.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The per-task update sequence, recovered if a reader panicked mid-read.
+    fn write_update_seq(&self) -> RwLockWriteGuard<'_, HashMap<String, u64>> {
+        self.update_seq.write().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -93,7 +156,7 @@ impl TaskStoreBackend for InMemoryTaskStore {
         // store-assigned update sequence descending, then by task ID ascending
         // so equal timestamps still order deterministically (HashMap iteration
         // order is not stable).
-        let seq = self.update_seq.read().unwrap();
+        let seq = self.read_update_seq();
         let mut sorted = filtered;
         sorted.sort_by(|a, b| {
             b.status
@@ -155,18 +218,14 @@ impl TaskStoreBackend for InMemoryTaskStore {
             metadata,
         ) {
             Ok(task) => {
-                self.subscriptions
-                    .write()
-                    .expect("subscriptions lock")
+                self.write_subscriptions()
                     .entry(task.id.clone())
                     .or_default()
                     .push(tx.clone());
                 Ok(task)
             }
             Err(existing) => {
-                self.subscriptions
-                    .write()
-                    .expect("subscriptions lock")
+                self.write_subscriptions()
                     .entry(existing.id.clone())
                     .or_default()
                     .push(tx.clone());
@@ -188,7 +247,7 @@ impl InMemoryTaskStore {
         parent_task_id: Option<String>,
         metadata: Option<HashMap<String, Value>>,
     ) -> Result<Task, Box<Task>> {
-        let mut keys = self.idempotency_keys.write().unwrap();
+        let mut keys = self.write_idempotency_keys();
         if let Some(existing_id) = keys.get(key)
             && let Ok(task) = self.get_task(existing_id)
         {
@@ -211,9 +270,9 @@ impl InMemoryTaskStore {
     /// Returns a receiver and whether the task already exists in the store.
     pub fn subscribe(&self, task_id: &str) -> (mpsc::Receiver<TaskEvent>, bool) {
         let (tx, rx) = mpsc::channel(64);
-        let mut subs = self.subscriptions.write().expect("subscriptions lock");
+        let mut subs = self.write_subscriptions();
         subs.entry(task_id.to_string()).or_default().push(tx);
-        let exists = self.tasks.read().expect("tasks lock").contains_key(task_id);
+        let exists = self.read_tasks().contains_key(task_id);
         (rx, exists)
     }
 
@@ -221,7 +280,7 @@ impl InMemoryTaskStore {
     ///
     /// Called internally when sending to a subscriber fails.
     fn prune_subscriptions(&self, task_id: &str) {
-        let mut subs = self.subscriptions.write().expect("subscriptions lock");
+        let mut subs = self.write_subscriptions();
         if let Some(senders) = subs.get_mut(task_id) {
             senders.retain(|tx| !tx.is_closed());
             if senders.is_empty() {
@@ -232,7 +291,7 @@ impl InMemoryTaskStore {
 
     /// Notify all subscribers of a status change.
     fn notify_status_change(&self, task_id: &str, status: &TaskStatus) {
-        let subs = self.subscriptions.read().expect("subscriptions lock");
+        let subs = self.read_subscriptions();
         if let Some(senders) = subs.get(task_id) {
             let event = TaskEvent::StatusChanged {
                 task_id: task_id.to_string(),
@@ -262,7 +321,7 @@ impl InMemoryTaskStore {
 
     /// Notify all subscribers of a new artifact.
     fn notify_artifact_added(&self, task_id: &str, artifact: &Artifact) {
-        let subs = self.subscriptions.read().expect("subscriptions lock");
+        let subs = self.read_subscriptions();
         if let Some(senders) = subs.get(task_id) {
             let event = TaskEvent::ArtifactAdded {
                 task_id: task_id.to_string(),
@@ -300,7 +359,7 @@ impl InMemoryTaskStore {
         url: &str,
         authentication: Option<PushAuthenticationInfo>,
     ) -> PushNotificationConfig {
-        let mut configs = self.push_configs.write().expect("push_configs lock");
+        let mut configs = self.write_push_configs();
         let config = PushNotificationConfig {
             id: Uuid::new_v4().to_string(),
             url: url.to_string(),
@@ -321,7 +380,7 @@ impl InMemoryTaskStore {
         task_id: &str,
         config_id: &str,
     ) -> Option<PushNotificationConfig> {
-        let configs = self.push_configs.read().expect("push_configs lock");
+        let configs = self.read_push_configs();
         configs
             .get(task_id)?
             .iter()
@@ -331,13 +390,13 @@ impl InMemoryTaskStore {
 
     /// List all push notification configs for a task.
     pub fn list_push_configs(&self, task_id: &str) -> Vec<PushNotificationConfig> {
-        let configs = self.push_configs.read().expect("push_configs lock");
+        let configs = self.read_push_configs();
         configs.get(task_id).cloned().unwrap_or_default()
     }
 
     /// Remove a push notification config.
     pub fn delete_push_config(&self, task_id: &str, config_id: &str) {
-        let mut configs = self.push_configs.write().expect("push_configs lock");
+        let mut configs = self.write_push_configs();
         if let Some(entry) = configs.get_mut(task_id) {
             entry.retain(|c| c.id != config_id);
         }
@@ -348,16 +407,14 @@ impl InMemoryTaskStore {
     /// The payload uses the StreamResponse format (spec §4.3.3), matching the
     /// SSE handlers: `{"statusUpdate": {...}}` or `{"artifactUpdate": {...}}`.
     fn notify_push_configs(&self, _task_id: &str, event: &TaskEvent) {
-        let configs = self.push_configs.read().expect("push_configs lock");
+        let configs = self.read_push_configs();
         let task_id = match event {
             TaskEvent::StatusChanged { task_id, .. } => task_id,
             TaskEvent::ArtifactAdded { task_id, .. } => task_id,
         };
         if let Some(entries) = configs.get(task_id) {
             let context_id = self
-                .tasks
-                .read()
-                .expect("tasks lock")
+                .read_tasks()
                 .get(task_id)
                 .and_then(|t| t.context_id.clone());
             let payload = task_event_to_stream_response(event, &context_id);
@@ -404,7 +461,7 @@ impl InMemoryTaskStore {
             created_at: Some(Utc::now()),
             metadata,
         };
-        let mut tasks = self.tasks.write().unwrap();
+        let mut tasks = self.write_tasks();
         tasks.insert(id.clone(), task.clone());
         self.assign_update_seq(&id);
         task
@@ -423,7 +480,7 @@ impl InMemoryTaskStore {
         metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
     ) -> Result<Task, Box<(Task, bool)>> {
         // Single write lock for the entire check-and-insert to prevent TOCTOU race.
-        let mut keys = self.idempotency_keys.write().unwrap();
+        let mut keys = self.write_idempotency_keys();
         if let Some(existing_id) = keys.get(key)
             && let Ok(task) = self.get_task(existing_id)
         {
@@ -438,9 +495,7 @@ impl InMemoryTaskStore {
 
     /// Retrieve a task by ID.
     pub fn get_task(&self, id: &str) -> Result<Task, A2aError> {
-        self.tasks
-            .read()
-            .unwrap()
+        self.read_tasks()
             .get(id)
             .cloned()
             .ok_or_else(|| A2aError::TaskNotFound(id.to_string()))
@@ -456,7 +511,7 @@ impl InMemoryTaskStore {
         new_state: TaskState,
         message: Option<Message>,
     ) -> Result<Task, A2aError> {
-        let mut tasks = self.tasks.write().unwrap();
+        let mut tasks = self.write_tasks();
         let task = tasks
             .get_mut(id)
             .ok_or_else(|| A2aError::TaskNotFound(id.to_string()))?;
@@ -483,7 +538,7 @@ impl InMemoryTaskStore {
 
     /// Append an artifact to a task.
     pub fn add_artifact(&self, id: &str, artifact: Artifact) -> Result<Task, A2aError> {
-        let mut tasks = self.tasks.write().unwrap();
+        let mut tasks = self.write_tasks();
         let task = tasks
             .get_mut(id)
             .ok_or_else(|| A2aError::TaskNotFound(id.to_string()))?;
@@ -496,7 +551,7 @@ impl InMemoryTaskStore {
 
     /// List all tasks, optionally filtered by state.
     pub fn list_tasks(&self, filter: Option<TaskState>) -> Vec<Task> {
-        let tasks = self.tasks.read().unwrap();
+        let tasks = self.read_tasks();
         match filter {
             Some(state) => tasks
                 .values()
@@ -518,7 +573,7 @@ impl InMemoryTaskStore {
         limit: usize,
         cursor: Option<&str>,
     ) -> (Vec<Task>, Option<String>) {
-        let tasks = self.tasks.read().unwrap();
+        let tasks = self.read_tasks();
         let mut filtered: Vec<Task> = tasks.values().cloned().collect();
 
         // Filter by status if provided
@@ -535,7 +590,7 @@ impl InMemoryTaskStore {
         // store-assigned update sequence descending, then by task ID ascending
         // so equal timestamps still order deterministically (HashMap iteration
         // order is not stable).
-        let seq = self.update_seq.read().unwrap();
+        let seq = self.read_update_seq();
         filtered.sort_by(|a, b| {
             b.status
                 .timestamp
@@ -584,7 +639,7 @@ impl InMemoryTaskStore {
     /// Transitions the task to `Completed` and appends the result as a
     /// `Part::Text` artifact named `"result"`.
     pub fn complete_task(&self, id: &str, result: &str) -> Result<Task, A2aError> {
-        let mut tasks = self.tasks.write().unwrap();
+        let mut tasks = self.write_tasks();
         let task = tasks
             .get_mut(id)
             .ok_or_else(|| A2aError::TaskNotFound(id.to_string()))?;
@@ -634,7 +689,7 @@ impl InMemoryTaskStore {
     ///
     /// If the task has no history yet, a new vector is created.
     pub fn append_history(&self, id: &str, message: Message) -> Result<Task, A2aError> {
-        let mut tasks = self.tasks.write().unwrap();
+        let mut tasks = self.write_tasks();
         let task = tasks
             .get_mut(id)
             .ok_or_else(|| A2aError::TaskNotFound(id.to_string()))?;
@@ -663,7 +718,7 @@ impl InMemoryTaskStore {
     /// task with a new status but a stale sequence.
     fn assign_update_seq(&self, id: &str) {
         let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
-        self.update_seq.write().unwrap().insert(id.to_string(), seq);
+        self.write_update_seq().insert(id.to_string(), seq);
     }
 }
 

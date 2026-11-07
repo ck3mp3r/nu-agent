@@ -1,6 +1,6 @@
 use super::support::*;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::MessageRole;
 
 // ---------------------------------------------------------------------------
 // User prose

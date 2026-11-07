@@ -48,7 +48,7 @@ async fn test_integration_agent_run_agent_persona_max_tool_turns_bounds_tool_loo
     // re-runs the turn once with a fresh budget.
     assert_eq!(
         bodies.len(),
-        9 * (1 + usize::from(agnt_core::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
+        9 * (1 + usize::from(agnt_runtime::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
         "the persona max_tool_turns value must bound the tool-call rounds"
     );
     Ok(())
@@ -93,7 +93,7 @@ async fn test_integration_agent_run_agent_cli_max_turns_overrides_persona() -> R
     // re-runs the turn once with a fresh budget.
     assert_eq!(
         bodies.len(),
-        3 * (1 + usize::from(agnt_core::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
+        3 * (1 + usize::from(agnt_runtime::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
         "the CLI --max-turns value must win over the persona max_tool_turns value"
     );
     Ok(())
@@ -125,7 +125,7 @@ async fn test_integration_agent_run_agent_default_max_tool_turns_is_twenty() -> 
     // retry re-runs the turn once with a fresh budget.
     assert_eq!(
         bodies.len(),
-        20 * (1 + usize::from(agnt_core::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
+        20 * (1 + usize::from(agnt_runtime::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
         "stderr mode must apply the pipeline-mode default budget of 20 tool-call rounds"
     );
     Ok(())

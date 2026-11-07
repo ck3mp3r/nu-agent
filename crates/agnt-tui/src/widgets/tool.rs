@@ -7,12 +7,13 @@
 //! preview shows while the call is pending, the completion result takes over,
 //! and the preview persists when the completion carries no display.
 
-use agnt_core::transcript::entry::ToolEntry;
-use agnt_core::transcript::ir::{ContentKind, ContentLine, Display, StyleHint};
-use agnt_core::transcript::markdown::{project_code_block_lines, project_diff_lines};
 use agnt_render::catalog::{
     CallLineRow, CodeSurface, DiffView, LaneKind, LaneLine, StatRow, SurfaceRow,
 };
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::ToolEntry;
+use agnt_render::transcript::ir::{ContentKind, ContentLine, Display, StyleHint};
+use agnt_render::transcript::markdown::{project_code_block_lines, project_diff_lines};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -49,7 +50,7 @@ impl ToolWidget<'_> {
     fn call_line(&self) -> CallLineRow {
         CallLineRow::new(
             self.entry.call.name.0.clone(),
-            self.entry.call.call_line.summary.clone(),
+            self.entry.call.call_line(),
             Some(self.entry.status),
         )
     }

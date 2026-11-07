@@ -1,5 +1,5 @@
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::renderer::UiRenderer;
+use crate::renderer::UiRenderer;
+use agnt_runtime::protocol::events::SystemEvent;
 
 use crate::factory::{StderrUiFactory, UiRendererFactory};
 use crate::policy::{UiPolicy, Verbosity};

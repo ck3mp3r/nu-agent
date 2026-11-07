@@ -1,5 +1,6 @@
 //! rig's [`Store`] contract: its logs, with the compare-and-set writes that
-//! are rig's durability contract.
+//! are rig's durability contract, and the transcript read the re-hydration path
+//! walks.
 
 // region:    --- Modules
 
@@ -9,8 +10,35 @@ use rig_memory::{LogWriteError, Store, check_name};
 
 use super::work::{AppendLog, Destroy, LogNames, ReadLog, ReplaceLog};
 use super::{RigAdapter, not_found, sql_error};
+use crate::services::ReadTranscript;
+use crate::transcript::TranscriptRecord;
 
 // endregion: --- Modules
+
+// region:    --- Transcript
+
+impl RigAdapter {
+    /// The session's transcript rows, in fold order — the store's one transcript
+    /// read.
+    ///
+    /// The re-hydration path calls this and nothing else: the store hands out the
+    /// rows it folded, with no second fold between the table and the caller (D19).
+    /// Each row's id is derived again from the content it came from and compared
+    /// with the id the row stores, so a row whose id disagrees with its content is
+    /// refused rather than handed out.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError`] when the engine is gone, SQLite refuses the read, or a
+    /// stored row carries a shape, or an id, its content does not derive.
+    pub fn transcript(&self) -> crate::error::Result<Vec<TranscriptRecord>> {
+        self.storage.call_blocking(ReadTranscript {
+            session_id: self.session_id.clone(),
+        })?
+    }
+}
+
+// endregion: --- Transcript
 
 // region:    --- Store
 

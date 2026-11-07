@@ -6,17 +6,18 @@
 pub(super) use crate::interaction::reducer::{apply_permission_request_display, reduce};
 pub(super) use crate::state::{AppState, PermissionPrompt};
 pub(super) use crate::test_support::entry_text;
-pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
-pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-pub(super) use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
-pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::session::tool_status::ToolStatus;
-pub(super) use agnt_core::transcript::entry::{MessageEntry, ToolEntry, TranscriptEntry};
-pub(super) use agnt_core::transcript::ir::StyleHint;
-pub(super) use agnt_core::transcript::ir::ToolName;
-pub(super) use agnt_core::transcript::ir::{ContentKind, DiffTint, MessageRole};
-pub(super) use agnt_core::transcript::ir::{Display, DisplaySection};
-pub(super) use agnt_core::transcript::renderer::ItemStatus;
+pub(super) use agnt_render::tool_view::ToolView;
+pub(super) use agnt_render::transcript::entry::{MessageEntry, ToolEntry, TranscriptEntry};
+pub(super) use agnt_render::transcript::ir::StyleHint;
+pub(super) use agnt_render::transcript::ir::ToolName;
+pub(super) use agnt_render::transcript::ir::{
+    ContentKind, DiffTint, Display, DisplaySection, MessageRole,
+};
+pub(super) use agnt_render::transcript::renderer::ItemStatus;
+pub(super) use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+pub(super) use agnt_runtime::protocol::event::PermissionRequestContext;
+pub(super) use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
+pub(super) use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -30,7 +31,7 @@ fn unified_display(tool: &ToolEntry) -> Option<&Display> {
 
 /// The tool display content of one entry: a tool entry's unified display
 /// (`result.or(preview)`); every other family contributes nothing.
-fn entry_display_lines(entry: &TranscriptEntry) -> Vec<agnt_core::transcript::ir::ContentLine> {
+fn entry_display_lines(entry: &TranscriptEntry) -> Vec<agnt_render::transcript::ir::ContentLine> {
     match entry {
         TranscriptEntry::Tool(tool) => unified_display(tool)
             .map(Display::project_lines)
@@ -85,13 +86,18 @@ pub(super) fn display_lines(display: &Display) -> String {
         .join("\n")
 }
 
+/// The call line the entry's own data derives, as every backend derives it.
+pub(super) fn call_line_of(tool: &ToolEntry) -> String {
+    tool.call.call_line()
+}
+
 /// Flatten one entry's text for assertions. A tool entry contributes its call
-/// summary and its unified display (`result.or(preview)`) — the one slot the
-/// backends render.
+/// line, derived from its own data, and its unified display
+/// (`result.or(preview)`) — the one slot the backends render.
 pub(super) fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
     match entry {
         TranscriptEntry::Tool(tool) => {
-            let mut lines = vec![tool.call.call_line.summary.clone()];
+            let mut lines = vec![call_line_of(tool)];
             if let Some(display) = unified_display(tool) {
                 lines.extend(display_lines(display).lines().map(str::to_string));
             }
@@ -118,33 +124,24 @@ pub(super) fn tool_entry_at(state: &AppState, index: usize) -> Result<&ToolEntry
 }
 
 pub(super) fn started(name: &str, arguments: &str) -> SystemEvent {
-    started_with_call_line(name, arguments, CallLine::from_json_summary(arguments))
-}
-
-pub(super) fn started_with_call_line(
-    name: &str,
-    arguments: &str,
-    call_line: CallLine,
-) -> SystemEvent {
     SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName(name.to_string()), "mcp", arguments, call_line),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_runtime::tools::handler::ToolSource::Mcp,
+            arguments,
+        ),
     }
 }
 
 /// A `ToolCompleted` event with an explicit source and outcome.
 pub(super) fn completed_with(
     name: &str,
-    source: &str,
+    source: agnt_runtime::tools::handler::ToolSource,
     arguments: &str,
     outcome: ToolOutcome,
 ) -> SystemEvent {
     SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            source,
-            arguments,
-            CallLine::from_json_summary(arguments),
-        ),
+        call: ToolCall::new(ToolName(name.to_string()), source, arguments),
         outcome,
     }
 }
@@ -158,57 +155,65 @@ pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
 pub(super) fn tool_call(name: &str, arguments: &str) -> ToolCall {
     ToolCall::new(
         ToolName(name.to_string()),
-        "mcp",
+        agnt_runtime::tools::handler::ToolSource::Mcp,
         arguments,
-        CallLine::from_json_summary(arguments),
     )
 }
 
-/// Reduce a `Completed` event carrying an optional display.
-pub(super) fn complete_with_display(
+/// The outcome a producer settles on: the result text the model received and
+/// the disposition it settled at. Nothing here is drawn — a surface derives
+/// the completion body from the call and this text.
+pub(super) fn outcome_of(
+    status: ToolStatus,
+    result: &str,
+    error_kind: Option<&str>,
+) -> ToolOutcome {
+    ToolOutcome {
+        success: status == ToolStatus::Success,
+        status,
+        result: result.to_string(),
+        error_kind: error_kind.map(str::to_string),
+        message: None,
+    }
+}
+
+/// Reduce a `Completed` event whose result text is `result`. A surface derives
+/// the completion body from that text, exactly as it does live.
+pub(super) fn complete_with_result(
     state: &mut AppState,
     name: &str,
     arguments: &str,
-    display: Option<ToolDisplay>,
+    result: &str,
 ) {
     reduce_ui(
         state,
         completed_with(
             name,
-            "closure",
+            agnt_runtime::tools::handler::ToolSource::Closure,
             arguments,
-            ToolOutcome {
-                success: true,
-                status: ToolStatus::Success,
-                result: "{}".to_string(),
-                display,
-                error_kind: None,
-                message: None,
-            },
+            outcome_of(ToolStatus::Success, result, None),
         ),
     );
 }
 
-/// Build a diff `ToolDisplaySection` with the shared test path.
-pub(super) fn diff_section(label: Option<&str>, content: &str) -> ToolDisplaySection {
-    ToolDisplaySection {
-        label: label.map(str::to_string),
-        kind: ContentKind::Diff {
-            language: "diff".to_string(),
-            path: "test.rs".to_string(),
-        },
-        content: content.to_string(),
-        stats: None,
-    }
+/// The JSON an `edit` handler returns: the path it changed and the diff it
+/// made. The tool's own view derives the completion body from these two keys.
+pub(super) fn edit_payload(path: &str, diff: &str) -> String {
+    // `serde_json` is not a test dependency here: build the handler's own shape.
+    let escaped = diff
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("{{\"path\":\"{path}\",\"diff\":\"{escaped}\"}}")
 }
 
 /// Build a permission request context with the shared test defaults.
 pub(super) fn permission_context(
     tool: &str,
     tool_key: &str,
-    display: Option<ToolDisplay>,
-) -> agnt_core::protocol::event::PermissionRequestContext {
-    agnt_core::protocol::event::PermissionRequestContext {
+    preview: Option<&str>,
+) -> PermissionRequestContext {
+    PermissionRequestContext {
         tool: tool.to_string(),
         tool_key: tool_key.to_string(),
         source: "closure".to_string(),
@@ -218,7 +223,7 @@ pub(super) fn permission_context(
         target_field: None,
         pattern: "edit".to_string(),
         summary: "→ {...}".to_string(),
-        pre_authorize_display: display,
+        preview: preview.map(str::to_string),
     }
 }
 

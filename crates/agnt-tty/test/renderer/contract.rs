@@ -8,11 +8,10 @@ mod stderr;
 
 use std::sync::{Arc, Mutex};
 
-use agnt_core::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::renderer::UiRenderer;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use crate::renderer::UiRenderer;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use crate::policy::UiPolicy;
 
@@ -79,9 +78,8 @@ impl UiRenderer for FakeRenderer {
 fn tool_call(name: &str) -> ToolCall {
     ToolCall::new(
         ToolName(name.to_string()),
-        "closure",
+        agnt_runtime::tools::handler::ToolSource::Closure,
         "{}",
-        CallLine::from_json_summary("{}"),
     )
 }
 
@@ -108,7 +106,6 @@ fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
             success: true,
             status: ToolStatus::Success,
             result: "ok".to_string(),
-            display: None,
             error_kind: None,
             message: None,
         },

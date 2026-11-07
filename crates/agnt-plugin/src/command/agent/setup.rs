@@ -1,8 +1,8 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::LabeledError;
 
-use agnt_core::config;
-use agnt_core::conversation::builder::{
+use agnt_runtime::config;
+use agnt_runtime::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, merge_compaction_configs,
 };
 

@@ -11,12 +11,12 @@ async fn test_session_manager_cancel_signals_the_session_bus() -> Result<()> {
     let manager = manager(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
-    let bus = manager
+    let mut cancel_rx = manager
         .get_session(&session_id)
         .ok_or("session must exist")?
-        .bus()
-        .clone();
-    let mut cancel_rx = bus.cancel().subscribe();
+        .channels()
+        .cancel
+        .subscribe();
 
     // -- Exec
     manager.cancel(&session_id).await?;

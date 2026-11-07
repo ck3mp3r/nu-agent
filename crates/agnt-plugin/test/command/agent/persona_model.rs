@@ -1,5 +1,5 @@
 use super::runtime_build;
-use agnt_core::config::Config;
+use agnt_runtime::config::Config;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -22,7 +22,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
     let mut models = HashMap::new();
     models.insert(
         "default".to_string(),
-        agnt_core::config::ModelRoleConfig {
+        agnt_runtime::config::ModelRoleConfig {
             model: "openai/gpt-4o".to_string(),
             ..Default::default()
         },
@@ -30,7 +30,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
     let mut providers = HashMap::new();
     providers.insert(
         "github-copilot".to_string(),
-        agnt_core::config::ProviderConfig {
+        agnt_runtime::config::ProviderConfig {
             name: None,
             api_key: None,
             base_url: None,
@@ -40,7 +40,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
             models: HashMap::new(),
         },
     );
-    let plugin_config = agnt_core::config::PluginConfig {
+    let plugin_config = agnt_runtime::config::PluginConfig {
         models,
         providers,
         compaction: None,
@@ -146,7 +146,7 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
     let mut models = HashMap::new();
     models.insert(
         "default".to_string(),
-        agnt_core::config::ModelRoleConfig {
+        agnt_runtime::config::ModelRoleConfig {
             model: "openai/gpt-4o".to_string(),
             ..Default::default()
         },
@@ -154,7 +154,7 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
     let mut providers = HashMap::new();
     providers.insert(
         "anthropic".to_string(),
-        agnt_core::config::ProviderConfig {
+        agnt_runtime::config::ProviderConfig {
             name: None,
             api_key: None,
             base_url: None,
@@ -164,7 +164,7 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
             models: HashMap::new(),
         },
     );
-    let plugin_config = agnt_core::config::PluginConfig {
+    let plugin_config = agnt_runtime::config::PluginConfig {
         models,
         providers,
         compaction: None,

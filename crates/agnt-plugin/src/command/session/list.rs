@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
-use agnt_core::session::RigStoreConfig;
-use agnt_core::session::prefix::dir_prefix;
+use agnt_runtime::session::RigStoreConfig;
+use agnt_runtime::session::prefix::dir_prefix;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, Value};
 

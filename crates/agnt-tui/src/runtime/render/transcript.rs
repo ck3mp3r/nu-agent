@@ -14,10 +14,10 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::MessageRole;
 use agnt_render::backend::RowRect;
 use agnt_render::planner::PlannedEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::MessageRole;
 use agnt_render::{RenderBackend, Theme};
 
 use crate::rendering::theme::TuiTheme;

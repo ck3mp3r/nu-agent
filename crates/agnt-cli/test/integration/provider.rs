@@ -6,7 +6,7 @@
 
 use super::*;
 
-use agnt_core::utils::paths::APP_DIR_NAME;
+use agnt_runtime::utils::paths::APP_DIR_NAME;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

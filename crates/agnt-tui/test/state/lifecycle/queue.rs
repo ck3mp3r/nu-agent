@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::interaction::cancel::CancelController;
-use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
 
 /// WHEN prompts queue up while a turn runs, THE pending-event drain SHALL
 /// deliver them once, in FIFO order, as a single coalesced `PromptSubmitted`

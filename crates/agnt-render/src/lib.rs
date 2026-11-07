@@ -8,11 +8,15 @@
 // region:    --- Modules
 
 pub mod backend;
+pub mod call_line;
 pub mod catalog;
 pub mod gallery;
 pub mod plain;
 pub mod planner;
 pub mod theme;
+pub mod tool_args;
+pub mod tool_view;
+pub mod transcript;
 
 pub use backend::{RenderBackend, RowRect};
 pub use catalog::{
@@ -26,3 +30,11 @@ pub use planner::{EntryFamily, FramePlan, LayoutPlanner, PlannedEntry};
 pub use theme::{Color, Markdown, Theme};
 
 // endregion: --- Modules
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../test/support.rs"]
+pub(crate) mod test_support;
+
+// endregion: --- Tests

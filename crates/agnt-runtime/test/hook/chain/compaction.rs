@@ -1,0 +1,519 @@
+use super::*;
+
+/// Seed the fixture's rig-memory store with `messages`.
+async fn seed_rig(fx: &DecideFixture, messages: &[Message]) -> Result<()> {
+    let store = fx
+        .memory
+        .rig_store("conv-1")
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, "conv-1")?;
+    conversation.extend(messages.iter().cloned());
+    rig_memory::save(&*store, "conv-1", &mut conversation)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
+    // -- Setup & Fixtures
+    // A rig store that cannot be opened: its cache directory's parent is a
+    // regular file, so the database path is unusable.
+    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
+    let blocked = temp_dir.path().join("blocked");
+    std::fs::write(&blocked, b"not a directory").map_err(|_| "should write the blocker file")?;
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+            .with_cache_dir(blocked),
+    ));
+    let bus = Bus::default();
+    let mut rx = bus.compaction().subscribe();
+    let compaction = CompactionConfig {
+        compactor: NuCompactor::new(
+            MockCompletionModel::text("summary").erase(),
+            Bus::default(),
+            rig_memory::CompactionPolicy::default(),
+            test_model_spec(),
+        ),
+        threshold_tokens: Some(100),
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+    };
+    let last_total_tokens = Arc::new(Mutex::new(None));
+
+    // -- Exec
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        &last_total_tokens,
+        &Default::default(),
+        bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    let failed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .map_err(|_| "should receive Failed within timeout")?
+        .map_err(|_| "should receive Failed")?;
+    assert!(
+        matches!(&failed, SystemEvent::CompactionFailed { .. }),
+        "an unusable rig store must be surfaced in a Failed event, got {failed:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> Result<()> {
+    // -- Setup & Fixtures
+    // The rig store holds a conversation far above the token threshold.
+    // `decide_compaction` must fire a `SystemEvent::CompactionRequested { source: "auto" }`
+    // on the bus and NOT invoke the summarizer LLM synchronously (the
+    // orchestrator runs compaction).
+    let fx = decide_fixture()?;
+    let history: Vec<Message> = (0..5)
+        .map(|i| Message::user(format!("user message {i} ").repeat(400)))
+        .collect();
+    seed_rig(&fx, &history).await?;
+    let mut compaction_rx = fx.bus.compaction().subscribe();
+    let compaction = CompactionConfig {
+        threshold_tokens: Some(100),
+        ..fx.compaction.clone()
+    };
+    let prompt = Message::user("current user prompt");
+
+    // -- Exec
+    decide_compaction(
+        &prompt,
+        "conv-1",
+        fx.memory.as_ref(),
+        &compaction,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    let requested = compaction_rx
+        .recv()
+        .await
+        .map_err(|_| "should receive a Requested event")?;
+    assert!(
+        matches!(
+            &requested,
+            crate::protocol::events::SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto
+        ),
+        "over-threshold turn must fire Requested {{ source: Auto }}, got {requested:?}"
+    );
+    assert_eq!(
+        fx.summary_model.requests().len(),
+        0,
+        "decide_compaction must NOT invoke the summarizer LLM synchronously"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn decide_compaction_real_tokens_over_threshold_fires() -> Result<()> {
+    // -- Setup & Fixtures
+    let fx = decide_fixture()?;
+    seed_rig(&fx, &[Message::user("short context message")]).await?;
+    // Real count (90000) plus a small prompt estimate (> 80_000) → fires.
+    *fx.last_total_tokens.lock().unwrap() = Some(90_000);
+    let mut rx = fx.bus.compaction().subscribe();
+
+    // -- Exec
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        fx.memory.as_ref(),
+        &fx.compaction,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
+    assert!(
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
+        "real total_tokens over threshold must fire Requested, got {requested:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn decide_compaction_real_tokens_under_threshold_does_not_fire() -> Result<()> {
+    // -- Setup & Fixtures
+    let fx = decide_fixture()?;
+    seed_rig(&fx, &[Message::user("short context message")]).await?;
+    // Real count (70000) plus a small prompt estimate (< 80_000) → does not fire.
+    *fx.last_total_tokens.lock().unwrap() = Some(70_000);
+    let mut rx = fx.bus.compaction().subscribe();
+
+    // -- Exec
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        fx.memory.as_ref(),
+        &fx.compaction,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    assert!(
+        matches!(rx.try_recv(), Err(crate::bus::TryRecvError::Empty)),
+        "under-threshold turn must not publish any compaction event"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn decide_compaction_no_real_tokens_falls_back_to_conversation_estimate() -> Result<()> {
+    // -- Setup & Fixtures
+    let fx = decide_fixture()?;
+    // `last_total_tokens` stays `None` (first turn). The conversation is sized so
+    // its chars/4 estimate alone is over the threshold → fires via the fallback.
+    seed_rig(&fx, &[Message::user("x".repeat(400_000))]).await?;
+    let mut rx = fx.bus.compaction().subscribe();
+
+    // -- Exec
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        fx.memory.as_ref(),
+        &fx.compaction,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
+    assert!(
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
+        "fallback estimate over threshold must fire Requested, got {requested:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<()> {
+    // -- Setup & Fixtures
+    // The discriminating test for threshold currency: turn 1 reads the small
+    // conversation, turn 2 grows the rig conversation past the threshold. The
+    // decision must read the CURRENT rig conversation; on a stale first read it
+    // would under-read and not fire.
+    let fx = decide_fixture()?;
+    let compaction = CompactionConfig {
+        threshold_tokens: Some(50_000),
+        ..fx.compaction.clone()
+    };
+    seed_rig(
+        &fx,
+        &[
+            Message::user("turn one"),
+            Message::assistant("turn one reply"),
+        ],
+    )
+    .await?;
+
+    // Turn 1: read the small conversation.
+    let store = fx
+        .memory
+        .rig_store("conv-1")
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let first_read = rig_memory::load(&*store, "conv-1")?;
+    assert_eq!(
+        first_read.messages().len(),
+        2,
+        "turn 1 reads the small conversation"
+    );
+
+    // Turn 2: the turn's save grows the rig conversation far past the threshold.
+    seed_rig(&fx, &[Message::user("y".repeat(400_000))]).await?;
+
+    let mut rx = fx.bus.compaction().subscribe();
+
+    // -- Exec
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        fx.memory.as_ref(),
+        &compaction,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
+    assert!(
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
+        "the post-turn-2 conversation is over the threshold, so it must fire; \
+         a stale first read would not, got {requested:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
+    // -- Setup & Fixtures
+    // The end-to-end proof that the inert window is closed: the decide step reads
+    // the live rig conversation, schedules the compaction, and the splice it
+    // makes is what a run loads next.
+    let fx = decide_fixture()?;
+    let compaction = CompactionConfig {
+        threshold_tokens: Some(100),
+        ..fx.compaction.clone()
+    };
+    // Four messages of 30k chars each: over the policy's 20k-token keep_recent,
+    // so the automatic cut has something to summarize.
+    let history: Vec<Message> = (0..4)
+        .map(|i| Message::user(format!("message {i} {}", "z".repeat(30_000))))
+        .collect();
+    seed_rig(&fx, &history).await?;
+    let mut rx = fx.bus.compaction().subscribe();
+
+    // -- Exec: the decide step schedules the compaction.
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        fx.memory.as_ref(),
+        &compaction,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+    let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
+    assert!(
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
+        "the over-threshold turn must schedule the compaction, got {requested:?}"
+    );
+
+    // -- Exec: the orchestrator runs it.
+    let patched = run_compaction(
+        "conv-1",
+        fx.memory.as_ref(),
+        &compaction,
+        CompactionSource::Auto,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await
+    .ok_or("the scheduled compaction should have run")?;
+
+    // -- Check: the splice is what the store holds, so the next run loads it.
+    let store = fx
+        .memory
+        .rig_store("conv-1")
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let stored = rig_memory::load(&*store, "conv-1")?;
+    let first = stored
+        .entries()
+        .next()
+        .ok_or("the compacted conversation is non-empty")?;
+    assert_eq!(
+        first.author,
+        Some(&rig_memory::summary_author()),
+        "the next load must lead with the rig.compaction summary"
+    );
+    assert_eq!(
+        patched.len(),
+        stored.messages().len(),
+        "the returned post-splice history must match what the store holds"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Result<()> {
+    // -- Setup & Fixtures
+    let fx = decide_fixture()?;
+    let mut rx = fx.bus.compaction().subscribe();
+
+    // -- Exec
+    let result = run_compaction(
+        "conv-1",
+        fx.memory.as_ref(),
+        &fx.compaction,
+        CompactionSource::Manual,
+        &fx.last_total_tokens,
+        &Default::default(),
+        fx.bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    assert!(
+        result.is_none(),
+        "an empty conversation must return None (nothing to compact)"
+    );
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .map_err(|_| "should receive Completed within timeout")?
+        .map_err(|_| "should receive Completed")?;
+    assert!(
+        matches!(
+            &completed,
+            SystemEvent::CompactionCompleted {
+                source,
+                summary_preview,
+                summary_body,
+            } if source == "slash"
+                && summary_preview.is_empty()
+                && summary_body.is_empty()
+        ),
+        "an empty conversation must emit Completed with empty summary, got {completed:?}"
+    );
+    Ok(())
+}
+
+/// WHEN a store refuses to open, THE decision SHALL latch it and emit exactly
+/// one clean line; the next decision SHALL make no further attempt.
+#[tokio::test]
+async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Result<()> {
+    // -- Setup & Fixtures: the legacy pre-engine store every open refuses.
+    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
+    let path = temp_dir.path().join("sessions.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await?;
+    sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+            .with_store_path(&path),
+    ));
+    let bus = Bus::default();
+    let mut rx = bus.compaction().subscribe();
+    let compaction = CompactionConfig {
+        compactor: NuCompactor::new(
+            MockCompletionModel::text("summary").erase(),
+            Bus::default(),
+            rig_memory::CompactionPolicy::default(),
+            test_model_spec(),
+        ),
+        threshold_tokens: Some(100),
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+    };
+    let last_total_tokens = Arc::new(Mutex::new(None));
+    let store_latch: crate::hook::StoreLatch = Default::default();
+
+    // -- Exec: two decisions over the dead store.
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        &last_total_tokens,
+        &store_latch,
+        bus.compaction(),
+    )
+    .await;
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        &last_total_tokens,
+        &store_latch,
+        bus.compaction(),
+    )
+    .await;
+
+    // -- Check: one line, carrying the refusal itself.
+    let failed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .map_err(|_| "should receive Failed within timeout")?
+        .map_err(|_| "should receive Failed")?;
+    let SystemEvent::CompactionFailed { message, .. } = failed else {
+        return Err(format!("the refusal SHALL be a Failed event, got {failed:?}").into());
+    };
+    assert!(
+        message.contains("legacy sqlx-migration store")
+            && message.contains("stored schema version 0")
+            && message.contains("migrates to 4"),
+        "the line SHALL name the era and both versions: {message}"
+    );
+    assert!(
+        message.contains(&path.display().to_string()),
+        "the line SHALL name the resolved path: {message}"
+    );
+    assert!(
+        !message.contains("error returned from database")
+            && !message.contains("Memory backend error"),
+        "the line SHALL carry no sqlx or wrapper wording: {message}"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a latched store SHALL make no further attempt"
+    );
+    assert!(
+        store_latch
+            .lock()
+            .map_err(|_| "store latch poisoned")?
+            .is_some(),
+        "the refusal SHALL latch the store"
+    );
+    Ok(())
+}
+
+/// WHEN `run_compaction` opens the store, THE latch SHALL clear.
+#[tokio::test]
+async fn successful_run_compaction_clears_the_latch() -> Result<()> {
+    // -- Setup & Fixtures: a latched store that is now reachable.
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
+    let bus = Bus::default();
+    let compaction = CompactionConfig {
+        compactor: NuCompactor::new(
+            MockCompletionModel::text("summary").erase(),
+            Bus::default(),
+            rig_memory::CompactionPolicy::default(),
+            test_model_spec(),
+        ),
+        threshold_tokens: None,
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+    };
+    let last_total_tokens = Arc::new(Mutex::new(None));
+    let store_latch: crate::hook::StoreLatch = Default::default();
+    *store_latch.lock().map_err(|_| "store latch poisoned")? = Some("dead".to_string());
+
+    // -- Exec
+    let _ = run_compaction(
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        CompactionSource::Manual,
+        &last_total_tokens,
+        &store_latch,
+        bus.compaction(),
+    )
+    .await;
+
+    // -- Check
+    assert!(
+        store_latch
+            .lock()
+            .map_err(|_| "store latch poisoned")?
+            .is_none(),
+        "a store that opens SHALL clear the latch"
+    );
+    Ok(())
+}

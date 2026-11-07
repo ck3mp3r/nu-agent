@@ -1,5 +1,5 @@
 use super::support::*;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 
 // ---------------------------------------------------------------------------
 // Call line

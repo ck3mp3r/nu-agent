@@ -1,6 +1,6 @@
 //! Deny set: `reject-always` memory and auto-deny for the rest of the session.
 
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;

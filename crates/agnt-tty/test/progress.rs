@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use agnt_core::protocol::contracts::ProgressUi;
+use agnt_runtime::protocol::contracts::ProgressUi;
 
 use crate::policy::{UiPolicy, Verbosity};
 use crate::progress::StderrProgressUi;

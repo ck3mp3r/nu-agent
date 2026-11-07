@@ -4,8 +4,9 @@ use super::*;
 // Tool preview dispatch
 // ---------------------------------------------------------------------------
 
-/// `ToolPreview` sets the matching tool entry's preview in place and reports
-/// handled; an unmatched key leaves the entry untouched.
+/// `PreviewRequested` sets the matching tool entry's preview in place and reports
+/// handled; an unmatched key leaves the entry untouched. The card itself is
+/// derived from the call, so the event carries no content for `nu`.
 #[test]
 fn tool_preview_dispatch_sets_preview_in_place_and_ignores_unmatched_key() -> Result<()> {
     // -- Setup & Fixtures
@@ -23,31 +24,14 @@ fn tool_preview_dispatch_sets_preview_in_place_and_ignores_unmatched_key() -> Re
         &mut state,
         SystemEvent::PreviewRequested {
             call: tool_call("nu", arguments),
-            display: ToolDisplay {
-                title: Some("nu".to_string()),
-                sections: vec![ToolDisplaySection {
-                    label: Some("nu".to_string()),
-                    kind: ContentKind::Code {
-                        language: "nu".to_string(),
-                    },
-                    content: "ls".to_string(),
-                    stats: None,
-                }],
-            },
+            preview: None,
         },
     );
 
     // -- Check
     assert!(handled, "ToolPreview must report a handled event");
     assert_eq!(state.transcript.len(), 1, "the preview lives on the entry");
-    let entry = state
-        .transcript
-        .entries()
-        .first()
-        .ok_or("should have tool entry")?;
-    let TranscriptEntry::Tool(tool) = entry else {
-        return Err("expected Tool entry".into());
-    };
+    let tool = tool_entry_at(&state, 0)?;
     let preview = tool.preview.as_ref().ok_or("should have preview")?;
     assert!(display_lines(preview).contains("ls"));
 
@@ -57,18 +41,15 @@ fn tool_preview_dispatch_sets_preview_in_place_and_ignores_unmatched_key() -> Re
         &mut state,
         SystemEvent::PreviewRequested {
             call: tool_call("nu", "{\"command\":\"other\"}"),
-            display: ToolDisplay {
-                title: Some("nu".to_string()),
-                sections: vec![],
-            },
+            preview: None,
         },
     );
     assert_eq!(state.transcript.len(), len_before);
     Ok(())
 }
 
-/// A cancelled call's live sequence — Started, ToolPreview, Completed with the
-/// cancelled error kind — leaves ONE tool entry carrying its preview and the
+/// A cancelled call's live sequence — Started, PreviewRequested, Completed with
+/// the cancelled error kind — leaves ONE tool entry carrying its preview and the
 /// Cancelled status.
 #[test]
 fn tool_preview_between_started_and_cancelled_completed_keeps_one_entry() -> Result<()> {
@@ -87,17 +68,7 @@ fn tool_preview_between_started_and_cancelled_completed_keeps_one_entry() -> Res
         &mut state,
         SystemEvent::PreviewRequested {
             call: tool_call("nu", arguments),
-            display: ToolDisplay {
-                title: None,
-                sections: vec![ToolDisplaySection {
-                    label: None,
-                    kind: ContentKind::Code {
-                        language: "nu".to_string(),
-                    },
-                    content: "ls".to_string(),
-                    stats: None,
-                }],
-            },
+            preview: None,
         },
     );
     reduce_ui(
@@ -108,23 +79,15 @@ fn tool_preview_between_started_and_cancelled_completed_keeps_one_entry() -> Res
                 success: false,
                 status: ToolStatus::Cancelled,
                 result: String::new(),
-                display: None,
                 error_kind: Some("cancelled".to_string()),
-                message: Some(agnt_core::hook::chain::CANCELLED_DISPATCH_MESSAGE.to_string()),
+                message: Some(agnt_runtime::hook::chain::CANCELLED_DISPATCH_MESSAGE.to_string()),
             },
         },
     );
 
     // -- Check
     assert_eq!(state.transcript.len(), 1);
-    let entry = state
-        .transcript
-        .entries()
-        .first()
-        .ok_or("should have tool entry")?;
-    let TranscriptEntry::Tool(tool) = entry else {
-        return Err("expected Tool entry".into());
-    };
+    let tool = tool_entry_at(&state, 0)?;
     assert_eq!(tool.status, ItemStatus::Cancelled);
     let preview = tool.preview.as_ref().ok_or("should have preview")?;
     assert!(display_lines(preview).contains("ls"));

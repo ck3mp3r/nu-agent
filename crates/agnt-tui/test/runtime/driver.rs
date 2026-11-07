@@ -13,10 +13,9 @@
 
 use std::time::Duration;
 
-use agnt_core::bus::Bus;
-use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::tool_args::CallLine;
+use agnt_runtime::bus::Bus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::events::SystemEvent;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -27,8 +26,8 @@ use crate::interaction::input::TerminalEvent;
 use crate::interactive::run_render_loop;
 use crate::runtime::RuntimeCoordinator;
 use crate::state::AppState;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -246,7 +245,6 @@ impl RenderLoopDriver {
             let mut live = Some(&mut terminal);
             run_render_loop(
                 &mut coordinator,
-                &bus_for_loop,
                 &cancel_controller,
                 event_tx,
                 terminal_rx,
@@ -254,6 +252,10 @@ impl RenderLoopDriver {
                 crate::interactive::RenderLoopChannels {
                     branch_rx,
                     theme_persist_tx: None,
+                    ui_event: bus_for_loop.ui_event(),
+                    compaction: bus_for_loop.compaction(),
+                    session: bus_for_loop.session(),
+                    ui_state: bus_for_loop.ui_state(),
                 },
             )
             .await;
@@ -373,11 +375,10 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
     driver
         .advance(&[DriveEvent::SystemEvent(Box::new(
             SystemEvent::ToolStarted {
-                call: agnt_core::protocol::events::ToolCall::new(
-                    agnt_core::transcript::ir::ToolName("sentinel_tool".to_string()),
-                    "mcp",
+                call: agnt_runtime::protocol::events::ToolCall::new(
+                    agnt_render::transcript::ir::ToolName("sentinel_tool".to_string()),
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     "{}",
-                    CallLine::from_json_summary("{}"),
                 ),
             },
         ))])

@@ -50,7 +50,7 @@ async fn test_runtime_build_acp_runtime_wires_the_compaction_policy() -> Result<
     .map_err(|e| format!("should build runtime: {e:?}"))?;
 
     // -- Check
-    let policy = runtime.compaction.policy();
+    let policy = runtime.compaction().policy();
     assert_eq!(policy.keep_recent, 5_000);
     assert_eq!(policy.keep_asked, 1_000);
     assert_eq!(policy.summarizer.limits.reserve, 8_000);
@@ -89,7 +89,7 @@ async fn test_runtime_build_acp_runtime_defaults_the_compaction_policy() -> Resu
 
     // -- Check
     assert_eq!(
-        runtime.compaction.policy(),
+        runtime.compaction().policy(),
         &rig_memory::CompactionPolicy::default()
     );
     Ok(())

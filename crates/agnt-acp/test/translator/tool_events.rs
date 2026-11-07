@@ -3,10 +3,9 @@
 use agent_client_protocol::schema::v1::{
     ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind,
 };
-use agnt_core::protocol::event::ToolDisplay;
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::support::*;
 
@@ -33,16 +32,24 @@ fn test_translator_tool_started_produces_pending_tool_call() -> Result<()> {
     assert_eq!(call.status, ToolCallStatus::Pending);
     assert_eq!(call.kind, ToolKind::Read);
     assert_eq!(call.name.as_deref(), Some("read"));
-    assert_eq!(call.title, "read src/lib.rs");
+    assert_eq!(
+        call.title, "src/lib.rs",
+        "the title is the call line derived from the call's own arguments"
+    );
     assert!(!call.tool_call_id.0.is_empty());
     Ok(())
 }
 
 #[test]
 fn test_translator_tool_started_falls_back_to_name_when_summary_empty() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: empty arguments derive an empty call line, so the
+    // name is the whole title.
     let event = SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName("glob".to_string()), "builtin", "{}", call_line("")),
+        call: ToolCall::new(
+            ToolName("glob".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Builtin,
+            "",
+        ),
     };
 
     // -- Exec
@@ -140,15 +147,13 @@ fn test_translator_tool_completed_message_becomes_content_when_no_display() -> R
     let event = SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit"),
         ),
         outcome: ToolOutcome {
             success: false,
             status: ToolStatus::Cancelled,
             result: String::new(),
-            display: None,
             error_kind: None,
             message: Some("Permission denied by user".to_string()),
         },
@@ -176,50 +181,6 @@ fn test_translator_tool_completed_message_becomes_content_when_no_display() -> R
 }
 
 #[test]
-fn test_translator_tool_completed_text_display_becomes_content() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName("grep".to_string()),
-            "builtin",
-            "{}",
-            call_line("→ grep foo"),
-        ),
-        outcome: ToolOutcome {
-            success: true,
-            status: ToolStatus::Success,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("grep foo".to_string()),
-                sections: vec![text_section("matches", "src/lib.rs:1: foo")],
-            }),
-            error_kind: None,
-            message: None,
-        },
-    };
-
-    // -- Exec
-    let update = translator()
-        .translate(event)
-        .ok_or("tool completed must translate")?;
-
-    // -- Check
-    let SessionUpdate::ToolCallUpdate(update) = update else {
-        return Err(format!("expected tool_call_update, got: {update:?}").into());
-    };
-    let content = update.fields.content.ok_or("display must become content")?;
-    assert_eq!(content.len(), 1);
-    let ToolCallContent::Content(block) = &content[0] else {
-        return Err(format!("expected content block, got: {:?}", content[0]).into());
-    };
-    let ContentBlock::Text(text) = &block.content else {
-        return Err(format!("expected text block, got: {:?}", block.content).into());
-    };
-    assert_eq!(text.text, "src/lib.rs:1: foo");
-    Ok(())
-}
-
-#[test]
 fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<()> {
     // -- Setup & Fixtures
     let diff =
@@ -227,18 +188,16 @@ fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<
     let event = SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit src/file.txt"),
         ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("edit src/file.txt".to_string()),
-                sections: vec![diff_section("src/file.txt", diff)],
-            }),
+            result: format!(
+                "{{\"path\":\"src/file.txt\",\"diff\":\"{}\"}}",
+                diff.replace('\n', "\\n")
+            ),
             error_kind: None,
             message: None,
         },
@@ -271,18 +230,16 @@ fn test_translator_tool_completed_diff_without_old_side_has_no_old_text() -> Res
     let event = SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit src/file.txt"),
         ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("edit src/new.txt".to_string()),
-                sections: vec![diff_section("src/new.txt", diff)],
-            }),
+            result: format!(
+                "{{\"path\":\"src/new.txt\",\"diff\":\"{}\"}}",
+                diff.replace('\n', "\\n")
+            ),
             error_kind: None,
             message: None,
         },

@@ -16,19 +16,19 @@ async fn agent_picker_renders_active_marker_from_identity() -> Result<()> {
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
         vec![
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "default".to_string(),
                 description: Some("Default agent".to_string()),
                 display: "default".to_string(),
                 builtin: true,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "coder".to_string(),
                 description: Some("Coding assistant".to_string()),
                 display: "coder".to_string(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "reviewer".to_string(),
                 description: None,
                 display: "reviewer".to_string(),
@@ -81,13 +81,13 @@ async fn agent_picker_renders_description_column() -> Result<()> {
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
         vec![
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "reviewer".to_string(),
                 description: Some("Runs reviews".to_string()),
                 display: "reviewer".to_string(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "plain".to_string(),
                 description: None,
                 display: "plain".to_string(),
@@ -142,7 +142,7 @@ async fn agent_picker_ellipsizes_long_description_at_narrow_width() -> Result<()
     let mut driver = RenderLoopDriver::new(58, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "reviewer".to_string(),
             description: Some(description),
             display: "reviewer".to_string(),
@@ -183,19 +183,19 @@ fn agent_picker_rows_do_not_contain_selection_prefix() {
     state.set_picker_options(
         ActivePicker::Agent,
         vec![
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "default".to_string(),
                 description: Some("Default agent".to_string()),
                 display: "default".to_string(),
                 builtin: true,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "coder".to_string(),
                 description: Some("Coding assistant".to_string()),
                 display: "coder".to_string(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "reviewer".to_string(),
                 description: None,
                 display: "reviewer".to_string(),

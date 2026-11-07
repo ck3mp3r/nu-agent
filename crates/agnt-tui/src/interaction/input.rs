@@ -1,4 +1,4 @@
-use agnt_core::protocol::events::{Key, SystemEvent};
+use agnt_runtime::protocol::events::{Key, SystemEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalKey {

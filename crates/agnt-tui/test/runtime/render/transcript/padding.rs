@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 
 /// A rehydrated transcript whose first entry is a user message bottom-aligns
 /// with padding rows. Those padding rows must stay on the base background —

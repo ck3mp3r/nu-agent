@@ -6,7 +6,7 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
     state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o".to_string(),
                 identity: "openai/gpt-4o".to_string(),
@@ -18,7 +18,7 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),
@@ -30,7 +30,7 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 identity: "openai/gpt-4o-mini".to_string(),

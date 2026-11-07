@@ -6,11 +6,9 @@
 pub(super) use crate::interaction::reducer::reduce;
 pub(super) use crate::state::{AppState, UiPhase};
 pub(super) use crate::test_support::entry_text;
-pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-pub(super) use agnt_core::protocol::events::{SystemEvent, Usage};
-pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::transcript::entry::TranscriptEntry;
-pub(super) use agnt_core::transcript::ir::MessageRole;
+pub(super) use agnt_render::transcript::entry::TranscriptEntry;
+pub(super) use agnt_render::transcript::ir::MessageRole;
+pub(super) use agnt_runtime::protocol::events::{SystemEvent, Usage};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -69,7 +67,9 @@ pub(super) fn assistant_markdown_entries(state: &AppState) -> Vec<String> {
 }
 
 /// Project a markdown string and return all (text, hint) pairs from it.
-pub(super) fn project_spans(markdown: &str) -> Vec<(String, agnt_core::transcript::ir::StyleHint)> {
+pub(super) fn project_spans(
+    markdown: &str,
+) -> Vec<(String, agnt_render::transcript::ir::StyleHint)> {
     crate::markdown::render_markdown_lines(markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())

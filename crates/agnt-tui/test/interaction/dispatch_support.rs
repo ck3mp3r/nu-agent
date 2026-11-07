@@ -42,19 +42,19 @@ pub(super) fn setup_agent_picker_open() -> AppState {
     state.set_picker_options(
         ActivePicker::Agent,
         vec![
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "alpha".into(),
                 description: Some("Alpha agent".into()),
                 display: "alpha — Alpha agent".into(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "beta".into(),
                 description: None,
                 display: "beta".into(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "gamma".into(),
                 description: Some("Gamma agent".into()),
                 display: "gamma — Gamma agent".into(),

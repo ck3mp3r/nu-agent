@@ -201,7 +201,7 @@ fn test_architecture_terminal_library_ban_flags_an_import() -> Result<()> {
     // -- Exec & Check
     assert_eq!(terminal_library_violations(rogue, source).len(), 1);
     assert!(
-        terminal_library_violations(rogue, "use agnt_core::transcript::ir::Span;\n").is_empty()
+        terminal_library_violations(rogue, "use agnt_render::transcript::ir::Span;\n").is_empty()
     );
     Ok(())
 }
