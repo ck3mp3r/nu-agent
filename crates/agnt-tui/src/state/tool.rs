@@ -54,7 +54,7 @@ impl ToolState {
         call: &ToolCall,
         outcome: &ToolOutcome,
     ) -> bool {
-        let block_index = self.finish_tool_call(store, &call.id, Some(outcome.status));
+        let block_index = self.finish_tool_call(store, call.id(), Some(outcome.status));
 
         // The drawer derives the completion body from the call and its result
         // data; nothing about the display travels on the event.
@@ -88,7 +88,7 @@ impl ToolState {
             &mut self.active_ids_by_key,
             &mut self.next_call_id,
         )
-        .start_tool_call(&call.id, block_index);
+        .start_tool_call(call.id(), block_index);
     }
 
     /// Attach a pre-execution preview (edit diff, nu code) to the pending tool

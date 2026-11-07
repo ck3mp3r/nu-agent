@@ -127,8 +127,8 @@ pub enum ToolSource {
 pub struct ToolCall {
     /// Derived by [`ToolCallId::new`] from `name` and `arguments`, and carried
     /// so consumers never recompute the anchor: the id cannot drift between a
-    /// live call and a replayed record.
-    pub id: ToolCallId,
+    /// live call and a replayed record. Read it through [`ToolCall::id`].
+    id: ToolCallId,
     /// The tool's identity. Text, because a name identifies a tool and is not a
     /// distinction any consumer branches on — [`ToolCall::kind`] is.
     pub name: ToolName,
@@ -154,6 +154,15 @@ impl ToolCall {
             source,
             arguments,
         }
+    }
+
+    /// The anchor this call was constructed with.
+    ///
+    /// Read-only: [`ToolCall::new`] derived it from the name and the arguments,
+    /// and no setter exists to replace it with a key the content does not
+    /// produce. Turn it into text with [`ToolCallId::as_str`].
+    pub fn id(&self) -> &ToolCallId {
+        &self.id
     }
 
     /// The kind of tool this call names.

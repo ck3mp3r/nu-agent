@@ -75,7 +75,7 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
         .map_err(|_| "expected a ToolPreview event")?;
     match event {
         SystemEvent::PreviewRequested { call, preview } => {
-            assert_eq!(call.id.as_str(), format!("nu\n{arguments}"));
+            assert_eq!(call.id().as_str(), format!("nu\n{arguments}"));
             assert_eq!(
                 preview, None,
                 "the drawer paints the command from the call's arguments; no producer content crosses"

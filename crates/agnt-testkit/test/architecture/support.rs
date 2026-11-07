@@ -37,11 +37,9 @@ pub const ARCH_12: &str = "ARCH-12";
 /// is not empty is a counted defect: the assertion passes while its set of
 /// violations equals the row exactly.
 ///
-/// ARCH-11.a's row holds both records whose identity is publicly settable:
-/// `ToolCall` publishes the id its constructor derived, so a caller can replace
-/// an anchor with one the arguments do not produce, and `ToolCallLine` publishes
-/// the key of the call it represents, so a row can be built for a call it did
-/// not come from.
+/// ARCH-11.a's row holds the one record whose identity is publicly settable:
+/// `ToolCallLine` publishes the key of the call it represents, so a row can be
+/// built for a call it did not come from.
 ///
 /// ARCH-4's row holds every `pub enum` whose name another `pub enum` also
 /// carries: four distinctions, eight declarations. Merging any pair is a
@@ -53,9 +51,9 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_4,
         &[
-            "ARCH-4 agnt-kernel/src/records.rs:389: `NoticeKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:398: `NoticeKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/ir.rs:41: `NoticeKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:355: `PermissionDecision` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:364: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-runtime/src/hook/permission_resolver.rs:57: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/state/app_state.rs:59: `ToolCallStatus` is declared 2 times in the workspace",
             "ARCH-4 agnt-storage/src/services/tool_calls.rs:20: `ToolCallStatus` is declared 2 times in the workspace",
@@ -66,10 +64,7 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
     (ARCH_8, &[]),
     (
         ARCH_11A,
-        &[
-            "ARCH-11.a agnt-kernel/src/records.rs:131: pub id: ToolCallId",
-            "ARCH-11.a agnt-tui/src/state/app_state.rs:249: pub key: ToolCallId",
-        ],
+        &["ARCH-11.a agnt-tui/src/state/app_state.rs:249: pub key: ToolCallId"],
     ),
     (ARCH_9A, &[]),
     (

@@ -101,7 +101,7 @@ fn reduce_event(
             };
             state
                 .tool
-                .set_tool_preview(&mut state.transcript, &call.id, &display)
+                .set_tool_preview(&mut state.transcript, call.id(), &display)
         }
         SystemEvent::ToolCompleted { call, outcome } => {
             state

@@ -277,7 +277,7 @@ fn golden_log_permission_decision_writes_one_effect() -> Result<()> {
             request_id: RequestId::from_minted("ask-1"),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
-                tool_key: call.id.as_str().to_string(),
+                tool_key: call.id().as_str().to_string(),
                 source: "closure".to_string(),
                 mode: Some("apply".to_string()),
                 matched_rule_identity: "tool:edit".to_string(),
@@ -457,7 +457,7 @@ fn golden_key_permission_card_decision() -> Result<()> {
             request_id: RequestId::from_minted("ask-1"),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
-                tool_key: call.id.as_str().to_string(),
+                tool_key: call.id().as_str().to_string(),
                 source: "closure".to_string(),
                 mode: Some("apply".to_string()),
                 matched_rule_identity: "tool:edit".to_string(),

@@ -125,7 +125,7 @@ fn flush_event(event: &SystemEvent) -> Option<FlushEvent> {
     match event {
         SystemEvent::ToolStarted { call } => Some(FlushEvent::Started(call.name.0.clone())),
         SystemEvent::PreviewRequested { call, preview } => Some(FlushEvent::Preview {
-            tool_key: call.id.as_str().to_string(),
+            tool_key: call.id().as_str().to_string(),
             content: preview.clone(),
         }),
         SystemEvent::ToolCompleted { call, outcome } => Some(FlushEvent::Completed {

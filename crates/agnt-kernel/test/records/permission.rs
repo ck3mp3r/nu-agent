@@ -33,7 +33,7 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
     bus.stream()
         .publish(SessionRecord::Permission(PermissionRecord::Requested {
             request_id: request_id.clone(),
-            call_id: call.id.clone(),
+            call_id: call.id().clone(),
             tool: "nu__shell".to_string(),
             source: "builtin".to_string(),
             rule_identity: "deny_rm".to_string(),

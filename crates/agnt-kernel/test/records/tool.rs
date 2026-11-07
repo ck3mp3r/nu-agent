@@ -23,7 +23,11 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
         crate::ToolSource::Builtin,
         r#"{"path":"a.txt"}"#,
     );
-    assert_ne!(first.id, second.id, "distinct calls must key distinctly");
+    assert_ne!(
+        first.id(),
+        second.id(),
+        "distinct calls must key distinctly"
+    );
 
     // -- Exec
     bus.stream()
@@ -76,7 +80,7 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
                 SessionRecord::Tool(ToolRecord::Started { .. }) => tags.push("tool_started"),
                 SessionRecord::Tool(ToolRecord::Completed { call, outcome }) => {
                     tags.push("tool_completed");
-                    completed.push((call.id.clone(), outcome.status));
+                    completed.push((call.id().clone(), outcome.status));
                 }
                 SessionRecord::Inference(_) => tags.push("inference"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
@@ -105,8 +109,8 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
     assert_eq!(
         completed,
         vec![
-            (first.id.clone(), ToolStatus::Success),
-            (second.id.clone(), ToolStatus::Failed)
+            (first.id().clone(), ToolStatus::Success),
+            (second.id().clone(), ToolStatus::Failed)
         ],
         "the completed records carry the call id and the enumerated disposition"
     );

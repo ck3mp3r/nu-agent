@@ -39,7 +39,7 @@ fn test_protocol_events_tool_call_new_derives_id_from_payload() -> Result<()> {
     );
 
     // -- Check
-    assert_eq!(call.id, ToolCallId::new("edit", arguments));
+    assert_eq!(call.id(), &ToolCallId::new("edit", arguments));
     assert_eq!(call.name, ToolName("edit".to_string()));
     assert_eq!(call.source, crate::tools::handler::ToolSource::Builtin);
     assert_eq!(call.arguments, arguments);
@@ -204,7 +204,7 @@ fn test_protocol_events_payloads_carry_typed_identity() -> Result<()> {
     let SystemEvent::ToolStarted { call: started_call } = started else {
         return Err("should be ToolStarted".into());
     };
-    assert_eq!(started_call.id.as_str(), "nu\n{\"command\":\"ls\"}");
+    assert_eq!(started_call.id().as_str(), "nu\n{\"command\":\"ls\"}");
 
     let SystemEvent::PermissionAutoResolved {
         action,

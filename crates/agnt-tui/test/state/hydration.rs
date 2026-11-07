@@ -229,7 +229,8 @@ fn test_state_hydration_projection_maps_tool_row_to_its_events() {
         panic!("expected the first gate preview");
     };
     assert_eq!(
-        first_start.id, first_preview.id,
+        first_start.id(),
+        first_preview.id(),
         "the preview names the call"
     );
     assert!(preview.is_none(), "a replay carries no gate content");
@@ -240,7 +241,7 @@ fn test_state_hydration_projection_maps_tool_row_to_its_events() {
     else {
         panic!("expected the first completion");
     };
-    assert_eq!(first_start.id, first_end.id, "the pair names one call");
+    assert_eq!(first_start.id(), first_end.id(), "the pair names one call");
     assert_eq!(
         outcome.result, result,
         "the completion carries the persisted result text"
@@ -291,7 +292,8 @@ fn test_state_hydration_projection_routes_every_tool_row_through_the_gate_previe
             return Err("expected the gate preview".into());
         };
         assert_eq!(
-            previewed.id, started.id,
+            previewed.id(),
+            started.id(),
             "{label}: the preview names the call"
         );
         assert!(
@@ -306,7 +308,8 @@ fn test_state_hydration_projection_routes_every_tool_row_through_the_gate_previe
             return Err("expected the completion".into());
         };
         assert_eq!(
-            ended.id, started.id,
+            ended.id(),
+            started.id(),
             "{label}: the completion names the call"
         );
         assert_eq!(

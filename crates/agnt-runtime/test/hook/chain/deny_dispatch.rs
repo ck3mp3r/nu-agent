@@ -227,7 +227,7 @@ fn previews(events: &[SystemEvent]) -> Vec<(String, Option<String>)> {
         .iter()
         .filter_map(|event| match event {
             SystemEvent::PreviewRequested { call, preview } => {
-                Some((call.id.as_str().to_string(), preview.clone()))
+                Some((call.id().as_str().to_string(), preview.clone()))
             }
             _ => None,
         })
