@@ -56,7 +56,7 @@ async fn model_correctable_failure_steers_and_reruns_turn() -> Result<()> {
     // -- Check
     let outcome = result.map_err(|e| format!("feedback retry should recover the turn: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "feedback retry must complete the turn"
     );
     assert_eq!(
@@ -134,7 +134,7 @@ async fn successful_feedback_retry_delivers_feedback_exactly_once() -> Result<()
     // -- Check
     let outcome = result.map_err(|e| format!("feedback retry should recover the turn: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "feedback retry must complete the turn"
     );
 
@@ -222,7 +222,7 @@ async fn no_session_turn_gets_feedback_steering() -> Result<()> {
     // -- Check
     let outcome = result.map_err(|e| format!("session-less feedback retry must recover: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "session-less turns get the feedback steering too"
     );
     assert_eq!(

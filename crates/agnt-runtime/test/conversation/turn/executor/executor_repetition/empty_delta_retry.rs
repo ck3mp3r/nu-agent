@@ -69,7 +69,7 @@ async fn repetition_stop_empty_delta_retry_persists_original_prompt_placeholder(
 
     // -- Check
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "the steered retry must complete the turn; got {outcome:?}"
     );
     let persisted = load_persisted_messages(&memory_state, session_id).await?;

@@ -1,5 +1,5 @@
 use crate::orchestrator::stages::{OrchestrationContext, SessionHandler};
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::utils::value_ext::extract_response_text_from_value;
 use agnt_kernel::bus::TurnEvent;
@@ -34,10 +34,10 @@ impl SessionStage {
 }
 
 impl SessionHandler for SessionStage {
-    async fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext<'_>) {
+    async fn handle_outcome(&mut self, outcome: TurnResult, ctx: &mut OrchestrationContext<'_>) {
         *ctx.worker_active = false;
         match outcome {
-            TurnOutcome::Success(value) => {
+            TurnResult::Success(value) => {
                 log::info!("Turn outcome: Success");
 
                 // Publish a turn-completion event if this turn was triggered
@@ -57,13 +57,13 @@ impl SessionHandler for SessionStage {
                     }
                 }
             }
-            TurnOutcome::Cancelled => {
+            TurnResult::Cancelled => {
                 log::info!("Turn outcome: Cancelled");
                 // Fail the external task — the turn didn't complete.
                 self.publish_task_failed(TASK_CANCELLED_NOTICE.to_string(), ctx)
                     .await;
             }
-            TurnOutcome::Error(error) => {
+            TurnResult::Error(error) => {
                 log::warn!(
                     "Turn outcome: Error msg={}",
                     &error.msg[..error.msg.len().min(200)]

@@ -98,7 +98,7 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
 
     assert!(result.is_ok(), "cancelled turn must not return Err");
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
 
     // The cancelled turn's delta is persisted: the prompt, the committed tool
     // call and its result.

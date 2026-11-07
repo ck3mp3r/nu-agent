@@ -46,7 +46,7 @@ use crate::types::ToolDefinition;
 /// have been persisted and whose UI events have been emitted, or an early-exit
 /// value (cancelled / error) that the caller can return directly.
 #[derive(Debug)]
-pub enum TurnOutcome {
+pub enum ExecuteOutcome {
     /// The turn completed normally. The delegate should evaluate auto-compaction
     /// and then build the final `Value` using `build_response`.
     Completed,
@@ -182,15 +182,15 @@ where
     }
 
     /// Execute the turn: dispatch through the provider visitor, handle cancellation
-    /// paths, persist messages, and emit UI events. Returns `TurnOutcome::Completed`
+    /// paths, persist messages, and emit UI events. Returns `ExecuteOutcome::Completed`
     /// on success (caller should then evaluate compaction and call `build_response`),
-    /// or `TurnOutcome::EarlyReturn(value)` for cancellation paths.
+    /// or `ExecuteOutcome::EarlyReturn(value)` for cancellation paths.
     pub async fn execute<P: AsyncPermissionResolver>(
         &mut self,
         input: ExecuteInput,
         permission_resolver: P,
         final_session_id: Option<&str>,
-    ) -> Result<TurnOutcome, LabeledError> {
+    ) -> Result<ExecuteOutcome, LabeledError> {
         // The turn's wall-clock span starts here: the turn-completed event
         // reports it as `duration_ms`.
         let turn_started = std::time::Instant::now();

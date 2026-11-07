@@ -79,7 +79,7 @@ async fn dispatch_completed_turn_publishes_turn_completed_with_the_tool_call_cou
         .map_err(|e| format!("a completed turn must not be an error: {e}"))?;
 
     // -- Check
-    assert!(matches!(outcome, TurnOutcome::Completed));
+    assert!(matches!(outcome, ExecuteOutcome::Completed));
     let events = drain_turn_events(&mut turn_rx);
     let (tool_calls, input_tokens, output_tokens, total_tokens, cost, _, _) =
         completed_fields(&events).ok_or("a completed turn must publish TurnEvent::Completed")?;
@@ -127,7 +127,7 @@ async fn dispatch_cancelled_turn_publishes_turn_completed_with_the_tool_call_cou
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
     let events = drain_turn_events(&mut turn_rx);
     assert!(
         events.iter().any(

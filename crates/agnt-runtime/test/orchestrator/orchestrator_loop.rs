@@ -34,5 +34,5 @@ use tokio::sync::mpsc;
 use crate::bus::ExternalEvent;
 use crate::orchestrator::events::{OrchestratorEvent, UiRequestResponse, WorkerCommand};
 use crate::orchestrator::stages::slash::SlashStage;
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use crate::orchestrator::{Stages, run_orchestrator_loop};

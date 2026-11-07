@@ -55,6 +55,6 @@ use support::*;
 // `Box<dyn Error>` alias from `support`, so the parent items are imported by
 // name instead of with a glob.
 use super::{
-    AcpError, AcpSessionManager, ClientFsState, SessionConfigOption, TurnOutcome,
-    map_turn_outcome_to_stop_reason,
+    AcpError, AcpSessionManager, ClientFsState, SessionConfigOption, StopCategory,
+    map_stop_category_to_stop_reason,
 };

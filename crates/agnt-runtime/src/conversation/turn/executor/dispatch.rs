@@ -20,7 +20,7 @@ use crate::types::Message;
 
 use super::TurnRecovery;
 use super::core::{
-    NO_OUTPUT_STATEMENT, TURN_STOPPED_NOTICE, TurnExecutor, TurnOutcome, TurnResponseData,
+    ExecuteOutcome, NO_OUTPUT_STATEMENT, TURN_STOPPED_NOTICE, TurnExecutor, TurnResponseData,
 };
 use super::error_kind::kind_to_user_msg;
 use crate::conversation::turn::TurnError;
@@ -34,7 +34,7 @@ where
         >,
 {
     /// Dispatch the terminal result of the retry/steering loop: surface stop
-    /// reasons and produce the final `TurnOutcome` / `LabeledError`.
+    /// reasons and produce the final `ExecuteOutcome` / `LabeledError`.
     pub(super) async fn dispatch_result(
         &mut self,
         visitor_result: Result<
@@ -48,7 +48,7 @@ where
         span: Span,
         final_session_id: Option<&str>,
         turn_started: std::time::Instant,
-    ) -> Result<TurnOutcome, LabeledError> {
+    ) -> Result<ExecuteOutcome, LabeledError> {
         let turn_result = match visitor_result {
             Ok(result) => result,
             Err((crate::conversation::turn::TurnError::UnknownTool { msg, messages, .. }, ctx)) => {
@@ -273,7 +273,7 @@ where
                     duration_ms,
                 })
                 .await;
-            return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
+            return Ok(ExecuteOutcome::EarlyReturn(crate::llm::format_response(
                 &crate::llm::LlmResponse {
                     text: response_text,
                     usage: crate::llm::LlmUsage {
@@ -354,6 +354,6 @@ where
             has_session: final_session_id.is_some(),
         });
 
-        Ok(TurnOutcome::Completed)
+        Ok(ExecuteOutcome::Completed)
     }
 }

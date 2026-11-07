@@ -36,7 +36,7 @@ async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
 
     // -- Check
     let outcome = r.map_err(|e| format!("doom stop must be Ok: {e:?}"))?;
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("doom stop must return EarlyReturn".into());
     };
     let response_text = extract_response_text_from_value(&value);

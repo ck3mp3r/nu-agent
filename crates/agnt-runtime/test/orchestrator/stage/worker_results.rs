@@ -24,7 +24,7 @@ async fn worker_result_processed_before_model_switch_result() -> Result<()> {
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
     session
         .handle_outcome(
-            TurnOutcome::Error(LabeledError::new("turn failed")),
+            TurnResult::Error(LabeledError::new("turn failed")),
             &mut ctx,
         )
         .await;
@@ -77,7 +77,7 @@ async fn turn_error_warning_passes_message_verbatim() -> Result<()> {
     // -- Exec
     session
         .handle_outcome(
-            TurnOutcome::Error(LabeledError::new("Turn failed: output budget exhausted")),
+            TurnResult::Error(LabeledError::new("Turn failed: output budget exhausted")),
             &mut ctx,
         )
         .await;

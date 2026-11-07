@@ -40,7 +40,7 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
     // -- Check: the retry turn completed the run.
     let outcome = r.map_err(|e| format!("intra-stream trip must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "the stop-to-steering retry must complete the run, got {outcome:?}"
     );
     // The conversion delivers the steering through the retry prompt: the
@@ -116,7 +116,7 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
     // -- Check: the retry turn completed the run.
     let outcome = r.map_err(|e| format!("5-sentence turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "the stop-to-steering retry must complete the run, got {outcome:?}"
     );
     // The conversion delivers the steering through the retry prompt: the
@@ -179,7 +179,7 @@ async fn journey_output_repetition_intra_stream_four_does_not_trip() -> Result<(
     // -- Check
     let outcome = r.map_err(|e| format!("4-sentence turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "4 identical sentences must not trip intra-stream"
     );
 
@@ -213,7 +213,7 @@ async fn journey_output_repetition_intra_stream_alternating_never_trips() -> Res
     // -- Check
     let outcome = r.map_err(|e| format!("alternating turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "alternating segments must never trip intra-stream"
     );
 

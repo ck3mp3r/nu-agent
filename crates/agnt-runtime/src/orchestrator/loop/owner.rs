@@ -11,7 +11,7 @@ use crate::orchestrator::events::{
 use crate::orchestrator::loop_impl::{WORKER_CMD_CAPACITY, run_orchestrator_loop};
 use crate::orchestrator::router::{CommandRouter, DispatchSources};
 use crate::orchestrator::stages::OrchestrationContext;
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use crate::orchestrator::{AgentSwitchHook, LoopConfig, NoAgentSwitchHook, ProductionStages};
 use crate::protocol::McpManagement;
 use crate::protocol::contracts::CoreRuntime;
@@ -51,7 +51,7 @@ enum RuntimeSlot<R> {
     /// it back; the loop keeps the command sender and the outcome receiver.
     Running {
         worker_tx: mpsc::Sender<WorkerCommand>,
-        result_rx: mpsc::Receiver<TurnOutcome>,
+        result_rx: mpsc::Receiver<TurnResult>,
         handle: tokio::task::JoinHandle<R>,
     },
 }
@@ -203,7 +203,7 @@ where
             RuntimeSlot::Ready(mut runtime) => {
                 let (worker_tx, mut worker_rx) =
                     mpsc::channel::<WorkerCommand>(WORKER_CMD_CAPACITY);
-                let (result_tx, result_rx) = mpsc::channel::<TurnOutcome>(WORKER_RESULT_CAPACITY);
+                let (result_tx, result_rx) = mpsc::channel::<TurnResult>(WORKER_RESULT_CAPACITY);
                 let on_agent_switch = self.config.on_agent_switch.clone();
                 let worker_sources = DispatchSources {
                     turn: self.config.bus.turn().clone(),

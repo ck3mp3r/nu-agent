@@ -27,7 +27,7 @@ async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
         let (r, _) = h.turn("do the thing", model, tool_infra.clone()).await;
         let outcome = r.map_err(|e| format!("turn {e:?}"))?;
         assert!(
-            matches!(outcome, TurnOutcome::Completed),
+            matches!(outcome, ExecuteOutcome::Completed),
             "turn below threshold must complete"
         );
     }
@@ -54,7 +54,7 @@ async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
 
     // -- Check
     let outcome = r.map_err(|e| format!("5th turn must be Ok: {e:?}"))?;
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("5th turn must return EarlyReturn".into());
     };
     let response_text = extract_response_text_from_value(&value);
@@ -108,7 +108,7 @@ async fn journey_output_repetition_cross_turn_fifth_is_first_continue() -> Resul
         let (r, _) = h.turn("do the thing", model, tool_infra.clone()).await;
         let outcome = r.map_err(|e| format!("turn {e:?}"))?;
         assert!(
-            matches!(outcome, TurnOutcome::Completed),
+            matches!(outcome, ExecuteOutcome::Completed),
             "turn below threshold must complete"
         );
     }
@@ -129,7 +129,7 @@ async fn journey_output_repetition_cross_turn_fifth_is_first_continue() -> Resul
     // -- Check
     let outcome = r.map_err(|e| format!("5th turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "5th turn must continue (Completed), not stop"
     );
     assert!(
@@ -176,7 +176,7 @@ async fn journey_output_repetition_cross_turn_tool_call_resets() -> Result<()> {
         let (r, _) = h.turn("do the thing", model, tool_infra.clone()).await;
         let outcome = r.map_err(|e| format!("text-only turn must be Ok: {e:?}"))?;
         assert!(
-            matches!(outcome, TurnOutcome::Completed),
+            matches!(outcome, ExecuteOutcome::Completed),
             "turn after tool-call reset must complete, not trip"
         );
     }

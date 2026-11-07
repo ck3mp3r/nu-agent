@@ -129,7 +129,7 @@ async fn a2a_task_rx_dispatches_turn() -> Result<()> {
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .unwrap();
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
@@ -264,7 +264,7 @@ async fn a2a_task_rx_with_context_id_attaches_that_context() -> Result<()> {
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .unwrap();
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();

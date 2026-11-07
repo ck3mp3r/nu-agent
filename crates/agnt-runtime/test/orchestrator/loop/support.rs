@@ -19,7 +19,7 @@ pub(crate) use crate::orchestrator::loop_impl::WORKER_CMD_CAPACITY;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use crate::protocol::event::PermissionDecisionSubmission;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -168,7 +168,7 @@ impl UiRequestHandler for MockUiRequest {
 }
 
 pub(super) struct MockSession {
-    pub(super) handle_outcome_calls: Vec<TurnOutcome>,
+    pub(super) handle_outcome_calls: Vec<TurnResult>,
 }
 
 impl MockSession {
@@ -180,7 +180,7 @@ impl MockSession {
 }
 
 impl SessionHandler for MockSession {
-    async fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext<'_>) {
+    async fn handle_outcome(&mut self, outcome: TurnResult, ctx: &mut OrchestrationContext<'_>) {
         *ctx.worker_active = false;
         self.handle_outcome_calls.push(outcome);
     }
@@ -209,8 +209,8 @@ pub(crate) struct Harness {
     pub(crate) event_rx: mpsc::Receiver<OrchestratorEvent>,
     pub(crate) worker_tx: mpsc::Sender<WorkerCommand>,
     pub(crate) worker_rx: Option<mpsc::Receiver<WorkerCommand>>,
-    pub(crate) worker_result_tx: mpsc::Sender<TurnOutcome>,
-    pub(crate) worker_result_rx: mpsc::Receiver<TurnOutcome>,
+    pub(crate) worker_result_tx: mpsc::Sender<TurnResult>,
+    pub(crate) worker_result_rx: mpsc::Receiver<TurnResult>,
     pub(crate) blocking_tx: mpsc::Sender<UiRequestResponse>,
     pub(crate) blocking_response_rx: mpsc::Receiver<UiRequestResponse>,
     pub(crate) concurrent_tx: mpsc::Sender<UiRequestResponse>,
@@ -226,7 +226,7 @@ impl Harness {
     pub(crate) fn new() -> Self {
         let (event_tx, event_rx) = mpsc::channel::<OrchestratorEvent>(256);
         let (worker_tx, worker_rx) = mpsc::channel::<WorkerCommand>(WORKER_CMD_CAPACITY);
-        let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
+        let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnResult>(256);
         let (blocking_tx, blocking_response_rx) = mpsc::channel::<UiRequestResponse>(256);
         let (concurrent_tx, concurrent_response_rx) = mpsc::channel::<UiRequestResponse>(256);
         let bus = Bus::default();
@@ -299,7 +299,7 @@ pub(super) fn recv_command(
 /// channels the test owns beside the loop. Each argument is one disjoint
 /// borrow, so the test keeps the senders it drives and the receivers it reads.
 pub(super) fn make_sources<'a>(
-    worker_result_rx: &'a mut mpsc::Receiver<TurnOutcome>,
+    worker_result_rx: &'a mut mpsc::Receiver<TurnResult>,
     blocking_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
     concurrent_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
     external_rx: &'a mut ExternalRx,

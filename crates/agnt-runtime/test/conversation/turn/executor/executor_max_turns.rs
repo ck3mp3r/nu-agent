@@ -98,7 +98,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
     // -- Check
     let outcome = result.map_err(|e| format!("steering retry should recover the turn: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "steering retry must complete the turn"
     );
     assert_eq!(
@@ -398,7 +398,7 @@ async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<(
     let outcome =
         result.map_err(|e| format!("the steering retry should recover the turn: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "the session-less steering retry must complete the turn"
     );
     assert_eq!(

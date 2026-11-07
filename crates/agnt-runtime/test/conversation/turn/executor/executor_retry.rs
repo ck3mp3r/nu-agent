@@ -60,7 +60,7 @@ async fn retry_succeeds_on_second_attempt() -> Result<()> {
         result.err()
     );
     let outcome = result.map_err(|e| format!("retry should succeed on second attempt: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::Completed));
+    assert!(matches!(outcome, ExecuteOutcome::Completed));
 
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(

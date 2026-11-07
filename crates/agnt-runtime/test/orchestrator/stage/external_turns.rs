@@ -37,7 +37,7 @@ async fn external_turn_error_publishes_task_failed() -> Result<()> {
     // -- Exec
     session
         .handle_outcome(
-            TurnOutcome::Error(LabeledError::new("provider exploded")),
+            TurnResult::Error(LabeledError::new("provider exploded")),
             &mut ctx,
         )
         .await;
@@ -85,7 +85,7 @@ async fn external_turn_cancelled_publishes_task_failed() -> Result<()> {
 
     // -- Exec
     session
-        .handle_outcome(TurnOutcome::Cancelled, &mut ctx)
+        .handle_outcome(TurnResult::Cancelled, &mut ctx)
         .await;
 
     // -- Check
@@ -134,7 +134,7 @@ async fn external_turn_success_publishes_task_completed() -> Result<()> {
     // -- Exec
     session
         .handle_outcome(
-            TurnOutcome::Success(Value::string("done", Span::test_data())),
+            TurnResult::Success(Value::string("done", Span::test_data())),
             &mut ctx,
         )
         .await;
@@ -175,7 +175,7 @@ async fn non_external_turn_error_publishes_no_task_failed() -> Result<()> {
 
     // -- Exec
     session
-        .handle_outcome(TurnOutcome::Error(LabeledError::new("boom")), &mut ctx)
+        .handle_outcome(TurnResult::Error(LabeledError::new("boom")), &mut ctx)
         .await;
 
     // -- Check

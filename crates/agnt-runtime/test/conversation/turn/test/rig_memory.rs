@@ -5,7 +5,7 @@
 //! `execute_turn` with rig's `MockCompletionModel` and read the store back.
 
 use super::*;
-use crate::conversation::turn::executor::{ExecuteInput, TurnExecutor, TurnOutcome};
+use crate::conversation::turn::executor::{ExecuteInput, ExecuteOutcome, TurnExecutor};
 use crate::types::{AssistantContent, AssistantMessage, CallId, ToolCall, ToolFunction, ToolName};
 use rig_memory::{Repair, Session, Store as _};
 
@@ -304,7 +304,7 @@ async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
         .await
         .map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::EarlyReturn(_)),
+        matches!(outcome, ExecuteOutcome::EarlyReturn(_)),
         "a cancelled turn returns EarlyReturn"
     );
 

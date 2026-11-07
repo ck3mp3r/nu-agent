@@ -83,7 +83,7 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
     // -- Check
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::EarlyReturn(_)),
+        matches!(outcome, ExecuteOutcome::EarlyReturn(_)),
         "a cancelled turn returns EarlyReturn"
     );
 

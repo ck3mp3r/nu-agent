@@ -468,4 +468,21 @@ pub enum SessionLifecycle {
     ModelSwitched { from: String, to: String },
 }
 
+/// How a turn ended — the turn's terminal classification.
+///
+/// The one classification the transcript fold and the stop reporting derive
+/// from. The set is closed: a producer that knows a difference emits the
+/// variant, and no consumer infers one from text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnOutcome {
+    /// The turn finished normally.
+    Completed,
+    /// The client cancelled the turn.
+    Cancelled,
+    /// The model hit its output-token ceiling.
+    MaxTokens,
+    /// The turn hit the configured tool-turn limit.
+    MaxTurns,
+}
+
 // endregion: --- Types

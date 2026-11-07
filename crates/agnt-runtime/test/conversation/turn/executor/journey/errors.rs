@@ -157,7 +157,7 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
         .await;
     assert!(r1.is_ok(), "cancelled turn must return Ok: {r1:?}");
     let r1 = r1.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
-    assert!(matches!(r1, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(r1, ExecuteOutcome::EarlyReturn(_)));
 
     // The cancelled turn's delta is persisted: the prompt, the tool call and
     // its real result.

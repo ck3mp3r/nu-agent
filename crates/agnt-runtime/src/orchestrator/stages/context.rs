@@ -8,7 +8,7 @@ use nu_protocol::Span;
 use crate::bus::{CompactionTx, UiEventTx, UiStateTx};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::events::{UiRequest, UiRequestResponse, WorkerCommand};
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use crate::protocol::event::PermissionDecisionSubmission;
 use agnt_kernel::bus::{CancelTx, SessionTx, TurnTx};
 
@@ -112,7 +112,7 @@ pub(crate) trait UiRequestHandler {
 
 /// Stage trait for session outcome handling.
 pub(crate) trait SessionHandler {
-    async fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext<'_>) {
+    async fn handle_outcome(&mut self, outcome: TurnResult, ctx: &mut OrchestrationContext<'_>) {
         let _ = (outcome, ctx);
     }
 }

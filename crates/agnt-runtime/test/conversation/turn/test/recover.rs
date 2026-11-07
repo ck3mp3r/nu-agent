@@ -31,7 +31,7 @@ use support::*;
 use super::*;
 
 use crate::conversation::state::memory::MemoryState;
-use crate::conversation::turn::executor::{ExecuteInput, TurnExecutor, TurnOutcome};
+use crate::conversation::turn::executor::{ExecuteInput, ExecuteOutcome, TurnExecutor};
 use crate::session::RigStoreConfig;
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolResult,

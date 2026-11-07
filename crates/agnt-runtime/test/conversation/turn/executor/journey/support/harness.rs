@@ -98,7 +98,7 @@ impl JourneyHarness {
         model: MockCompletionModel,
         tool_infra: ToolInfra,
     ) -> (
-        std::result::Result<TurnOutcome, LabeledError>,
+        std::result::Result<ExecuteOutcome, LabeledError>,
         Vec<crate::protocol::events::SystemEvent>,
     ) {
         // Swap the scripted mock model into the shared slot so the agent
@@ -187,7 +187,7 @@ impl JourneyHarness {
         client: &CachedProviderClient,
         tool_infra: ToolInfra,
     ) -> Result<(
-        std::result::Result<TurnOutcome, LabeledError>,
+        std::result::Result<ExecuteOutcome, LabeledError>,
         Vec<crate::protocol::events::SystemEvent>,
     )> {
         // Swap the mock client's model into the shared slot so the agent

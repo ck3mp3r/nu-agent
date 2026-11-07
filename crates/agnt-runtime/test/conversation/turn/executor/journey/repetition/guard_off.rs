@@ -33,7 +33,7 @@ async fn journey_repetition_guard_off_intra_stream_never_trips() -> Result<()> {
     // -- Check
     let outcome = r.map_err(|e| format!("guard-off turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "guard-off intra-stream repetition must not stop the run"
     );
     assert!(
@@ -65,7 +65,7 @@ async fn journey_repetition_guard_off_cross_turn_never_trips() -> Result<()> {
         let (r, events) = h.turn("do the thing", model, tool_infra.clone()).await;
         let outcome = r.map_err(|e| format!("turn {e:?}"))?;
         assert!(
-            matches!(outcome, TurnOutcome::Completed),
+            matches!(outcome, ExecuteOutcome::Completed),
             "guard-off cross-turn repetition must not stop the run"
         );
         assert!(
@@ -113,7 +113,7 @@ async fn journey_repetition_guard_off_doom_loop_never_trips() -> Result<()> {
     // -- Check
     let outcome = r.map_err(|e| format!("guard-off doom turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "guard-off doom loop must not stop the run, got: {outcome:?}"
     );
     assert!(

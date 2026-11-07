@@ -13,12 +13,12 @@ use nu_protocol::{LabeledError, Value};
 ///
 /// # Future Improvement
 ///
-/// The v1 and v2 paths should be updated to return `TurnOutcome` directly,
+/// The v1 and v2 paths should be updated to return `TurnResult` directly,
 /// eliminating the need for string matching.  The `TurnError::Cancelled` variant
 /// provides the typed information needed but is currently lost when converting
 /// to `LabeledError`.
 #[derive(Debug, Clone)]
-pub enum TurnOutcome {
+pub enum TurnResult {
     /// Turn completed successfully with a result value
     Success(Value),
     /// Turn was cancelled by the user
@@ -27,19 +27,19 @@ pub enum TurnOutcome {
     Error(LabeledError),
 }
 
-impl TurnOutcome {
-    /// Convert a `Result<Value, LabeledError>` to a `TurnOutcome`.
+impl TurnResult {
+    /// Convert a `Result<Value, LabeledError>` to a `TurnResult`.
     ///
     /// The `cancelled` flag indicates whether the error represents a cancellation.
     /// This is used to convert from the v1/v2 return types which still use `Result`.
     pub fn from_result(result: Result<Value, LabeledError>, cancelled: bool) -> Self {
         match result {
-            Ok(value) => TurnOutcome::Success(value),
+            Ok(value) => TurnResult::Success(value),
             Err(error) => {
                 if cancelled {
-                    TurnOutcome::Cancelled
+                    TurnResult::Cancelled
                 } else {
-                    TurnOutcome::Error(error)
+                    TurnResult::Error(error)
                 }
             }
         }

@@ -141,7 +141,7 @@ async fn a2a_task_rx_rejects_second_task_while_worker_busy() -> Result<()> {
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .map_err(|_| "worker result send failed")?;
     event_tx
@@ -250,7 +250,7 @@ async fn a2a_task_rx_busy_without_store_drops_without_panic() -> Result<()> {
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .map_err(|_| "worker result send failed")?;
     event_tx

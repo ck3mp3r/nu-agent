@@ -80,7 +80,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
 
     // -- Check
     let outcome = result.map_err(|e| format!("doom stop must be Ok: {e:?}"))?;
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("doom stop must return EarlyReturn".into());
     };
     let response_text = extract_response_text_from_value(&value);

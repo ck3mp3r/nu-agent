@@ -67,7 +67,7 @@ async fn dispatch_user_cancel_without_a_reason_sends_the_notice_before_completed
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("a cancelled turn must early-return".into());
     };
     assert_eq!(
@@ -117,7 +117,7 @@ async fn dispatch_user_cancel_with_the_hook_reason_sends_the_notice_before_compl
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("a cancelled turn must early-return".into());
     };
     assert_eq!(

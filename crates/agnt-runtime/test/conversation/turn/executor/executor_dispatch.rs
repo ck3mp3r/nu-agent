@@ -263,7 +263,7 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_the_prompt_and_p
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
@@ -311,7 +311,7 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
@@ -358,7 +358,7 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
@@ -410,7 +410,7 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
 
     // -- Check
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("a cancelled turn must early-return".into());
     };
     assert_eq!(

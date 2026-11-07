@@ -108,7 +108,7 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .unwrap();
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
@@ -243,7 +243,7 @@ async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
     // Completing the first turn makes the worker idle; the buffered completion
     // is then drained and enqueued as its own prompt.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .map_err(|_| "worker result send failed")?;
     let enqueued = recv_external_prompt(&mut ui_state_rx).await?;
@@ -276,7 +276,7 @@ async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .map_err(|_| "worker result send failed")?;
     event_tx

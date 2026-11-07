@@ -218,7 +218,7 @@ where
         span: Span,
     ) -> Result<Value, LabeledError> {
         use super::turn::executor::{
-            ExecuteInput, ToolInfra, TurnExecutor, TurnOutcome, build_response,
+            ExecuteInput, ExecuteOutcome, ToolInfra, TurnExecutor, build_response,
         };
         use crate::hook::{InteractivePermissionResolver, PolicyPermissionResolver};
 
@@ -334,8 +334,8 @@ where
         };
 
         match outcome? {
-            TurnOutcome::EarlyReturn(value) => Ok(value),
-            TurnOutcome::Completed => Ok(build_response(
+            ExecuteOutcome::EarlyReturn(value) => Ok(value),
+            ExecuteOutcome::Completed => Ok(build_response(
                 response_data,
                 self.provider.provider_config(),
                 self.final_session_id.as_deref(),

@@ -85,7 +85,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
                 Some(session_id),
             )
             .await;
-        if let Ok(TurnOutcome::EarlyReturn(value)) = result {
+        if let Ok(ExecuteOutcome::EarlyReturn(value)) = result {
             outcome_value = Some(value);
             break;
         }
@@ -235,7 +235,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
                 Some(session_id),
             )
             .await;
-        if let Ok(TurnOutcome::EarlyReturn(value)) = result {
+        if let Ok(ExecuteOutcome::EarlyReturn(value)) = result {
             outcome_value = Some(value);
             break;
         }
@@ -419,7 +419,7 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
             .await;
         let outcome = result.map_err(|e| format!("each execute() must be Ok: {e:?}"))?;
         assert!(
-            matches!(outcome, TurnOutcome::Completed),
+            matches!(outcome, ExecuteOutcome::Completed),
             "with the ladder reset every post-reset turn must complete (no terminal stop); got {outcome:?}"
         );
     }

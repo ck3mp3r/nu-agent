@@ -155,7 +155,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
     );
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::EarlyReturn(_)),
+        matches!(outcome, ExecuteOutcome::EarlyReturn(_)),
         "cancelled turn must return EarlyReturn"
     );
 
@@ -253,7 +253,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
 
     // -- Check
     let outcome = result.map_err(|e| format!("user cancel must be Ok: {e:?}"))?;
-    let TurnOutcome::EarlyReturn(value) = outcome else {
+    let ExecuteOutcome::EarlyReturn(value) = outcome else {
         return Err("user cancel must return EarlyReturn".into());
     };
     let response_text = extract_response_text_from_value(&value);

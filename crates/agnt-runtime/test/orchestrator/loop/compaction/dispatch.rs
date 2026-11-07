@@ -122,7 +122,7 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
         .unwrap();
     // Worker finishes; the queued compaction must be dispatched.
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .unwrap();
 

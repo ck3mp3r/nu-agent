@@ -85,7 +85,7 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
     // -- Check
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::EarlyReturn(_)),
+        matches!(outcome, ExecuteOutcome::EarlyReturn(_)),
         "a cancelled turn returns EarlyReturn"
     );
 
@@ -259,7 +259,7 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
     // -- Check
     let outcome = result.map_err(|e| format!("a completed turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
+        matches!(outcome, ExecuteOutcome::Completed),
         "a turn with no cancel completes"
     );
 

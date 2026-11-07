@@ -36,7 +36,7 @@ async fn worker_result_drains_queued_and_checks_compaction() {
     );
 
     worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .send(TurnResult::Success(Value::nothing(Span::test_data())))
         .await
         .unwrap();
 

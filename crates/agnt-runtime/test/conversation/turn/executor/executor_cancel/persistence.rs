@@ -7,7 +7,7 @@ use super::*;
 /// RED: cancelled turn via Ok path returns EarlyReturn, persists messages, emits Completed.
 ///
 /// Before Path C is added to executor.rs, this test FAILS because the current code
-/// falls through to the normal persistence path and returns TurnOutcome::Completed.
+/// falls through to the normal persistence path and returns ExecuteOutcome::Completed.
 ///
 /// The mock model emits one text chunk then a FinalResponse. The UI cancels immediately
 /// (before the first drain loop tick), causing the cancel_token to fire before the
@@ -17,7 +17,7 @@ use super::*;
 /// This reaches executor.execute() as Ok(TurnResult { cancelled: true, messages: Some }).
 ///
 /// Expected behaviour after the fix:
-///   1. result == Ok(TurnOutcome::EarlyReturn(_))
+///   1. result == Ok(ExecuteOutcome::EarlyReturn(_))
 ///   2. conversation store was appended with the cancelled messages
 ///   3. SystemEvent::TurnCompleted was emitted
 ///   4. SystemEvent::AssistantMessage was NOT emitted
@@ -104,8 +104,8 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     );
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::EarlyReturn(_)),
-        "cancelled Ok path must return TurnOutcome::EarlyReturn, not TurnOutcome::Completed"
+        matches!(outcome, ExecuteOutcome::EarlyReturn(_)),
+        "cancelled Ok path must return ExecuteOutcome::EarlyReturn, not ExecuteOutcome::Completed"
     );
 
     // 2. The cancelled turn's delta is persisted: the prompt, the committed
@@ -226,7 +226,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
 
     assert!(result.is_ok());
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
 
     // The cancelled turn's delta is persisted through the same rig store.
     let from_store = load_persisted_messages(&memory_state, session_id).await?;
@@ -328,7 +328,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
 
     assert!(result.is_ok(), "cancelled turn must not return Err");
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
 
     // The cancelled turn appends only its own delta: the prompt, the committed
     // tool call and its result. The prior conversation is untouched.

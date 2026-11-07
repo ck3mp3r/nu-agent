@@ -13,7 +13,7 @@ async fn dispatch_execute_turn_publishes_exactly_one_started()
     let sources = dispatch_sources(&bus);
     let mut runtime = AgentSwitchRuntime::default();
     let (result_tx, mut result_rx) =
-        mpsc::channel::<crate::orchestrator::turn_outcome::TurnOutcome>(32);
+        mpsc::channel::<crate::orchestrator::turn_outcome::TurnResult>(32);
 
     // -- Exec
     let keep_going = CommandRouter::dispatch(
@@ -49,7 +49,7 @@ async fn dispatch_execute_turn_publishes_exactly_one_started()
     assert!(
         matches!(
             outcome,
-            crate::orchestrator::turn_outcome::TurnOutcome::Success(_)
+            crate::orchestrator::turn_outcome::TurnResult::Success(_)
         ),
         "the turn must report success"
     );

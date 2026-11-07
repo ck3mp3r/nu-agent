@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::conversation::state::memory::MemoryState;
-use crate::conversation::turn::executor::{ExecuteInput, TurnExecutor, TurnOutcome};
+use crate::conversation::turn::executor::{ExecuteInput, ExecuteOutcome, TurnExecutor};
 use crate::session::StoreType;
 use agnt_storage::{Entries, Storage, ToolCallStatus, ToolCalls, Turns};
 
@@ -213,7 +213,7 @@ async fn cancelled_turn_records_no_facts() -> Result<()> {
         )
         .await
         .map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
+    assert!(matches!(outcome, ExecuteOutcome::EarlyReturn(_)));
 
     // -- Check: the cancelled settle wrote nothing; the recovery closed one
     // turn, holding the call that ran and the keys of the delta it saved.

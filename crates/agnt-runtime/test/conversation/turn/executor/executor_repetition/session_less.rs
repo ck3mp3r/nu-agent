@@ -72,7 +72,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
                 None,
             )
             .await;
-        if let Ok(TurnOutcome::EarlyReturn(value)) = result {
+        if let Ok(ExecuteOutcome::EarlyReturn(value)) = result {
             outcome_value = Some(value);
             break;
         }

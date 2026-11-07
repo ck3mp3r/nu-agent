@@ -8,7 +8,7 @@ use crate::orchestrator::events::WorkerCommand;
 use crate::orchestrator::stages::{
     OrchestrationContext, SessionHandler, SlashHandler, UiRequestHandler,
 };
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use crate::protocol::events::SystemEvent;
 use agnt_kernel::bus::CancelEvent;
 
@@ -61,7 +61,7 @@ pub(crate) async fn dispatch_compaction(
 /// Returns `true` when the loop should break (a quit was pending and the worker
 /// is now idle).
 pub(crate) async fn handle_worker_result<U, Se>(
-    outcome: TurnOutcome,
+    outcome: TurnResult,
     ctx: &mut OrchestrationContext<'_>,
     ui_request: &mut U,
     session: &mut Se,

@@ -6,7 +6,7 @@ use agnt_a2a::{A2aCompletionEvent, IncomingTask};
 
 use crate::bus::CompactionRx;
 use crate::orchestrator::events::UiRequestResponse;
-use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::orchestrator::turn_outcome::TurnResult;
 use agnt_kernel::bus::ExternalRx;
 
 /// The receivers the loop owns for one run.
@@ -37,7 +37,7 @@ pub(crate) struct LoopSources {
 /// receiver, so the engine never takes ownership from the loop.
 pub(crate) struct SourceChannels<'a> {
     /// Worker turn outcomes.
-    pub(crate) worker_result_rx: &'a mut mpsc::Receiver<TurnOutcome>,
+    pub(crate) worker_result_rx: &'a mut mpsc::Receiver<TurnResult>,
     /// Blocking UI request responses.
     pub(crate) blocking_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
     /// Concurrent UI request responses.

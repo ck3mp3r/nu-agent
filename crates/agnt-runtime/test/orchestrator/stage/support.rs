@@ -17,7 +17,7 @@ pub(super) use crate::orchestrator::stages::ui_request::UiRequestStage;
 pub(super) use crate::orchestrator::stages::{
     OrchestrationContext, SessionHandler, UiRequestHandler,
 };
-pub(super) use crate::orchestrator::turn_outcome::TurnOutcome;
+pub(super) use crate::orchestrator::turn_outcome::TurnResult;
 pub(super) use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
 pub(super) use crate::protocol::events::SystemEvent;
 pub(super) use crate::session::SessionInfo;

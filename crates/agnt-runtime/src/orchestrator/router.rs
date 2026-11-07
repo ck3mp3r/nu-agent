@@ -1,6 +1,6 @@
 use crate::bus::{CompactionTx, UiStateTx};
 use crate::orchestrator::events::{UiRequest, UiRequestResponse, WorkerCommand};
-use crate::orchestrator::{AgentSwitchHook, turn_outcome::TurnOutcome};
+use crate::orchestrator::{AgentSwitchHook, turn_outcome::TurnResult};
 use crate::protocol::McpManagement;
 use crate::protocol::contracts::CoreRuntime;
 use crate::protocol::events::{SystemEvent, compaction_source_text};
@@ -42,7 +42,7 @@ impl CommandRouter {
     pub async fn dispatch<R, H>(
         cmd: WorkerCommand,
         runtime: &mut R,
-        result_tx: &mpsc::Sender<TurnOutcome>,
+        result_tx: &mpsc::Sender<TurnResult>,
         on_agent_switch: Option<H>,
         sources: &DispatchSources,
     ) -> bool
@@ -69,15 +69,13 @@ impl CommandRouter {
                     })
                     .await;
                 let result = runtime.execute_turn(prompt, None, span).await;
-                // Convert Result<Value, LabeledError> to TurnOutcome
+                // Convert Result<Value, LabeledError> to TurnResult
                 // Detect cancellation by message content:
                 // - v2 path: "Turn cancelled: ..."
                 let outcome = match &result {
-                    Err(error) if error.msg.starts_with("Turn cancelled:") => {
-                        TurnOutcome::Cancelled
-                    }
-                    Ok(value) => TurnOutcome::Success(value.clone()),
-                    Err(error) => TurnOutcome::Error(error.clone()),
+                    Err(error) if error.msg.starts_with("Turn cancelled:") => TurnResult::Cancelled,
+                    Ok(value) => TurnResult::Success(value.clone()),
+                    Err(error) => TurnResult::Error(error.clone()),
                 };
                 let _ = result_tx.send(outcome).await;
                 true

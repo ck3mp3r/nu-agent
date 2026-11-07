@@ -55,7 +55,7 @@ use crate::translator::{EventTranslator, SessionUpdateSink, run_turn_with_notifi
 /// erases its structured `TurnError` into a `LabeledError`, so the ACP layer
 /// re-derives the stop category it must report to the client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnOutcome {
+pub enum StopCategory {
     /// The turn finished normally.
     Completed,
     /// The client cancelled the turn via `session/cancel`.
@@ -67,12 +67,12 @@ pub enum TurnOutcome {
 }
 
 /// Map a finished turn to the ACP stop reason reported to the client.
-pub fn map_turn_outcome_to_stop_reason(outcome: TurnOutcome) -> StopReason {
+pub fn map_stop_category_to_stop_reason(outcome: StopCategory) -> StopReason {
     match outcome {
-        TurnOutcome::Completed => StopReason::EndTurn,
-        TurnOutcome::Cancelled => StopReason::Cancelled,
-        TurnOutcome::MaxTokens => StopReason::MaxTokens,
-        TurnOutcome::MaxTurns => StopReason::MaxTurnRequests,
+        StopCategory::Completed => StopReason::EndTurn,
+        StopCategory::Cancelled => StopReason::Cancelled,
+        StopCategory::MaxTokens => StopReason::MaxTokens,
+        StopCategory::MaxTurns => StopReason::MaxTurnRequests,
     }
 }
 
@@ -535,11 +535,11 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         };
 
         let outcome = if session.cancel_requested.load(Ordering::SeqCst) {
-            TurnOutcome::Cancelled
+            StopCategory::Cancelled
         } else {
             classify_turn_result(session_id, result)
         };
-        Ok(map_turn_outcome_to_stop_reason(outcome))
+        Ok(map_stop_category_to_stop_reason(outcome))
     }
 
     /// Ask the session's turn to stop and report `stopReason: cancelled`.
@@ -892,18 +892,18 @@ fn select_values(options: &[SessionConfigOption]) -> Vec<String> {
 fn classify_turn_result(
     session_id: &str,
     result: core::result::Result<Value, LabeledError>,
-) -> TurnOutcome {
+) -> StopCategory {
     let Err(err) = result else {
-        return TurnOutcome::Completed;
+        return StopCategory::Completed;
     };
     log::warn!("session {session_id}: prompt turn failed: {}", err.msg);
     let message = err.msg.to_lowercase();
     if message.contains("max turns") {
-        TurnOutcome::MaxTurns
+        StopCategory::MaxTurns
     } else if message.contains("max tokens") {
-        TurnOutcome::MaxTokens
+        StopCategory::MaxTokens
     } else {
-        TurnOutcome::Completed
+        StopCategory::Completed
     }
 }
 

@@ -44,7 +44,7 @@ pub const ARCH_12: &str = "ARCH-12";
 /// not come from.
 ///
 /// ARCH-4's row holds every `pub enum` whose name another `pub enum` also
-/// carries: six distinctions, thirteen declarations. Merging any pair is a
+/// carries: five distinctions, ten declarations. Merging any pair is a
 /// later slice's claim (`7e4f330c` drains `ToolErrorKind`), and its baseline
 /// entry is removed with it.
 ///
@@ -64,9 +64,6 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
             "ARCH-4 agnt-runtime/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-kernel/src/builtin.rs:44: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-runtime/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
-            "ARCH-4 agnt-runtime/src/conversation/turn/executor/core.rs:49: `TurnOutcome` is declared 3 times in the workspace",
-            "ARCH-4 agnt-acp/src/session.rs:58: `TurnOutcome` is declared 3 times in the workspace",
         ],
     ),
     (ARCH_8, &[]),

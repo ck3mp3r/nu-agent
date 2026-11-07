@@ -117,8 +117,8 @@ async fn completed_turn_no_explicit_store_append_needed() -> Result<()> {
     );
     let outcome = result.map_err(|e| format!("completed turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(outcome, TurnOutcome::Completed),
-        "completed turn must return TurnOutcome::Completed"
+        matches!(outcome, ExecuteOutcome::Completed),
+        "completed turn must return ExecuteOutcome::Completed"
     );
 
     // rig saved the conversation through the rig-memory store — the executor
@@ -206,7 +206,7 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
 
     assert!(result.is_ok());
     let outcome = result.map_err(|e| format!("completed turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::Completed));
+    assert!(matches!(outcome, ExecuteOutcome::Completed));
 
     // After a completed turn with a session, last_total_tokens must be Some(...)
     // (even if 0 from the mock model — the key is it was set).
@@ -338,7 +338,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         result.err()
     );
     let outcome = result.map_err(|e| format!("turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::Completed));
+    assert!(matches!(outcome, ExecuteOutcome::Completed));
 
     // 1. `SystemEvent::CompactionRequested { source: Auto }` must have been emitted
     //    on the bus when the conversation exceeds the window.
@@ -434,7 +434,7 @@ async fn on_outcome_stores_total_tokens() -> Result<()> {
         result.err()
     );
     let outcome = result.map_err(|e| format!("turn must be Ok: {e:?}"))?;
-    assert!(matches!(outcome, TurnOutcome::Completed));
+    assert!(matches!(outcome, ExecuteOutcome::Completed));
     assert_eq!(
         *last_total_tokens
             .lock()
