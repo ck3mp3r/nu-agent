@@ -138,7 +138,7 @@ The order is a dependency claim, to be verified against the assertions rather th
 |---|---|
 | **Deferred, not settled.** The four class names stand for now — `facts` included — because no agreed wording exists yet. Treat `facts` as a **placeholder, not a ruling**. The per-channel contract is owed, and it is what will settle the names: name each channel after the guarantee it actually provides. Do not invent a vocabulary ahead of that contract | ARCH-2's term list, and the channel split — `ui_state` carries current values *and* operations |
 | Where allocated identifiers are minted — kernel or composition root | ARCH-11's field census |
-| The transcript record's home and shape (the fold belongs to storage) | ARCH-6 and the storage surface |
+| The transcript record's home and shape (the fold belongs to storage) — **Settled** by the transcript-record landing: storage-owned `TranscriptRecord`/`TranscriptRow`/`TranscriptStamp` + `TranscriptId` (FNV-1a identity with explicit constants), the rehydration read path in the storage service (`Entries::record_transcript`); M3 | ARCH-6 — no longer blocked by this row (its blocker is now the allowance-row question, per the landing's ARCH-6 note; the ARCH-6 checker slice owns that census); the storage-surface workstream keeps its half |
 | Whether the aggregate runtime keeps five trait impls | ARCH-10's exact form |
 
 ---

@@ -19,10 +19,10 @@ use agnt_runtime::protocol::event::PermissionDecision as ProtocolPermissionDecis
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
 /// that unblock the `InteractivePermissionResolver` awaiting a user decision.
 pub type PendingPermissions = Arc<Mutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>;
-use crate::session::management::{SessionPersistence, SessionState};
 use agnt_runtime::protocol::McpManagement;
 use agnt_runtime::protocol::contracts::{CoreRuntime, McpUsabilityState};
 use agnt_runtime::protocol::model_switching::ModelSwitching;
+use agnt_runtime::session::management::{SessionPersistence, SessionState};
 
 /// Build system preamble from components.
 /// Joins non-empty parts with separators. Returns None if all empty.
@@ -690,7 +690,7 @@ where
     fn new_session(&mut self) {
         self.session.clear();
         reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
-        let new_id = crate::session::resolver::generate_session_id();
+        let new_id = agnt_runtime::session::resolver::generate_session_id();
         let prefix = agnt_runtime::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
         self.final_session_id = Some(new_id);
@@ -786,12 +786,14 @@ where
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
 
-        Ok(crate::session::resolver::hydrate_transcript_messages(
-            &entries,
-            &self.cwd,
-            &facts.status_map(),
-            &facts.turns,
-        ))
+        Ok(
+            agnt_runtime::session::resolver::hydrate_transcript_messages(
+                &entries,
+                &self.cwd,
+                &facts.status_map(),
+                &facts.turns,
+            ),
+        )
     }
 
     async fn list_sessions(&self, cwd: &std::path::Path) -> Result<Vec<SessionInfo>, String> {
@@ -892,9 +894,11 @@ where
         self.session_usage.reset();
 
         let (statuses, turns) = (facts.status_map(), &facts.turns);
-        Ok(crate::session::resolver::hydrate_transcript_messages(
-            &entries, &self.cwd, &statuses, turns,
-        ))
+        Ok(
+            agnt_runtime::session::resolver::hydrate_transcript_messages(
+                &entries, &self.cwd, &statuses, turns,
+            ),
+        )
     }
 }
 
@@ -933,7 +937,7 @@ async fn rig_messages(
     memory: &agnt_runtime::session::CachedMemory,
     session_id: &str,
     turns: &std::collections::HashMap<agnt_storage::MessageKey, i64>,
-) -> Result<Vec<crate::session::resolver::StoredEntry>, String> {
+) -> Result<Vec<agnt_runtime::session::resolver::StoredEntry>, String> {
     let store = memory
         .rig_store(session_id)
         .await
@@ -950,7 +954,7 @@ async fn rig_messages(
         .entries()
         .map(|entry| {
             let key = agnt_runtime::session::settle::entry_keys([entry]);
-            crate::session::resolver::StoredEntry {
+            agnt_runtime::session::resolver::StoredEntry {
                 message: entry.message.clone(),
                 author: entry.author.cloned(),
                 turn_seq: key.first().and_then(|key| turns.get(key)).copied(),

@@ -9,7 +9,6 @@ use agnt_a2a::{
 };
 use agnt_core::conversation::contracts::{DecisionSource, RuntimeAccess};
 use agnt_core::orchestrator::{AgentSwitchHook, LoopConfig, run};
-use agnt_core::session::management::{SessionPersistence, SessionState};
 use agnt_runtime::bus::OneshotTx;
 use agnt_runtime::protocol::McpManagement;
 use agnt_runtime::protocol::contracts::CoreRuntime;
@@ -19,6 +18,7 @@ use agnt_runtime::protocol::picker::{
     build_agent_picker_catalog, format_active_model_identity,
     model_picker_catalog_from_cached_startup_plugin_config,
 };
+use agnt_runtime::session::management::{SessionPersistence, SessionState};
 use agnt_tty::policy::UiPolicy;
 use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;

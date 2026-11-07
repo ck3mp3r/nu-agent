@@ -9,8 +9,8 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::harness::*;
 use super::*;
-use crate::session::management::{SessionPersistence, SessionState};
 use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::session::management::{SessionPersistence, SessionState};
 
 /// A model whose every turn reports `input`/`output` tokens and a total.
 fn usage_model(turns: usize, input: u64, output: u64) -> MockCompletionModel {

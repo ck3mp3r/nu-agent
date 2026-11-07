@@ -5,10 +5,10 @@ use std::sync::atomic::AtomicBool;
 
 use agnt_core::conversation::contracts::RuntimeAccess;
 use agnt_core::orchestrator::run_single_turn;
-use agnt_core::session::management::SessionPersistence;
 use agnt_runtime::bus::CancelEvent;
 use agnt_runtime::protocol::contracts::CoreRuntime;
 use agnt_runtime::protocol::events::SystemEvent;
+use agnt_runtime::session::management::SessionPersistence;
 use agnt_tty::policy::UiPolicy;
 use agnt_tty::{StderrUiFactory, UiRendererFactory};
 use nu_protocol::{Span, Value};

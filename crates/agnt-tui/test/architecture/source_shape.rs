@@ -91,7 +91,7 @@ const KILLED_STATUS_SNIFFING: [&str; 6] = [
 
 /// The module that reads the status variants: hydration matches the enum, so
 /// the typed read exists where the rows are built.
-const STATUS_READER: &str = "agnt-core/src/session/resolver.rs";
+const STATUS_READER: &str = "agnt-runtime/src/session/resolver.rs";
 
 /// The typed status read the resolver must perform: hydration takes the
 /// variant the store recorded, never a reading of the row's text.

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::harness::*;
 use super::*;
-use crate::session::management::SessionPersistence;
+use agnt_runtime::session::management::SessionPersistence;
 use agnt_runtime::session::settle::SettleInput;
 
 /// A runtime on a store that lives on disk: the facts one open writes are the

@@ -1,7 +1,8 @@
 use agnt_kernel::CompactionSource;
 
-use agnt_runtime::protocol::contracts::UiMessageSnapshot;
-use agnt_runtime::session::SessionInfo;
+use crate::hook::TurnUsageTotals;
+use crate::protocol::contracts::UiMessageSnapshot;
+use crate::session::SessionInfo;
 
 /// Pure session state lifecycle — synchronous, no I/O.
 /// Every runtime implements this: production, test fakes, mocks.
@@ -45,8 +46,8 @@ pub trait SessionPersistence {
     /// The cells reset when the runtime switches sessions, so the totals cover
     /// the current session only. A runtime that tracks no usage reports the
     /// empty sum.
-    fn session_usage(&self) -> agnt_runtime::hook::TurnUsageTotals {
-        agnt_runtime::hook::TurnUsageTotals::default()
+    fn session_usage(&self) -> TurnUsageTotals {
+        TurnUsageTotals::default()
     }
 
     /// Run a compaction of the current session for `source`.

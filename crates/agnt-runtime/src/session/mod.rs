@@ -9,10 +9,12 @@ pub mod blocking;
 pub mod factory;
 mod info;
 pub mod journal;
+pub mod management;
 mod memory_error;
 mod model;
 pub mod prefix;
 pub mod repair;
+pub mod resolver;
 pub mod rig_state;
 pub mod settle;
 pub mod tool_status;
@@ -38,12 +40,20 @@ mod factory_test;
 mod journal_test;
 
 #[cfg(test)]
+#[path = "../../test/session/management.rs"]
+mod management_test;
+
+#[cfg(test)]
 #[path = "../../test/session/memory_error.rs"]
 mod memory_error_test;
 
 #[cfg(test)]
 #[path = "../../test/session/repair.rs"]
 mod repair_test;
+
+#[cfg(test)]
+#[path = "../../test/session/resolver.rs"]
+mod resolver_test;
 
 #[cfg(test)]
 #[path = "../../test/session/rig_state.rs"]

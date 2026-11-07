@@ -1,5 +1,4 @@
 use crate::orchestrator::{AgentSwitchHook, turn_outcome::TurnOutcome};
-use crate::session::management::{SessionPersistence, SessionState};
 use agnt_kernel::bus::{SessionTx, TurnTx};
 use agnt_runtime::bus::{CompactionTx, UiStateTx};
 use agnt_runtime::orchestrator::events::{UiRequest, UiRequestResponse, WorkerCommand};
@@ -7,6 +6,7 @@ use agnt_runtime::protocol::McpManagement;
 use agnt_runtime::protocol::contracts::CoreRuntime;
 use agnt_runtime::protocol::events::{SystemEvent, compaction_source_text};
 use agnt_runtime::protocol::model_switching::ModelSwitching;
+use agnt_runtime::session::management::{SessionPersistence, SessionState};
 
 use tokio::sync::mpsc;
 

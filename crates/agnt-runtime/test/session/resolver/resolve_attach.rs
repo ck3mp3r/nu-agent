@@ -4,15 +4,15 @@ use super::*;
 /// the cwd-derived directory prefix.
 #[tokio::test]
 async fn resolve_session_request_prefixes_ids() {
+    use crate::session::RigStoreConfig;
     use crate::session::resolver::{
         DefaultSessionResolver, SessionResolutionInput, SessionResolver,
     };
-    use agnt_runtime::session::RigStoreConfig;
 
     // -- Setup & Fixtures
     let resolver = DefaultSessionResolver::new(RigStoreConfig::in_memory());
     let cwd = std::path::PathBuf::from("/home/user/project");
-    let prefix = agnt_runtime::session::prefix::dir_prefix(&cwd);
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
 
     // -- Exec & Check: a user-provided id is prefixed
     let result = resolver
@@ -50,19 +50,19 @@ async fn resolve_session_request_prefixes_ids() {
 /// `last_total_tokens` unset.
 #[tokio::test]
 async fn attach_existing_session_returns_initial_messages_and_no_tokens() -> Result<()> {
+    use crate::session::RigStoreConfig;
     use crate::session::resolver::{
         DefaultSessionResolver, SessionResolutionInput, SessionResolver,
     };
     use crate::types::Message;
-    use agnt_runtime::session::RigStoreConfig;
     use tempfile::TempDir;
 
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let rig = RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
-        .with_cache_dir(temp_dir.path());
+    let rig =
+        RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(temp_dir.path());
     let cwd = std::path::PathBuf::from("/home/user/project");
-    let prefix = agnt_runtime::session::prefix::dir_prefix(&cwd);
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
     let raw_id = "existing-session";
     let prefixed_id = format!("{prefix}-{raw_id}");
     let messages = vec![Message::user("hello"), Message::assistant("world")];
@@ -100,7 +100,7 @@ async fn attach_existing_session_returns_initial_messages_and_no_tokens() -> Res
 
 /// Seed the rig-memory store of `session_id` with `messages`.
 async fn seed(
-    rig: &agnt_runtime::session::RigStoreConfig,
+    rig: &crate::session::RigStoreConfig,
     session_id: &str,
     messages: Vec<Message>,
 ) -> Result<()> {

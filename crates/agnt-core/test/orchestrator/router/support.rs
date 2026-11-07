@@ -15,7 +15,6 @@ pub(super) use crate::orchestrator::test_shared::drive_loop;
 pub(super) use crate::orchestrator::{
     AgentSwitchHook, CommandRouter, DispatchSources, LoopConfig, NoAgentSwitchHook,
 };
-pub(super) use crate::session::management::{SessionPersistence, SessionState};
 pub(super) use agnt_runtime::bus::Bus;
 pub(super) use agnt_runtime::orchestrator::events::{
     OrchestratorEvent, UiRequest, UiRequestResponse, WorkerCommand,
@@ -26,6 +25,7 @@ pub(super) use agnt_runtime::protocol::contracts::{
 };
 pub(super) use agnt_runtime::protocol::events::SystemEvent;
 pub(super) use agnt_runtime::protocol::model_switching::ModelSwitching;
+pub(super) use agnt_runtime::session::management::{SessionPersistence, SessionState};
 
 // ---------------------------------------------------------------------------
 // Dispatch sources

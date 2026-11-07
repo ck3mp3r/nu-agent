@@ -3,7 +3,7 @@
 
 use super::harness::*;
 use super::*;
-use crate::session::management::{SessionPersistence, SessionState};
+use agnt_runtime::session::management::{SessionPersistence, SessionState};
 use agnt_runtime::session::prefix::dir_prefix;
 
 /// Seed the rig-memory store of `id` with `messages`, then write the state
