@@ -1,9 +1,9 @@
 //! Unit tests for the rig-memory store seam.
 
 use super::{RigStoreConfig, StoreType};
+use crate::config::Paths;
 use crate::test_support::env_map;
-use agnt_runtime::config::Paths;
-use agnt_runtime::utils::paths::APP_DIR_NAME;
+use crate::utils::paths::APP_DIR_NAME;
 use rig_memory::Store;
 use tempfile::TempDir;
 

@@ -108,7 +108,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     };
     // The rig-memory store of each session is the store path the resolution
     // carries.
-    let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite)
+    let rig = agnt_runtime::session::RigStoreConfig::new(agnt_runtime::config::StoreType::Sqlite)
         .with_store_path(paths.store_path.clone());
     // Agent events are process-scoped, so they ride a standalone channel rather
     // than the per-session bus. The agent-class hook runner is spawned once for

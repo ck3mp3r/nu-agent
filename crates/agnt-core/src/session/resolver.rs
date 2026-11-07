@@ -5,10 +5,10 @@ use std::sync::Arc;
 use rig::conversation::{Author, EntryRef};
 
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::session::settle::{FactStore, SessionFacts};
-use crate::session::tool_status::{ToolStatus, ToolStatusMap};
-use crate::session::{RigStoreConfig, Session};
 use crate::types::{AssistantContent, CallId, Message, UserContent};
+use agnt_runtime::session::settle::{FactStore, SessionFacts};
+use agnt_runtime::session::tool_status::{ToolStatus, ToolStatusMap};
+use agnt_runtime::session::{RigStoreConfig, Session};
 use agnt_storage::TurnFacts;
 use std::collections::HashMap;
 
@@ -77,7 +77,7 @@ impl SessionResolver for DefaultSessionResolver {
         &self,
         input: SessionResolutionInput,
     ) -> Result<SessionResolution, LabeledError> {
-        let prefix = crate::session::prefix::dir_prefix(&input.cwd);
+        let prefix = agnt_runtime::session::prefix::dir_prefix(&input.cwd);
         let request = resolve_session_request(input.use_tui, input.session_id);
         let request = match request {
             SessionRequest::Attach(id) => SessionRequest::Attach(format!("{prefix}-{id}")),
@@ -136,7 +136,7 @@ impl DefaultSessionResolver {
 async fn holds(store: &Arc<dyn rig_memory::Store>, session_id: &str) -> Result<bool, LabeledError> {
     let store = Arc::clone(store);
     let session = session_id.to_owned();
-    let logs = crate::session::blocking::on_pool(move || store.logs())
+    let logs = agnt_runtime::session::blocking::on_pool(move || store.logs())
         .await
         .map_err(|e| LabeledError::new(format!("Failed to list session logs '{session}': {e}")))?
         .map_err(|e| LabeledError::new(format!("Failed to list session logs '{session}': {e}")))?;
@@ -173,7 +173,8 @@ pub(crate) async fn read_entries(
 ) -> Result<(Vec<StoredEntry>, ToolStatusMap, Vec<TurnFacts>), LabeledError> {
     let store = Arc::clone(store);
     let session = session_id.to_owned();
-    let read = crate::session::blocking::on_pool(move || rig_memory::load(&*store, &session)).await;
+    let read =
+        agnt_runtime::session::blocking::on_pool(move || rig_memory::load(&*store, &session)).await;
     let conversation = match read {
         Ok(loaded) => loaded.map_err(|e| {
             LabeledError::new(format!("Failed to load session '{session_id}': {e}"))
@@ -189,7 +190,7 @@ pub(crate) async fn read_entries(
     let entries: Vec<StoredEntry> = conversation
         .entries()
         .map(|entry| {
-            let key = crate::session::settle::entry_keys([entry]);
+            let key = agnt_runtime::session::settle::entry_keys([entry]);
             StoredEntry {
                 message: entry.message.clone(),
                 author: entry.author.cloned(),

@@ -28,7 +28,7 @@ use crate::hook::TurnToolRecord;
 
 /// What one finished turn records, as the settle path hands it over.
 #[derive(Debug)]
-pub(crate) struct SettleInput<'a> {
+pub struct SettleInput<'a> {
     /// The session the turn belongs to.
     pub session_id: &'a str,
     /// The model identity the turn ran under, `vendor/model`.
@@ -50,7 +50,7 @@ pub(crate) struct SettleInput<'a> {
 
 /// The facts one session holds, as a reload reads them.
 #[derive(Debug, Default)]
-pub(crate) struct SessionFacts {
+pub struct SessionFacts {
     /// The entry attributions, by rig key.
     pub entries: Vec<EntryTurn>,
     /// The statuses the session's calls settled with.
@@ -62,7 +62,7 @@ pub(crate) struct SessionFacts {
 
 impl SessionFacts {
     /// The status each of the session's calls settled with, by call id.
-    pub(crate) fn status_map(&self) -> ToolStatusMap {
+    pub fn status_map(&self) -> ToolStatusMap {
         self.calls
             .iter()
             .map(|call| (call.call.clone(), tool_status(call.status)))
@@ -70,7 +70,7 @@ impl SessionFacts {
     }
 
     /// The turn each entry was persisted under, by rig key.
-    pub(crate) fn entry_turns(&self) -> HashMap<MessageKey, i64> {
+    pub fn entry_turns(&self) -> HashMap<MessageKey, i64> {
         self.entries
             .iter()
             .map(|entry| (entry.key, entry.turn_seq))
@@ -79,7 +79,7 @@ impl SessionFacts {
 }
 
 /// The fact tables of one database.
-pub(crate) struct FactStore {
+pub struct FactStore {
     storage: Arc<Storage>,
 }
 
@@ -97,7 +97,7 @@ impl FactStore {
     /// # Errors
     ///
     /// [`super::RigStoreError`] when the database cannot be opened.
-    pub(crate) async fn open(config: &RigStoreConfig) -> Result<Self, super::RigStoreError> {
+    pub async fn open(config: &RigStoreConfig) -> Result<Self, super::RigStoreError> {
         let config = config.clone();
         let storage = on_pool(move || config.facts_blocking())
             .await
@@ -124,7 +124,7 @@ impl FactStore {
     /// # Errors
     ///
     /// [`MemoryError`] when the facts cannot be read or the unit is refused.
-    pub(crate) async fn settle(&self, input: SettleInput<'_>) -> Result<(), MemoryError> {
+    pub async fn settle(&self, input: SettleInput<'_>) -> Result<(), MemoryError> {
         let Some(keys) = input.keys else {
             log::warn!(
                 "Skipping the settle of session '{}': its pre-turn log could not be read, so \
@@ -174,7 +174,7 @@ impl FactStore {
     /// # Errors
     ///
     /// [`MemoryError`] when a fact table cannot be read.
-    pub(crate) async fn read(&self, session_id: &str) -> Result<SessionFacts, MemoryError> {
+    pub async fn read(&self, session_id: &str) -> Result<SessionFacts, MemoryError> {
         Ok(SessionFacts {
             entries: Entries::new(Arc::clone(&self.storage))
                 .read(session_id)
@@ -193,10 +193,7 @@ impl FactStore {
     /// The most recent turn is the one with the highest `turn_seq`. A session
     /// with no recorded turn answers `None`; a turn that ran persona-less
     /// records the empty string, which is likewise no agent.
-    pub(crate) async fn last_turn_agent(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<String>, MemoryError> {
+    pub async fn last_turn_agent(&self, session_id: &str) -> Result<Option<String>, MemoryError> {
         let last = self
             .turns(session_id)
             .await?
@@ -239,7 +236,7 @@ fn tool_status(status: ToolCallStatus) -> ToolStatus {
 }
 
 /// The current instant, in milliseconds since the Unix epoch.
-pub(crate) fn now_millis() -> i64 {
+pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -247,10 +244,7 @@ pub(crate) fn now_millis() -> i64 {
 }
 
 /// The keys `saved` holds beyond `before`: the entries the turn persisted.
-pub(crate) fn new_keys(
-    saved: &[MessageKey],
-    before: Option<&[MessageKey]>,
-) -> Option<Vec<MessageKey>> {
+pub fn new_keys(saved: &[MessageKey], before: Option<&[MessageKey]>) -> Option<Vec<MessageKey>> {
     let before = before?;
     Some(
         saved
@@ -262,7 +256,7 @@ pub(crate) fn new_keys(
 }
 
 /// rig's keys of `entries`, as the database stores them.
-pub(crate) fn entry_keys<'a>(
+pub fn entry_keys<'a>(
     entries: impl IntoIterator<Item = rig::conversation::EntryRef<'a>>,
 ) -> Vec<MessageKey> {
     entries

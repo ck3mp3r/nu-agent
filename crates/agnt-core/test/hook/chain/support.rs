@@ -15,7 +15,7 @@ pub(super) use crate::hook::output_repetition::RepetitionState;
 pub(super) use crate::hook::permission_resolver::PolicyPermissionResolver;
 pub(super) use crate::hook::{HookChain, HookState};
 pub(super) use crate::protocol::events::{SystemEvent, SystemKind};
-pub(super) use crate::session::CachedMemory;
+pub(super) use agnt_runtime::session::CachedMemory;
 
 pub(super) use futures::StreamExt;
 pub(super) use rig::DynModel;
@@ -54,7 +54,7 @@ pub(super) fn decide_fixture() -> Result<DecideFixture> {
         test_model_spec(),
     );
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
     let compaction = CompactionConfig {
@@ -94,7 +94,7 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
     permission: P,
 ) -> HookChain<P> {
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     HookChain::new(
         HookEnv {
@@ -155,7 +155,7 @@ impl RepetitionTurnFixture {
     pub(super) fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
         let memory = Arc::new(CachedMemory::new(
-            crate::session::RigStoreConfig::in_memory(),
+            agnt_runtime::session::RigStoreConfig::in_memory(),
         ));
         let dyn_model = Arc::new(std::sync::Mutex::new(
             MockCompletionModel::default().erase(),

@@ -11,9 +11,9 @@ use agent_client_protocol::schema::v1::{
 use agnt_core::bus::{OneshotRx, OneshotTx};
 use agnt_core::conversation::runtime::PendingPermissions;
 use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::transcript::ir::ToolName;
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};

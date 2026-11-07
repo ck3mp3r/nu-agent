@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::harness::*;
 use super::*;
 use crate::protocol::session_management::SessionPersistence;
-use crate::session::settle::SettleInput;
+use agnt_runtime::session::settle::SettleInput;
 
 /// A runtime on a store that lives on disk: the facts one open writes are the
 /// facts the next open reads. The harness's own config is in-memory, whose
@@ -17,7 +17,7 @@ fn sqlite_runtime() -> Result<RuntimeFixture> {
     let mut fixture = make_runtime(text_model("unused"))?;
     let cache = fixture.root().join("listing-facts");
     fixture.runtime.session = crate::conversation::state::memory::MemoryState::new(
-        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+        agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
             .with_cache_dir(cache),
     );
     Ok(fixture)
@@ -27,7 +27,7 @@ fn sqlite_runtime() -> Result<RuntimeFixture> {
 fn session_id(fixture: &RuntimeFixture, suffix: &str) -> String {
     format!(
         "{}-{suffix}",
-        crate::session::prefix::dir_prefix(fixture.root())
+        agnt_runtime::session::prefix::dir_prefix(fixture.root())
     )
 }
 
@@ -48,7 +48,7 @@ async fn seed(
     let mut conversation = rig_memory::load(&*store, id)?;
     conversation.extend(messages.iter().cloned());
     rig_memory::save(&*store, id, &mut conversation)?;
-    crate::session::rig_state::write_state_records(
+    agnt_runtime::session::rig_state::write_state_records(
         Arc::clone(&store),
         "test/model".to_string(),
         None,

@@ -13,8 +13,8 @@
 
 use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome, Usage};
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::AppState;
 use crate::interaction::cancel::CancelController;

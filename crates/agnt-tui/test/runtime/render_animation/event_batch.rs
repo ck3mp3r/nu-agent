@@ -1,7 +1,7 @@
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// Build a chunk with the producer's two facts kept apart: `delta` is the new
 /// suffix, `aggregated` the accumulated text.

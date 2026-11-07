@@ -15,10 +15,10 @@ use crate::bus::Bus;
 use crate::hook::agent_hook::{HookState, StopLedger};
 use crate::hook::chain::{HookChain, HookEnv};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
-use crate::hook::turn_tools::TurnToolRecord;
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::{Message, Text, ToolCall, ToolDefinition, UserContent};
 use agnt_runtime::config::defaults;
+use agnt_runtime::hook::turn_tools::TurnToolRecord;
 use rig::tool::DynamicTool;
 
 use super::context::TurnContext;
@@ -113,7 +113,7 @@ where
 
     // The turn's submission instant: the settle path records it beside the
     // instant the turn settled.
-    let submitted_millis = crate::session::settle::now_millis();
+    let submitted_millis = agnt_runtime::session::settle::now_millis();
 
     // The rig-memory store and log this turn keeps its conversation in. A
     // session-less turn persists nothing, so it gets no memory.
@@ -144,7 +144,7 @@ where
     let (pre_turn_messages, pre_turn_keys): (Vec<Message>, Option<Vec<agnt_storage::MessageKey>>) =
         match &rig_memory {
             Some((store, log)) => {
-                let loaded = crate::session::blocking::on_pool({
+                let loaded = agnt_runtime::session::blocking::on_pool({
                     let store = Arc::clone(store);
                     let log = log.clone();
                     move || rig_memory::load(&*store, &log)
@@ -157,7 +157,9 @@ where
                             .iter()
                             .map(|message| (**message).clone())
                             .collect(),
-                        Some(crate::session::settle::entry_keys(conversation.entries())),
+                        Some(agnt_runtime::session::settle::entry_keys(
+                            conversation.entries(),
+                        )),
                     ),
                     Ok(Err(error)) => {
                         log::warn!("Failed to load the session's pre-turn messages: {error}");
@@ -383,7 +385,7 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     submitted_millis: i64,
     /// The fact tables the turn's settle writes; `None` for a session-less
     /// turn, which records nothing.
-    facts: Option<crate::session::settle::FactStore>,
+    facts: Option<agnt_runtime::session::settle::FactStore>,
     /// rig's key of every entry the log held when the turn started, `None`
     /// when that read failed: the settle then has no "before" to subtract and
     /// records nothing rather than claim the session's history.
@@ -533,8 +535,8 @@ where
         let title = result
             .messages
             .as_deref()
-            .and_then(crate::session::rig_state::title_of_messages);
-        match crate::session::rig_state::write_state_records(
+            .and_then(agnt_runtime::session::rig_state::title_of_messages);
+        match agnt_runtime::session::rig_state::write_state_records(
             Arc::clone(store),
             model.clone(),
             title.clone(),
@@ -543,12 +545,15 @@ where
         {
             Ok(saved) => {
                 if let (Some(facts), Some(session_id)) = (&facts, &state_session) {
-                    let input = crate::session::settle::SettleInput {
+                    let input = agnt_runtime::session::settle::SettleInput {
                         session_id: session_id.as_str(),
                         model: &model,
                         agent: &turn_agent,
                         submitted_millis,
-                        keys: crate::session::settle::new_keys(&saved, pre_turn_keys.as_deref()),
+                        keys: agnt_runtime::session::settle::new_keys(
+                            &saved,
+                            pre_turn_keys.as_deref(),
+                        ),
                         records: &settle_records,
                     };
                     if let Err(error) = facts.settle(input).await {

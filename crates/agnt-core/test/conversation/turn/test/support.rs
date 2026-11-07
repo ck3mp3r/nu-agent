@@ -38,8 +38,8 @@ pub(crate) fn default_last_total_tokens() -> Arc<std::sync::Mutex<Option<u64>>> 
 /// `CachedMemory` is used directly).
 pub(super) fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf) {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let memory = Arc::new(crate::session::CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+    let memory = Arc::new(agnt_runtime::session::CachedMemory::new(
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     (temp_dir, memory)
 }

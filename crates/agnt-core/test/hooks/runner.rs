@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 #[tokio::test]
 async fn test_hooks_runner_turn_started_invokes_with_payload() -> Result<()> {

@@ -7,9 +7,9 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn test_utility_session_compaction_display_reports_the_resolved_policy() -> Result<()> {
     // -- Setup & Fixtures
-    let policy = agnt_core::rig_memory::CompactionPolicy {
+    let policy = agnt_runtime::rig_memory::CompactionPolicy {
         keep_recent: 5000,
-        clearing: agnt_core::rig_memory::ClearToolOutputs {
+        clearing: agnt_runtime::rig_memory::ClearToolOutputs {
             keep_tokens: 9000,
             ..Default::default()
         },

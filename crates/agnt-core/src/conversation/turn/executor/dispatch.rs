@@ -14,9 +14,9 @@ use nu_protocol::{LabeledError, Span};
 
 use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
 use crate::hook::permission_resolver::resolve_tool_source;
-use crate::hook::turn_tools::undispatched_streamed_calls;
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
+use agnt_runtime::hook::turn_tools::undispatched_streamed_calls;
 
 use super::TurnRecovery;
 use super::core::{
@@ -30,7 +30,7 @@ impl<'a, S> TurnExecutor<'a, S>
 where
     S: crate::conversation::managers::SessionManager<
             Memory = crate::conversation::state::memory::MemoryOf,
-            InnerMemory = crate::session::CachedMemory,
+            InnerMemory = agnt_runtime::session::CachedMemory,
         >,
 {
     /// Dispatch the terminal result of the retry/steering loop: surface stop

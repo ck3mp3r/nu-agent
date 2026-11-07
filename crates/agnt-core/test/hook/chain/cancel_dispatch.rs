@@ -79,7 +79,7 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
     permission: P,
 ) -> HookChain<P> {
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     HookChain::new(
         HookEnv {

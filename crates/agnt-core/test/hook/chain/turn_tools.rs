@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::hook::turn_tools::TurnToolLog;
+use agnt_runtime::hook::turn_tools::TurnToolLog;
 
 /// A resolver that allows every tool, so the turn reaches the tool instead of
 /// stopping at the permission gate. The accumulator is what these tests
@@ -34,7 +34,7 @@ struct ToolTurn {
 fn tool_turn(model: &MockCompletionModel) -> Result<ToolTurn> {
     let bus = Bus::default();
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let hook = HookChain::new(
         HookEnv {

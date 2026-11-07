@@ -260,7 +260,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         ),
     );
 
-    let mut memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
+    let mut memory_state = MemoryState::new(agnt_runtime::session::RigStoreConfig::in_memory());
 
     // Pre-populate a conversation that far exceeds the token threshold with
     // distinct user/assistant pairs (10 pairs = 20 messages). The agent loads

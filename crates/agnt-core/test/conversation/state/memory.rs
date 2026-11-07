@@ -4,8 +4,8 @@
 //! the wrapped `CachedMemory` and through the token tracking on `MemoryState`.
 
 use crate::conversation::state::memory::MemoryState;
-use crate::session::RigStoreConfig;
 use crate::types::Message;
+use agnt_runtime::session::RigStoreConfig;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -4,8 +4,8 @@
 //! join misses or the record cannot stand behind a footer.
 
 use super::*;
-use crate::session::settle::{FactStore, SettleInput};
-use crate::session::{RigStoreConfig, StoreType};
+use agnt_runtime::session::settle::{FactStore, SettleInput};
+use agnt_runtime::session::{RigStoreConfig, StoreType};
 
 /// The submit instant the fixture recorded. Deliberately far from the settle
 /// instant, so a reload that re-derived its stamp would show the wrong one.
@@ -22,7 +22,7 @@ async fn seed(
     conversation.extend(messages);
     rig_memory::save(&*store, session_id, &mut conversation)?;
     let saved = rig_memory::load(&*store, session_id)?;
-    Ok(crate::session::settle::entry_keys(saved.entries()))
+    Ok(agnt_runtime::session::settle::entry_keys(saved.entries()))
 }
 
 /// WHEN the reload join hits a settled turn, THE user row SHALL carry that

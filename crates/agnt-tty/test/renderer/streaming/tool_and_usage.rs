@@ -2,7 +2,7 @@
 
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 #[test]
 fn tool_display_renders_diff_with_stats() {

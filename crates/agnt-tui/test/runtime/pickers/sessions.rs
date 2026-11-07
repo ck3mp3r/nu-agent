@@ -11,14 +11,14 @@ use crate::state::{PickerOption, PickerPayload, PickerSortKeyPart};
 async fn test_session_picker_carries_the_agent_and_blanks_unknown_cells() -> Result<()> {
     // -- Setup & Fixtures: one fully recorded session, one with no facts at all.
     let now = chrono::Utc::now();
-    let known = agnt_core::session::SessionInfo {
+    let known = agnt_runtime::session::SessionInfo {
         id: "known".to_string(),
         message_count: 2,
         last_active: Some(now),
         title: Some("titled session".to_string()),
         agent: Some("reviewer".to_string()),
     };
-    let unknown = agnt_core::session::SessionInfo {
+    let unknown = agnt_runtime::session::SessionInfo {
         id: "unknown".to_string(),
         message_count: 3,
         last_active: None,

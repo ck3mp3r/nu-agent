@@ -5,7 +5,7 @@
 use super::*;
 use crate::conversation::state::memory::MemoryState;
 use crate::conversation::turn::executor::{ExecuteInput, TurnExecutor, TurnOutcome};
-use crate::session::StoreType;
+use agnt_runtime::session::StoreType;
 use agnt_storage::{Entries, Storage, ToolCallStatus, ToolCalls, Turns};
 
 /// The tool the settled turn calls.
@@ -85,7 +85,7 @@ fn context<'a>(
 }
 
 /// The fact tables over the database `rig` opens.
-fn facts(rig: &crate::session::RigStoreConfig) -> Result<Arc<Storage>> {
+fn facts(rig: &agnt_runtime::session::RigStoreConfig) -> Result<Arc<Storage>> {
     Ok(rig.facts_blocking()?)
 }
 
@@ -95,9 +95,9 @@ fn facts(rig: &crate::session::RigStoreConfig) -> Result<Arc<Storage>> {
 async fn settled_turn_records_its_row_its_entry_keys_and_its_call() -> Result<()> {
     // -- Setup & Fixtures: a file store, so the facts outlive the turn
     let temp_dir = tempfile::tempdir()?;
-    let rig = crate::session::RigStoreConfig::new(StoreType::Sqlite)
+    let rig = agnt_runtime::session::RigStoreConfig::new(StoreType::Sqlite)
         .with_cache_dir(temp_dir.path().join("cache"));
-    let memory = Arc::new(crate::session::CachedMemory::new(rig.clone()));
+    let memory = Arc::new(agnt_runtime::session::CachedMemory::new(rig.clone()));
     let session_id = "test-settle";
     let config = Config::default();
     let model = MockCompletionModel::from_stream_turns([
@@ -153,7 +153,7 @@ async fn cancelled_turn_records_no_facts() -> Result<()> {
     // -- Setup & Fixtures: a tool that cancels the turn from inside the call
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = MemoryState::new(
-        crate::session::RigStoreConfig::new(StoreType::Sqlite)
+        agnt_runtime::session::RigStoreConfig::new(StoreType::Sqlite)
             .with_cache_dir(temp_dir.path().join("cache")),
     );
     let session_id = "test-settle-cancel";
@@ -240,9 +240,9 @@ async fn cancelled_turn_records_no_facts() -> Result<()> {
 async fn session_less_turn_records_no_facts() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = tempfile::tempdir()?;
-    let rig = crate::session::RigStoreConfig::new(StoreType::Sqlite)
+    let rig = agnt_runtime::session::RigStoreConfig::new(StoreType::Sqlite)
         .with_cache_dir(temp_dir.path().join("cache"));
-    let memory = Arc::new(crate::session::CachedMemory::new(rig.clone()));
+    let memory = Arc::new(agnt_runtime::session::CachedMemory::new(rig.clone()));
     let session_id = "test-settle-transient";
     let config = Config::default();
     let model = MockCompletionModel::from_stream_turns([[

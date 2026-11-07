@@ -1,7 +1,7 @@
 use agnt_kernel::CompactionSource;
 
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::session::SessionInfo;
+use agnt_runtime::session::SessionInfo;
 
 /// Pure session state lifecycle — synchronous, no I/O.
 /// Every runtime implements this: production, test fakes, mocks.

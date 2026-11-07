@@ -22,7 +22,7 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
     let blocked = temp_dir.path().join("blocked");
     std::fs::write(&blocked, b"not a directory").map_err(|_| "should write the blocker file")?;
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+        agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
             .with_cache_dir(blocked),
     ));
     let bus = Bus::default();
@@ -396,7 +396,7 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
         .await?;
     pool.close().await;
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+        agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
             .with_store_path(&path),
     ));
     let bus = Bus::default();
@@ -478,7 +478,7 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
 async fn successful_run_compaction_clears_the_latch() -> Result<()> {
     // -- Setup & Fixtures: a latched store that is now reachable.
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
     let compaction = CompactionConfig {

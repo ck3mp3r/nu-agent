@@ -3,8 +3,8 @@
 //! so a fold, a cancel or a re-save never shifts the attribution.
 
 use super::*;
-use crate::session::settle::{FactStore, SettleInput};
-use crate::session::{RigStoreConfig, StoreType};
+use agnt_runtime::session::settle::{FactStore, SettleInput};
+use agnt_runtime::session::{RigStoreConfig, StoreType};
 
 /// Seed `session_id`'s log with `messages` and answer the keys rig gave them.
 async fn seed(
@@ -17,7 +17,7 @@ async fn seed(
     conversation.extend(messages);
     rig_memory::save(&*store, session_id, &mut conversation)?;
     let saved = rig_memory::load(&*store, session_id)?;
-    Ok(crate::session::settle::entry_keys(saved.entries()))
+    Ok(agnt_runtime::session::settle::entry_keys(saved.entries()))
 }
 
 /// The entries load with the turn each key was recorded under, and an entry no

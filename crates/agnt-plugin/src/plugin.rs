@@ -8,7 +8,7 @@ use crate::command::provider::{
     AgentProviderAuthLogin, AgentProviderAuthLogout, AgentProviderAuthStatus,
 };
 use crate::command::session::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
-use agnt_core::session::StoreType;
+use agnt_runtime::config::StoreType;
 
 pub struct AgentPlugin {
     /// The shared tokio runtime, or the error that prevented its construction.
@@ -71,9 +71,9 @@ impl Default for AgentPlugin {
 /// derived XDG path, so a broken config never stops a session listing.
 pub(crate) fn rig_store_config(
     store_type: StoreType,
-) -> Result<agnt_core::session::RigStoreConfig, nu_protocol::LabeledError> {
-    use agnt_core::session::RigStoreConfig;
+) -> Result<agnt_runtime::session::RigStoreConfig, nu_protocol::LabeledError> {
     use agnt_runtime::config::Paths;
+    use agnt_runtime::session::RigStoreConfig;
     let config = config_or_default(agnt_runtime::config::toml_config::load());
     let paths = Paths::resolve_for_process(config.paths.as_ref()).map_err(|e| {
         nu_protocol::LabeledError::new(format!("Failed to resolve application paths: {e}"))

@@ -4,7 +4,7 @@
 use super::harness::*;
 use super::*;
 use crate::protocol::session_management::{SessionPersistence, SessionState};
-use crate::session::prefix::dir_prefix;
+use agnt_runtime::session::prefix::dir_prefix;
 
 /// Seed the rig-memory store of `id` with `messages`, then write the state
 /// records so the session's `meta.json` listing carries the message count.
@@ -23,7 +23,7 @@ async fn seed_session(
     let mut conversation = rig_memory::load(&*store, id)?;
     conversation.extend(messages.iter().cloned());
     rig_memory::save(&*store, id, &mut conversation)?;
-    crate::session::rig_state::write_state_records(
+    agnt_runtime::session::rig_state::write_state_records(
         Arc::clone(&store),
         "test/model".to_string(),
         None,
@@ -566,7 +566,7 @@ async fn attach_session_stamps_the_joined_turns_facts() -> Result<()> {
     // facts the next open reads.
     let mut fixture = make_runtime(text_model("unused"))?;
     fixture.runtime.session = crate::conversation::state::memory::MemoryState::new(
-        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+        agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
             .with_cache_dir(fixture.root().join("attach-facts")),
     );
     let session_id = "test-attach-facts";
@@ -584,7 +584,7 @@ async fn attach_session_stamps_the_joined_turns_facts() -> Result<()> {
         .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let saved = rig_memory::load(&*store, session_id)?;
-    let keys = crate::session::settle::entry_keys(saved.entries());
+    let keys = agnt_runtime::session::settle::entry_keys(saved.entries());
     let facts = fixture
         .runtime
         .session
@@ -593,7 +593,7 @@ async fn attach_session_stamps_the_joined_turns_facts() -> Result<()> {
         .await
         .map_err(|e| format!("facts should open: {e:?}"))?;
     facts
-        .settle(crate::session::settle::SettleInput {
+        .settle(agnt_runtime::session::settle::SettleInput {
             session_id,
             model: "openai/gpt-5",
             agent: "coder",

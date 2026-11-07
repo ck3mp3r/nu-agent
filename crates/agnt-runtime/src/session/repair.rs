@@ -16,7 +16,7 @@ use crate::types::{
 ///
 /// It is the model's content, never a classification input: the call's status
 /// rides the session's status record, not this text.
-pub(crate) const UNANSWERED_RESULT_TEXT: &str = "[interrupted]";
+pub const UNANSWERED_RESULT_TEXT: &str = "[interrupted]";
 
 /// Closes every `Assistant(ToolCall)` in `messages` that no `User(ToolResult)`
 /// answers: one synthetic `User` message holding one `ToolResult` per unpaired
@@ -30,7 +30,7 @@ pub(crate) const UNANSWERED_RESULT_TEXT: &str = "[interrupted]";
 /// The delta a cancelled or failed turn leaves behind is rig-committed history:
 /// structurally sound except for the calls the turn never answered. This closes
 /// those calls so the saved conversation replays on the next turn.
-pub(crate) fn close_unanswered_tool_calls_with(
+pub fn close_unanswered_tool_calls_with(
     messages: Vec<Message>,
     results: &[(CallId, String, bool)],
 ) -> Vec<Message> {
@@ -113,7 +113,7 @@ pub(crate) fn close_unanswered_tool_calls_with(
 ///
 /// `results` holds `(call id, result text, is_error)` for the calls whose
 /// outcome the turn observed, the same slice the close pass takes.
-pub(crate) fn replace_placeholder_results_with(
+pub fn replace_placeholder_results_with(
     messages: Vec<Message>,
     results: &[(CallId, String, bool)],
 ) -> Vec<Message> {

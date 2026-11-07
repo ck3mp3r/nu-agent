@@ -68,7 +68,7 @@ async fn attach_a2a_context_derives_prefixed_session_key()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
     // -- Setup & Fixtures
     let cwd = std::path::PathBuf::from("/home/user/project");
-    let expected_prefix = crate::session::prefix::dir_prefix(&cwd);
+    let expected_prefix = agnt_runtime::session::prefix::dir_prefix(&cwd);
     let attached_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let mut runtime = AttachContextRuntime {
         attached_session_id: Arc::clone(&attached_session_id),
@@ -269,7 +269,7 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
     // -- Setup & Fixtures
     let cwd = std::path::PathBuf::from("/home/user/project");
-    let prefix = crate::session::prefix::dir_prefix(&cwd);
+    let prefix = agnt_runtime::session::prefix::dir_prefix(&cwd);
     let active_key = format!("{prefix}-ctx-same");
     let attached_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let mut runtime = AttachContextRuntime {

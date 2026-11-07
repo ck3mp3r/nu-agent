@@ -1,5 +1,5 @@
 use crate::conversation::managers::SessionManager;
-use crate::session::{CachedMemory, RigStoreConfig};
+use agnt_runtime::session::{CachedMemory, RigStoreConfig};
 use std::sync::Arc;
 
 /// The full memory type held by `MemoryState` and shared with the turn
@@ -75,7 +75,7 @@ impl SessionManager for MemoryState {
         &self,
         session_id: &str,
     ) -> impl std::future::Future<
-        Output = Result<Arc<dyn rig_memory::Store>, crate::session::MemoryError>,
+        Output = Result<Arc<dyn rig_memory::Store>, agnt_runtime::session::MemoryError>,
     > + Send {
         self.memory.rig_store(session_id)
     }

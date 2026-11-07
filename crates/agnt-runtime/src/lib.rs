@@ -8,13 +8,21 @@
 // region:    --- Modules
 
 pub mod config;
+pub mod hook;
 pub mod llm;
 pub mod logging;
 pub mod protocol;
+pub mod session;
 pub mod theme_pref;
 pub mod tools;
 pub mod types;
 pub mod utils;
+
+/// The rig-memory crate this workspace's session persistence is built on.
+///
+/// Re-exported because [`session::RigStoreConfig`] and [`session::SessionMeta`]
+/// hand out its types.
+pub use rig_memory;
 
 #[cfg(test)]
 #[path = "../test/support.rs"]

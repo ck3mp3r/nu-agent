@@ -7,7 +7,6 @@ pub mod history_snapshot;
 pub mod output_repetition;
 pub mod permission_resolver;
 pub mod subturn_cap;
-pub mod turn_tools;
 pub mod turn_usage;
 pub mod unpriced_warnings;
 
@@ -18,5 +17,4 @@ pub use permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,
     PolicyPermissionResolver,
 };
-pub use turn_tools::{TurnToolLog, TurnToolRecord};
 pub use turn_usage::{TurnUsage, TurnUsageTotals};

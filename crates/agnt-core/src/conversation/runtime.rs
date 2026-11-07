@@ -7,8 +7,8 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::session::SessionInfo;
 use agnt_kernel::bus::{OneshotTx, SessionEvent};
+use agnt_runtime::session::SessionInfo;
 use agnt_runtime::tools::closure::EngineInterfaceLike;
 use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
@@ -208,7 +208,7 @@ where
     Prov: ProviderManager + Send,
     Tools: ToolManager + Send,
     Sess: SessionManager<
-            InnerMemory = crate::session::CachedMemory,
+            InnerMemory = agnt_runtime::session::CachedMemory,
             Memory = super::state::memory::MemoryOf,
         > + Send,
     Persona: PersonaManager + Send,
@@ -489,7 +489,7 @@ where
         if let Some(session_id) = self.final_session_id.clone() {
             match self.session.rig_store(&session_id).await {
                 Ok(store) => {
-                    if let Err(error) = crate::session::rig_state::write_state_records(
+                    if let Err(error) = agnt_runtime::session::rig_state::write_state_records(
                         store,
                         identity.clone(),
                         None,
@@ -694,7 +694,7 @@ where
         self.session.clear();
         reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
         let new_id = crate::session::resolver::generate_session_id();
-        let prefix = crate::session::prefix::dir_prefix(&self.cwd);
+        let prefix = agnt_runtime::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
         self.final_session_id = Some(new_id);
         // A new session starts with no usage of its own.
@@ -712,7 +712,7 @@ where
     Prov: ProviderManager + Send + Sync,
     Tools: ToolManager + Send + Sync,
     Sess: SessionManager<
-            InnerMemory = crate::session::CachedMemory,
+            InnerMemory = agnt_runtime::session::CachedMemory,
             Memory = super::state::memory::MemoryOf,
         > + Send
         + Sync,
@@ -828,7 +828,7 @@ where
                 log::warn!("failed to open the session store of '{id}'");
                 continue;
             };
-            let read = crate::session::blocking::on_pool(move || {
+            let read = agnt_runtime::session::blocking::on_pool(move || {
                 Ok::<rig_memory::SessionMeta, core::convert::Infallible>(
                     rig_memory::SessionMeta::read(&*store).unwrap_or_default(),
                 )
@@ -866,7 +866,7 @@ where
                 agent,
             });
         }
-        Ok(crate::session::prefix::filter_sessions_by_cwd(
+        Ok(agnt_runtime::session::prefix::filter_sessions_by_cwd(
             sessions, cwd,
         ))
     }
@@ -920,7 +920,7 @@ fn reset_session_scoped_inputs(
 
 /// Whether the rig-memory store holds a log for `session_id`.
 async fn rig_holds(
-    memory: &crate::session::CachedMemory,
+    memory: &agnt_runtime::session::CachedMemory,
     session_id: &str,
 ) -> Result<bool, String> {
     memory
@@ -933,7 +933,7 @@ async fn rig_holds(
 /// with the author the store records for it, joined to the turn that persisted
 /// it by rig's key — the same keyed join the startup resolver makes.
 async fn rig_messages(
-    memory: &crate::session::CachedMemory,
+    memory: &agnt_runtime::session::CachedMemory,
     session_id: &str,
     turns: &std::collections::HashMap<agnt_storage::MessageKey, i64>,
 ) -> Result<Vec<crate::session::resolver::StoredEntry>, String> {
@@ -943,7 +943,7 @@ async fn rig_messages(
         .map_err(|e| format!("Failed to open session '{session_id}': {e}"))?;
     let session = session_id.to_owned();
     let loaded =
-        crate::session::blocking::on_pool(move || rig_memory::load(&*store, &session)).await;
+        agnt_runtime::session::blocking::on_pool(move || rig_memory::load(&*store, &session)).await;
     let conversation = match loaded {
         Ok(Ok(conversation)) => conversation,
         Ok(Err(e)) => return Err(format!("Failed to load session '{session_id}': {e}")),
@@ -952,7 +952,7 @@ async fn rig_messages(
     Ok(conversation
         .entries()
         .map(|entry| {
-            let key = crate::session::settle::entry_keys([entry]);
+            let key = agnt_runtime::session::settle::entry_keys([entry]);
             crate::session::resolver::StoredEntry {
                 message: entry.message.clone(),
                 author: entry.author.cloned(),
@@ -967,10 +967,10 @@ async fn rig_messages(
 /// be read hydrates as one that carries none: its rows read their stored
 /// verdict and no entry carries a turn.
 async fn rig_session_facts(
-    memory: &crate::session::CachedMemory,
+    memory: &agnt_runtime::session::CachedMemory,
     session_id: &str,
-) -> crate::session::settle::SessionFacts {
-    use crate::session::settle::SessionFacts;
+) -> agnt_runtime::session::settle::SessionFacts {
+    use agnt_runtime::session::settle::SessionFacts;
     let facts = match memory.facts().await {
         Ok(facts) => facts,
         Err(error) => {
@@ -992,7 +992,7 @@ where
     Prov: ProviderManager,
     Tools: ToolManager,
     Sess: SessionManager<
-            InnerMemory = crate::session::CachedMemory,
+            InnerMemory = agnt_runtime::session::CachedMemory,
             Memory = super::state::memory::MemoryOf,
         >,
     Persona: PersonaManager,

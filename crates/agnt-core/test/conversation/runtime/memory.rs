@@ -22,7 +22,7 @@ fn runtime_struct_has_memory_field() {
 fn runtime_struct_has_session_store() {
     // Verify MemoryState wraps a rig-store-backed CachedMemory (via inner_memory).
     let ms = crate::conversation::state::memory::MemoryState::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     );
     assert!(ms.last_total_tokens().is_none());
 }

@@ -540,7 +540,7 @@ pub struct BuildInput<'a> {
     /// Span used for error labels (call.head in the binary).
     pub span: Span,
     pub tool_timeout: std::time::Duration,
-    pub session: Option<&'a mut crate::session::Session>,
+    pub session: Option<&'a mut agnt_runtime::session::Session>,
     pub max_tool_result_bytes: usize,
     /// Signal bus for tool cancellation and events.
     pub bus: Bus,

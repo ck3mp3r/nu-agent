@@ -108,7 +108,7 @@ impl CommandRouter {
                 true
             }
             WorkerCommand::AttachA2aContext { context_id, prompt } => {
-                let prefix = crate::session::prefix::dir_prefix(runtime.cwd());
+                let prefix = agnt_runtime::session::prefix::dir_prefix(runtime.cwd());
                 let key = agnt_a2a::derive_session_key(&prefix, &context_id);
                 log::info!("Router: AttachA2aContext context_id={context_id} key={key}");
                 // Same-session attach: the transcript already shows this

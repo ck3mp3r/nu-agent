@@ -37,11 +37,11 @@ use crate::conversation::turn::token_estimate::estimate_token_count;
 use crate::protocol::events::{
     SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
 };
-use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::types::ToolName;
 use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
 use agnt_runtime::config::defaults;
 use agnt_runtime::llm::{PricedOutcome, PricingSkip, computed_cost};
+use agnt_runtime::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
 
@@ -56,9 +56,9 @@ use super::permission_resolver::{
     AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
 };
 use super::subturn_cap::SubTurnCap;
-use super::turn_tools::TurnToolLog;
 use super::turn_usage::TurnUsage;
 use super::unpriced_warnings::UnpricedWarnings;
+use agnt_runtime::hook::turn_tools::TurnToolLog;
 
 /// The completion message for a call the cancel arm denied before it ran.
 ///
@@ -800,7 +800,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                         call_id.clone(),
                         name,
                         args,
-                        crate::hook::turn_tools::SettledToolCall::new(
+                        agnt_runtime::hook::turn_tools::SettledToolCall::new(
                             result_text.clone(),
                             success,
                             status,
@@ -1038,7 +1038,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 async fn decide_compaction(
     prompt: &Message,
     conversation_id: &str,
-    memory: &crate::session::CachedMemory,
+    memory: &agnt_runtime::session::CachedMemory,
     compaction: &CompactionConfig,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
     store_latch: &crate::hook::StoreLatch,
@@ -1102,7 +1102,7 @@ async fn decide_compaction(
 /// compaction channel and yield `None` so the turn proceeds without a
 /// compaction decision.
 async fn current_conversation(
-    memory: &crate::session::CachedMemory,
+    memory: &agnt_runtime::session::CachedMemory,
     conversation_id: &str,
     store_latch: &crate::hook::StoreLatch,
     compaction_tx: &CompactionTx,
@@ -1115,7 +1115,8 @@ async fn current_conversation(
         }
     };
     let log = conversation_id.to_owned();
-    let loaded = crate::session::blocking::on_pool(move || rig_memory::load(&*store, &log)).await;
+    let loaded =
+        agnt_runtime::session::blocking::on_pool(move || rig_memory::load(&*store, &log)).await;
     match loaded {
         Ok(Ok(conversation)) => Some(
             conversation
@@ -1152,7 +1153,7 @@ async fn current_conversation(
 /// second refusal finds the latch set and emits nothing.
 async fn emit_store_dead(
     store_latch: &crate::hook::StoreLatch,
-    error: &crate::session::MemoryError,
+    error: &agnt_runtime::session::MemoryError,
     source: &str,
     compaction_tx: &CompactionTx,
 ) {
@@ -1183,7 +1184,7 @@ async fn emit_store_dead(
 /// The storage refusal itself is the line when the error chain carries one;
 /// the wrappers above it (`Memory backend error: …`, the sqlx wording) are
 /// never part of what the user reads.
-fn store_refusal_text(error: &crate::session::MemoryError) -> String {
+fn store_refusal_text(error: &agnt_runtime::session::MemoryError) -> String {
     let mut current = std::error::Error::source(error);
     while let Some(source) = current {
         if let Some(storage) = source.downcast_ref::<agnt_storage::StorageError>() {
@@ -1212,7 +1213,7 @@ fn store_refusal_text(error: &crate::session::MemoryError) -> String {
 /// from then on.
 pub(crate) async fn run_compaction(
     conversation_id: &str,
-    memory: &crate::session::CachedMemory,
+    memory: &agnt_runtime::session::CachedMemory,
     compaction: &CompactionConfig,
     source: CompactionSource,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,

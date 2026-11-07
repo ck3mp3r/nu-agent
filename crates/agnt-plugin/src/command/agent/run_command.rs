@@ -111,7 +111,7 @@ pub(super) fn run_command(
     // keeps the OS default until this install.
     agnt_runtime::logging::retarget_process_sink(&paths.log_path);
     agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
-    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+    let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
     // Pipeline mode gets a bounded tool-turn budget unless explicitly configured.

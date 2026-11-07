@@ -1,15 +1,6 @@
 use std::path::Path;
 
 use agnt_runtime::config::Paths;
-use agnt_runtime::utils::env_map::EnvMap;
-
-/// Build an [`EnvMap`] from `(key, value)` pairs.
-pub(crate) fn env_map(entries: &[(&str, &str)]) -> EnvMap {
-    entries
-        .iter()
-        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-        .collect()
-}
 
 /// The application paths of a test rooted at `root`.
 ///

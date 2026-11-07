@@ -21,7 +21,7 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
     let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -150,7 +150,7 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
 async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Result<()> {
     // -- Setup & Fixtures: `add` is not a builtin, so it takes the fallback path.
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
     let shared_model = Arc::new(Mutex::new(
@@ -251,7 +251,7 @@ async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Resu
 async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
     // -- Setup & Fixtures
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
     let shared_model = Arc::new(Mutex::new(

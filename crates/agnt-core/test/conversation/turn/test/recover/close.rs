@@ -13,7 +13,7 @@ fn close_unanswered_tool_calls_with_closes_each_unanswered_call() -> Result<()> 
     let messages = vec![Message::user("q"), assistant_tool_calls(&["tc1", "tc2"])?];
 
     // -- Exec
-    let closed = crate::session::repair::close_unanswered_tool_calls_with(messages, &[]);
+    let closed = agnt_runtime::session::repair::close_unanswered_tool_calls_with(messages, &[]);
 
     // -- Check
     assert_eq!(
@@ -61,7 +61,8 @@ fn close_unanswered_tool_calls_with_leaves_answered_calls_alone() -> Result<()> 
     ];
 
     // -- Exec
-    let closed = crate::session::repair::close_unanswered_tool_calls_with(messages.clone(), &[]);
+    let closed =
+        agnt_runtime::session::repair::close_unanswered_tool_calls_with(messages.clone(), &[]);
 
     // -- Check
     assert_eq!(
@@ -89,7 +90,8 @@ fn replace_placeholder_results_with_replaces_a_placeholder_with_the_settled_resu
     let results = vec![(CallId::from_wire("tc1"), "real output".to_string(), false)];
 
     // -- Exec
-    let replaced = crate::session::repair::replace_placeholder_results_with(messages, &results);
+    let replaced =
+        agnt_runtime::session::repair::replace_placeholder_results_with(messages, &results);
 
     // -- Check
     assert_eq!(
@@ -133,7 +135,8 @@ fn replace_placeholder_results_with_sets_is_error_from_the_record() -> Result<()
     let results = vec![(CallId::from_wire("tc1"), "tool failed".to_string(), true)];
 
     // -- Exec
-    let replaced = crate::session::repair::replace_placeholder_results_with(messages, &results);
+    let replaced =
+        agnt_runtime::session::repair::replace_placeholder_results_with(messages, &results);
 
     // -- Check
     let Message::User { content } = &replaced[1] else {
@@ -174,7 +177,7 @@ fn replace_placeholder_results_with_leaves_a_non_placeholder_result_alone() -> R
 
     // -- Exec
     let replaced =
-        crate::session::repair::replace_placeholder_results_with(messages.clone(), &results);
+        agnt_runtime::session::repair::replace_placeholder_results_with(messages.clone(), &results);
 
     // -- Check
     assert_eq!(
@@ -201,7 +204,8 @@ fn replace_placeholder_results_with_leaves_an_unmatched_placeholder_alone() -> R
     ];
 
     // -- Exec
-    let replaced = crate::session::repair::replace_placeholder_results_with(messages.clone(), &[]);
+    let replaced =
+        agnt_runtime::session::repair::replace_placeholder_results_with(messages.clone(), &[]);
 
     // -- Check
     assert_eq!(
@@ -231,7 +235,7 @@ fn replace_placeholder_results_with_leaves_a_non_error_placeholder_text_alone() 
 
     // -- Exec
     let replaced =
-        crate::session::repair::replace_placeholder_results_with(messages.clone(), &results);
+        agnt_runtime::session::repair::replace_placeholder_results_with(messages.clone(), &results);
 
     // -- Check
     assert_eq!(

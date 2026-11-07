@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agnt_core::session::{RigStoreConfig, StoreType};
+use agnt_runtime::session::{RigStoreConfig, StoreType};
 use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 use super::*;

@@ -8,8 +8,8 @@ use crate::protocol::{
     contracts::{McpUsabilityState, SharedUiAction, UiMessageSnapshot},
     persona::PersonaSummary,
 };
-use crate::session::SessionInfo;
 use agnt_runtime::protocol::event::PermissionDecisionSubmission;
+use agnt_runtime::session::SessionInfo;
 
 pub type McpToggleResult = (
     Result<McpUsabilityState, String>,

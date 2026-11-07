@@ -1,9 +1,9 @@
 use super::*;
 
 use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::RenderBackend;
 use agnt_render::transcript::ir::{Display, DisplaySection};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use crate::widgets::RatatuiBackend;
 

@@ -74,5 +74,5 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// Build a `MemoryState` over an in-memory rig store (no compaction —
 /// `CachedMemory` used directly) so tests never invoke a real LLM.
 fn test_memory_state() -> super::super::state::memory::MemoryState {
-    super::super::state::memory::MemoryState::new(crate::session::RigStoreConfig::in_memory())
+    super::super::state::memory::MemoryState::new(agnt_runtime::session::RigStoreConfig::in_memory())
 }

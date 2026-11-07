@@ -22,11 +22,11 @@ use super::*;
 
 use crate::bus::create_bus;
 use crate::protocol::session_management::SessionPersistence;
-use crate::session::{RigStoreConfig, StoreType};
 use agnt_runtime::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
 use agnt_runtime::config::{
     AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
 };
+use agnt_runtime::session::{RigStoreConfig, StoreType};
 use agnt_runtime::tools::authz::PermissionsConfig;
 use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
 use agnt_runtime::tools::handler::McpToolRegistry;

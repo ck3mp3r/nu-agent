@@ -566,8 +566,8 @@ impl From<AgentPickerOption> for PickerOption {
     }
 }
 
-impl From<agnt_core::session::SessionInfo> for PickerOption {
-    fn from(info: agnt_core::session::SessionInfo) -> Self {
+impl From<agnt_runtime::session::SessionInfo> for PickerOption {
+    fn from(info: agnt_runtime::session::SessionInfo) -> Self {
         let title = info.title.clone();
         // A known title shows as stored; an unknown one is an empty cell — never
         // an invented label.

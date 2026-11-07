@@ -1,4 +1,4 @@
-use agnt_runtime::config::StoreType;
+use crate::config::StoreType;
 
 /// `StoreType` parses case-insensitively and its error names the valid values.
 #[test]

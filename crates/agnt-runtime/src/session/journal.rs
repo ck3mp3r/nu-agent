@@ -158,7 +158,7 @@ impl CachedMemory {
     /// # Errors
     ///
     /// When the database cannot be opened.
-    pub(crate) async fn facts(&self) -> Result<super::settle::FactStore, MemoryError> {
+    pub async fn facts(&self) -> Result<super::settle::FactStore, MemoryError> {
         super::settle::FactStore::open(&self.rig)
             .await
             .map_err(MemoryError::from)

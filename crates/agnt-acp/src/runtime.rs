@@ -20,11 +20,11 @@ use agnt_core::hooks::HookAgentContext;
 use agnt_core::protocol::contracts::DecisionSource;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
-use agnt_core::session::RigStoreConfig;
 use agnt_core::types::{
     Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
 };
 use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
+use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::tools::authz::PermissionsConfig;
 use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_runtime::tools::handler::McpToolRegistry;

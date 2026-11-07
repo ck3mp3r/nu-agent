@@ -82,7 +82,7 @@ impl JourneyHarness {
             threshold_tokens: None,
             threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
         };
-        let memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
+        let memory_state = MemoryState::new(agnt_runtime::session::RigStoreConfig::in_memory());
         Self {
             _temp_dir: temp_dir,
             memory_state,
@@ -238,6 +238,7 @@ pub(crate) fn no_tools() -> ToolInfra {
 /// `MemoryState` over that path reads the conversation the first one saved.
 pub(crate) fn memory_state_at(path: std::path::PathBuf) -> MemoryState {
     MemoryState::new(
-        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(path),
+        agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
+            .with_cache_dir(path),
     )
 }

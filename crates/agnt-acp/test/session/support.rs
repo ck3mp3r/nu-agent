@@ -26,10 +26,10 @@ pub(super) use agnt_core::conversation::state::{
 };
 pub(super) use agnt_core::protocol::contracts::DecisionSource;
 pub(super) use agnt_core::protocol::events::SystemEvent;
-pub(super) use agnt_core::session::{RigStoreConfig, StoreType};
 pub(super) use agnt_core::types::{Message, MockCompletionModel};
 pub(super) use agnt_runtime::config::{AgentsConfig, Config, ModelsCache};
 pub(super) use agnt_runtime::protocol::event::PermissionDecision;
+pub(super) use agnt_runtime::session::{RigStoreConfig, StoreType};
 pub(super) use agnt_runtime::tools::authz::PermissionsConfig;
 pub(super) use agnt_runtime::tools::closure::ClosureRegistry;
 pub(super) use agnt_runtime::tools::handler::McpToolRegistry;

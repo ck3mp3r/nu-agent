@@ -196,9 +196,9 @@ async fn second_turn_reloads_the_saved_conversation() -> Result<()> {
 async fn turn_round_trips_on_a_file_store() -> Result<()> {
     // -- Setup & Fixtures: a store on disk, not in memory
     let temp_dir = tempfile::tempdir()?;
-    let rig = crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+    let rig = agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
         .with_cache_dir(temp_dir.path().join("cache"));
-    let memory = Arc::new(crate::session::CachedMemory::new(rig));
+    let memory = Arc::new(agnt_runtime::session::CachedMemory::new(rig));
     let session_id = "test-round-trip";
     let config = Config::default();
 
@@ -233,7 +233,7 @@ async fn turn_round_trips_on_a_file_store() -> Result<()> {
 async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
     // -- Setup & Fixtures: a history with a dangling ToolCall
     let mut memory_state = crate::conversation::state::memory::MemoryState::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     );
     let session_id = "test-cancel-seeded";
     let raw = vec![
@@ -356,8 +356,8 @@ async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
 #[tokio::test]
 async fn warn_repairs_reports_the_repairs_it_logs() -> Result<()> {
     // -- Setup & Fixtures: a store holding a message that names a missing blob
-    let memory = Arc::new(crate::session::CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+    let memory = Arc::new(agnt_runtime::session::CachedMemory::new(
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let session_id = "test-warn-repairs";
     let store = memory.rig_store(session_id).await?;

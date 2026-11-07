@@ -10,7 +10,8 @@ async fn persist_turn_delta_writes_the_structural_status_of_every_call() -> Resu
     let config = Config::default();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = MemoryState::new(
-        RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(temp_dir.path()),
+        RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
+            .with_cache_dir(temp_dir.path()),
     );
     let session_id = "test-recover-statuses";
     let full_history = vec![Message::user("q2")];

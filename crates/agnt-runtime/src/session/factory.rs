@@ -6,8 +6,8 @@ use rig_memory::Store;
 use super::SessionMeta;
 use super::blocking::{PoolError, on_pool};
 use super::rig_state::{self, SessionView};
-use agnt_runtime::config::StoreType;
-use agnt_runtime::config::paths::STORE_FILE;
+use crate::config::StoreType;
+use crate::config::paths::STORE_FILE;
 
 /// Errors that can occur when opening a rig-memory session store.
 #[derive(Debug, thiserror::Error)]
@@ -79,7 +79,7 @@ pub fn create_rig_store_in(
     cache_dir: &std::path::Path,
     session_id: &str,
 ) -> Result<Arc<dyn Store>, RigStoreError> {
-    let store_path = agnt_runtime::utils::paths::app_dir(cache_dir).join(STORE_FILE);
+    let store_path = crate::utils::paths::app_dir(cache_dir).join(STORE_FILE);
     create_rig_store_at(store_type, &store_path, session_id)
 }
 
@@ -107,7 +107,7 @@ pub fn list_rig_sessions_in(
     store_type: StoreType,
     cache_dir: &std::path::Path,
 ) -> Result<Vec<String>, RigStoreError> {
-    let store_path = agnt_runtime::utils::paths::app_dir(cache_dir).join(STORE_FILE);
+    let store_path = crate::utils::paths::app_dir(cache_dir).join(STORE_FILE);
     list_rig_sessions_at(store_type, &store_path)
 }
 
@@ -314,14 +314,14 @@ impl RigStoreConfig {
     /// # Errors
     ///
     /// As [`create_rig_store_at`].
-    pub(crate) fn facts_blocking(&self) -> Result<Arc<Storage>, RigStoreError> {
+    pub fn facts_blocking(&self) -> Result<Arc<Storage>, RigStoreError> {
         match self.store_type {
             StoreType::Memory => Ok(Arc::new(Storage::in_memory()?)),
             StoreType::Sqlite => {
                 let store_path = match (&self.store_path, &self.cache_dir) {
                     (Some(store_path), _) => store_path.clone(),
                     (None, Some(cache_dir)) => {
-                        agnt_runtime::utils::paths::app_dir(cache_dir).join(STORE_FILE)
+                        crate::utils::paths::app_dir(cache_dir).join(STORE_FILE)
                     }
                     (None, None) => cache_store_path()?,
                 };
@@ -333,11 +333,11 @@ impl RigStoreConfig {
 
 /// The store path under the XDG cache base.
 fn cache_store_path() -> Result<std::path::PathBuf, RigStoreError> {
-    let cache_dir = agnt_runtime::utils::xdg::cache_dir().map_err(|e| {
+    let cache_dir = crate::utils::xdg::cache_dir().map_err(|e| {
         RigStoreError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("Failed to resolve XDG cache directory: {e}"),
         ))
     })?;
-    Ok(agnt_runtime::utils::paths::app_dir(cache_dir).join(STORE_FILE))
+    Ok(crate::utils::paths::app_dir(cache_dir).join(STORE_FILE))
 }

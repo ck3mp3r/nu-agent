@@ -1,5 +1,5 @@
 use super::session_management::{SessionPersistence, SessionState};
-use crate::session::SessionInfo;
+use agnt_runtime::session::SessionInfo;
 use std::path::Path;
 
 struct NoopSessionState;

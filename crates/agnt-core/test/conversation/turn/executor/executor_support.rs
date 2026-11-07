@@ -11,8 +11,8 @@ use super::*;
 use crate::bus::Bus;
 use crate::conversation::managers::SessionManager;
 use crate::conversation::state::memory::MemoryState;
-use crate::session::{CachedMemory, RigStoreConfig};
 use agnt_runtime::config::Config;
+use agnt_runtime::session::{CachedMemory, RigStoreConfig};
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
 
@@ -28,7 +28,8 @@ pub(super) fn make_memory_state(_temp_dir: &tempfile::TempDir) -> MemoryState {
 /// `temp_dir`, so separate `MemoryState`s share one conversation.
 pub(super) fn make_memory_state_on_disk(temp_dir: &tempfile::TempDir) -> MemoryState {
     MemoryState::new(
-        RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(temp_dir.path()),
+        RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
+            .with_cache_dir(temp_dir.path()),
     )
 }
 

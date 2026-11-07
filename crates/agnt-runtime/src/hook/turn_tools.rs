@@ -159,7 +159,7 @@ impl TurnToolLog {
 /// so every dispatched call has a record. A batch's siblings that a stop left
 /// unpolled have none: the streamed call whose id matches no record is the
 /// call the turn never ran.
-pub(crate) fn undispatched_streamed_calls(
+pub fn undispatched_streamed_calls(
     streamed: &[ToolCall],
     records: &[TurnToolRecord],
 ) -> Vec<ToolCall> {

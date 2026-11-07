@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agnt_core::session::StoreType;
+use agnt_runtime::config::StoreType;
 use agnt_runtime::config::{self, CompactionConfig, Config, PluginConfig};
 use agnt_runtime::utils::process_env;
 use agnt_tty::policy::{UiPolicy, Verbosity};

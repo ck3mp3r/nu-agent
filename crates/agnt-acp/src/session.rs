@@ -28,10 +28,10 @@ use agnt_core::protocol::events::CompactionSource;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::session_management::SessionPersistence;
 use agnt_core::session::resolver::generate_session_id;
-use agnt_core::session::{RigStoreConfig, SessionInfo};
 use agnt_core::types::{AssistantContent, Message, UserContent};
 use agnt_runtime::config::ModelsCache;
 use agnt_runtime::config::Paths;
+use agnt_runtime::session::{RigStoreConfig, SessionInfo};
 use agnt_runtime::tools::mcp::config::McpServerConfig;
 use chrono::{DateTime, Utc};
 use nu_protocol::{LabeledError, Span, Value};
@@ -636,7 +636,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             .open(id)
             .await
             .map_err(|e| AcpError::Runtime(format!("failed to open session '{id}': {e}")))?;
-        agnt_core::session::blocking::on_pool(move || rig.destroy())
+        agnt_runtime::session::blocking::on_pool(move || rig.destroy())
             .await
             .map_err(|e| {
                 AcpError::Runtime(format!("failed to delete the session log of '{id}': {e}"))
@@ -762,7 +762,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             AcpError::Runtime(format!("failed to open session '{session_id}': {e}"))
         })?;
         let session = session_id.to_owned();
-        let (logs, loaded) = agnt_core::session::blocking::on_pool(move || {
+        let (logs, loaded) = agnt_runtime::session::blocking::on_pool(move || {
             let logs = store.logs();
             let loaded = rig_memory::load(&*store, &session);
             (logs, loaded)

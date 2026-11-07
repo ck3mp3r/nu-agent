@@ -1,8 +1,8 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
-use agnt_core::session::prefix::dir_prefix;
-use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use agnt_runtime::config::CompactionConfig;
+use agnt_runtime::session::prefix::dir_prefix;
+use agnt_runtime::session::{RigStoreConfig, StoreType};
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
 use tempfile::TempDir;
@@ -194,7 +194,7 @@ async fn test_agent_session_inspect_shows_the_default_compaction_policy() -> Res
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("test-session");
-    let default = agnt_core::rig_memory::CompactionPolicy::default();
+    let default = agnt_runtime::rig_memory::CompactionPolicy::default();
 
     // -- Exec
     let result = command
@@ -246,7 +246,7 @@ async fn test_agent_session_inspect_shows_the_configured_compaction_policy() -> 
     let config = CompactionConfig {
         keep_recent: Some(5000),
         reserve: Some(8000),
-        clearing: Some(agnt_core::rig_memory::ClearToolOutputs {
+        clearing: Some(agnt_runtime::rig_memory::ClearToolOutputs {
             keep_tokens: 9000,
             keep_under: 250,
         }),
@@ -289,9 +289,9 @@ fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
 async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
     let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
-        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+        agnt_runtime::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);
-    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+    agnt_runtime::rig_memory::save(&*store, session_id, &mut conversation)
         .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }

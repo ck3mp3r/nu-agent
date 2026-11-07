@@ -168,7 +168,7 @@ fn build_fixture(
             tool_definitions,
             ClosureRegistry::default(),
         ),
-        session: MemoryState::new(crate::session::RigStoreConfig::in_memory()),
+        session: MemoryState::new(agnt_runtime::session::RigStoreConfig::in_memory()),
         persona: PersonaState::new(
             Some("persona body".to_string()),
             Some("test-agent".to_string()),

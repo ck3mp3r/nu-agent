@@ -14,7 +14,7 @@ pub(super) use crate::orchestrator::stages::{OrchestrationContext, UiRequestHand
 pub(super) use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 pub(super) use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
 pub(super) use crate::protocol::events::SystemEvent;
-pub(super) use crate::session::SessionInfo;
+pub(super) use agnt_runtime::session::SessionInfo;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -109,7 +109,7 @@ pub trait SessionManager: Sync {
         &self,
         session_id: &str,
     ) -> impl std::future::Future<
-        Output = Result<std::sync::Arc<dyn rig_memory::Store>, crate::session::MemoryError>,
+        Output = Result<std::sync::Arc<dyn rig_memory::Store>, agnt_runtime::session::MemoryError>,
     > + Send;
 
     /// Clear all messages from conversation memory and reset token tracking.

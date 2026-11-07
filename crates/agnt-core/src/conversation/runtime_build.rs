@@ -36,7 +36,7 @@ pub struct RuntimeBuildParams {
     pub mcp_registry: McpToolRegistry,
     pub engine: Arc<dyn EngineInterfaceLike>,
     /// The rig-memory store config the session's store is made from.
-    pub rig: crate::session::RigStoreConfig,
+    pub rig: agnt_runtime::session::RigStoreConfig,
     pub final_session_id: Option<String>,
     pub proactive_threshold_pct: Option<f64>,
     pub base_permissions: PermissionsConfig,

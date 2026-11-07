@@ -3,8 +3,8 @@ use super::*;
 use crate::interaction::reducer::reduce;
 use crate::widgets::RatatuiBackend;
 use agnt_core::protocol::events::{SystemEvent, ToolOutcome};
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::RenderBackend;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// The pane width every fixture renders at. The list area is two columns
 /// narrower: one margin column on each side.

@@ -90,7 +90,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     agnt_runtime::logging::retarget_process_sink(&paths.log_path);
     agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let theme_path = paths.theme_path.clone();
-    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+    let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.

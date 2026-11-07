@@ -8,12 +8,6 @@ pub mod renderer;
 pub mod session;
 pub mod types;
 
-/// The rig-memory crate this workspace's session persistence is built on.
-///
-/// Re-exported because [`session::SessionManager::rig_store`] and
-/// [`session::RigStoreConfig`] hand out its types.
-pub use rig_memory;
-
 #[cfg(test)]
 #[path = "../test/architecture/test.rs"]
 mod architecture_test;

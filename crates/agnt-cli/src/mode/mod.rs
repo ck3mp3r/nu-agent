@@ -243,7 +243,7 @@ pub async fn attach_a2a_context_session<R: SessionPersistence>(
     runtime_impl: &mut R,
     context_id: &str,
 ) {
-    let prefix = agnt_core::session::prefix::dir_prefix(runtime_impl.cwd());
+    let prefix = agnt_runtime::session::prefix::dir_prefix(runtime_impl.cwd());
     let key = agnt_a2a::derive_session_key(&prefix, context_id);
     log::info!("A2A context {context_id} -> session {key}");
     if let Err(e) = runtime_impl.attach_session(&key).await {

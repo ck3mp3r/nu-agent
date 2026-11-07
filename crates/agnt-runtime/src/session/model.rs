@@ -16,7 +16,7 @@ impl Session {
     }
 
     /// Creates a new session with the given ID.
-    pub(crate) fn new(id: String) -> Self {
+    pub fn new(id: String) -> Self {
         Self {
             id,
             created_at: Utc::now(),

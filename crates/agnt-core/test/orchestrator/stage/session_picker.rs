@@ -196,7 +196,9 @@ async fn session_picker_legacy_refusal_warns_the_clean_line() {
     };
     let flat = format!(
         "Failed to list sessions: {}",
-        crate::session::MemoryError::from(crate::session::RigStoreError::Storage(refusal))
+        agnt_runtime::session::MemoryError::from(agnt_runtime::session::RigStoreError::Storage(
+            refusal
+        ))
     );
     let mut h = Harness::new();
     let HarnessParts {

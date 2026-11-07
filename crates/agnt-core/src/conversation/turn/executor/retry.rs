@@ -36,7 +36,7 @@ impl<'a, S> TurnExecutor<'a, S>
 where
     S: crate::conversation::managers::SessionManager<
             Memory = crate::conversation::state::memory::MemoryOf,
-            InnerMemory = crate::session::CachedMemory,
+            InnerMemory = agnt_runtime::session::CachedMemory,
         >,
 {
     /// Run the retry/steering loop. Returns the final `TurnResult` (Ok) or the

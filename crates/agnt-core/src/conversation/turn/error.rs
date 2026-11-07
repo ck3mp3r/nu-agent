@@ -14,8 +14,8 @@
 //! provider SDK.
 
 use crate::conversation::turn::executor::CompletionErrorKind;
-use crate::hook::turn_tools::TurnToolRecord;
 use crate::types::Message;
+use agnt_runtime::hook::turn_tools::TurnToolRecord;
 
 // ---------------------------------------------------------------------------
 // TurnContext

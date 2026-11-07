@@ -10,12 +10,12 @@
 use std::sync::Arc;
 
 use crate::conversation::managers::SessionManager;
-use crate::hook::turn_tools::TurnToolRecord;
 use crate::protocol::events::{SystemEvent, SystemKind};
-use crate::session::CachedMemory;
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, UserContent,
 };
+use agnt_runtime::hook::turn_tools::TurnToolRecord;
+use agnt_runtime::session::CachedMemory;
 
 use super::core::TurnExecutor;
 
@@ -93,7 +93,7 @@ where
             }
         };
 
-        let loaded = crate::session::blocking::on_pool({
+        let loaded = agnt_runtime::session::blocking::on_pool({
             let store = Arc::clone(&store);
             let session_id = session_id.to_owned();
             move || rig_memory::load(&*store, &session_id)
@@ -155,8 +155,10 @@ where
         }
 
         let settled = settled_results(recovery.tool_records);
-        let delta = crate::session::repair::close_unanswered_tool_calls_with(delta, &settled);
-        let mut delta = crate::session::repair::replace_placeholder_results_with(delta, &settled);
+        let delta =
+            agnt_runtime::session::repair::close_unanswered_tool_calls_with(delta, &settled);
+        let mut delta =
+            agnt_runtime::session::repair::replace_placeholder_results_with(delta, &settled);
 
         if let Some(text) = recovery.streamed_text {
             let committed: String = delta
@@ -177,10 +179,10 @@ where
         }
 
         // The keys the log already held: the delta's keys are what recovery adds.
-        let loaded_keys = crate::session::settle::entry_keys(conversation.entries());
+        let loaded_keys = agnt_runtime::session::settle::entry_keys(conversation.entries());
         conversation.extend(delta);
 
-        let saved = crate::session::blocking::on_pool({
+        let saved = agnt_runtime::session::blocking::on_pool({
             let store = Arc::clone(&store);
             let session_id = session_id.to_owned();
             let mut conversation = conversation;
@@ -189,7 +191,7 @@ where
                 // The post-save read-back names the entries the recovery persisted.
                 let keys = if saved.is_ok() {
                     rig_memory::load(&*store, &session_id)
-                        .map(|saved| crate::session::settle::entry_keys(saved.entries()))
+                        .map(|saved| agnt_runtime::session::settle::entry_keys(saved.entries()))
                         .unwrap_or_default()
                 } else {
                     Vec::new()
@@ -239,12 +241,12 @@ where
         };
         // Both sides of the difference are known here: the log as recovery
         // loaded it, and the log as the read-back found it.
-        let keys = crate::session::settle::new_keys(saved, Some(loaded));
+        let keys = agnt_runtime::session::settle::new_keys(saved, Some(loaded));
         let submitted_millis = keys
             .as_deref()
             .and_then(|keys| keys.first())
-            .map_or_else(crate::session::settle::now_millis, |key| key.made);
-        let input = crate::session::settle::SettleInput {
+            .map_or_else(agnt_runtime::session::settle::now_millis, |key| key.made);
+        let input = agnt_runtime::session::settle::SettleInput {
             session_id,
             model: &format!("{}/{}", self.config.provider, self.config.model),
             agent: &self.agent,

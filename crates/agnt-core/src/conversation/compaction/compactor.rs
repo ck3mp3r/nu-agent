@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::bus::Bus;
 use crate::protocol::events::SystemEvent;
-use crate::session::MemoryError;
 use crate::types::Message;
 use agnt_runtime::config::{Config, defaults};
+use agnt_runtime::session::MemoryError;
 
 use futures::StreamExt;
 use rig::DynModel;
@@ -211,7 +211,7 @@ impl NuCompactor {
             return Err(MemoryError::backend(message));
         };
 
-        let loaded = crate::session::blocking::on_pool({
+        let loaded = agnt_runtime::session::blocking::on_pool({
             let store = std::sync::Arc::clone(&store);
             let log = conversation_id.to_owned();
             move || rig_memory::load(&*store, &log)
@@ -420,7 +420,7 @@ impl NuCompactor {
         mut conversation: rig::conversation::Conversation,
         source: &str,
     ) -> Result<rig::conversation::Conversation, MemoryError> {
-        let saved = crate::session::blocking::on_pool(move || {
+        let saved = agnt_runtime::session::blocking::on_pool(move || {
             let saved = rig_memory::save(&*store, &conversation_id, &mut conversation);
             (saved, conversation)
         })

@@ -83,7 +83,7 @@ fn turn_hook(
 ) -> Result<TurnHook> {
     let bus = Bus::default();
     let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
+        agnt_runtime::session::RigStoreConfig::in_memory(),
     ));
     let last_total_tokens = Arc::new(Mutex::new(None));
     let turn_usage = crate::hook::TurnUsage::default();

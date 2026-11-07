@@ -7,8 +7,8 @@
 pub(super) use crate::bus::{Bus, CompactionRx};
 pub(super) use crate::conversation::compaction::compactor::{NuCompactor, resolve_model_spec};
 pub(super) use crate::protocol::events::SystemEvent;
-pub(super) use crate::session::{MemoryError, RigStoreConfig, StoreType};
 pub(super) use crate::types::{Message, UserContent};
+pub(super) use agnt_runtime::session::{MemoryError, RigStoreConfig, StoreType};
 
 pub(super) use rig::DynModel;
 pub(super) use rig::catalog::ModelSpec;

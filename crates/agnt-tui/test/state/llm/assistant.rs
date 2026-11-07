@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// An assistant message is appended to the transcript before the turn
 /// completes; turn completion then unlocks input.

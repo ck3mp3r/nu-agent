@@ -8,7 +8,6 @@ pub(super) use crate::state::{AppState, PermissionPrompt};
 pub(super) use crate::test_support::entry_text;
 pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
 pub(super) use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
-pub(super) use agnt_core::session::tool_status::ToolStatus;
 pub(super) use agnt_render::tool_view::ToolView;
 pub(super) use agnt_render::transcript::entry::{MessageEntry, ToolEntry, TranscriptEntry};
 pub(super) use agnt_render::transcript::ir::StyleHint;
@@ -18,6 +17,7 @@ pub(super) use agnt_render::transcript::ir::{
 };
 pub(super) use agnt_render::transcript::renderer::ItemStatus;
 pub(super) use agnt_runtime::protocol::event::PermissionRequestContext;
+pub(super) use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -3,7 +3,7 @@ use nu_protocol::{LabeledError, Span, Value};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::OrchestratorEvent;
 use crate::protocol::events::SystemEvent;
-use crate::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// The usability of one MCP server — re-exported from `agnt_runtime::protocol`
 /// while the runtime layer is strangled out of this crate.
