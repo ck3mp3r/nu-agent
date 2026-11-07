@@ -3,11 +3,11 @@ use std::sync::{MutexGuard, PoisonError};
 
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
-use crate::protocol::events::{RequestId, SystemEvent};
 use agnt_kernel::bus::OneshotTx;
 use agnt_runtime::protocol::event::{
     PermissionDecision as ProtocolPermissionDecision, PermissionDecisionSubmission,
 };
+use agnt_runtime::protocol::events::{RequestId, SystemEvent};
 
 /// The only reason a submitted decision is ignored in v1.
 ///

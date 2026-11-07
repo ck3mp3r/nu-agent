@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use nu_protocol::LabeledError;
 
-use crate::bus::Bus;
 use crate::conversation::runtime::AgentConversationRuntime;
 use crate::conversation::runtime_parts::RuntimeParts;
 use crate::hooks::HookAgentContext;
-use crate::protocol::persona::PersonaSummary;
 use crate::types::ToolDefinition;
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::{
     AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
 };
+use agnt_runtime::protocol::persona::PersonaSummary;
 use agnt_runtime::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_runtime::tools::handler::McpToolRegistry;
@@ -256,7 +256,7 @@ pub fn apply_persona_model(
 /// default (not a CLI flag) — persona must override that default.
 pub fn apply_persona_config(
     config: &mut Config,
-    persona: &crate::protocol::persona::ParsedPersona,
+    persona: &agnt_runtime::protocol::persona::ParsedPersona,
     cli_max_turns_provided: bool,
 ) {
     if config.temperature.is_none() {
@@ -291,7 +291,7 @@ pub fn build_preamble_cache(
     agents_dir: &std::path::Path,
 ) -> (Option<String>, Option<String>) {
     let loaded_agents_result =
-        crate::protocol::agents::load_agents_chain_for_cwd(cwd, Some(agents_dir));
+        agnt_runtime::protocol::agents::load_agents_chain_for_cwd(cwd, Some(agents_dir));
 
     for warning in &loaded_agents_result.warnings {
         log::warn!("AGENTS.md load warning: {}", warning);
@@ -299,7 +299,8 @@ pub fn build_preamble_cache(
 
     let cached_agents_chain = loaded_agents_result.merged_chain;
 
-    let cached_available_skills = crate::protocol::skills::render_available_skills_preamble(cwd);
+    let cached_available_skills =
+        agnt_runtime::protocol::skills::render_available_skills_preamble(cwd);
 
     (cached_agents_chain, cached_available_skills)
 }

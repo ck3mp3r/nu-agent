@@ -25,9 +25,9 @@ use super::test_utils::{BusEventCollector, message_text, test_config};
 use super::*;
 use crate::conversation::turn::error::TurnContext;
 use crate::conversation::turn::{TurnError, TurnResult};
-use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
 use agnt_kernel::StopCause;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
 /// A `TurnResult` for a completed, non-cancelled turn.
 fn completed_result(text: &str) -> TurnResult {
@@ -92,7 +92,7 @@ async fn dispatch_unknown_tool_persists_history_and_reports_failure() -> Result<
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
     let messages = vec![Message::user("use a tool")];
 
@@ -149,7 +149,7 @@ async fn dispatch_unknown_tool_without_a_session_skips_persistence() -> Result<(
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -188,7 +188,7 @@ async fn dispatch_tool_execution_failure_reports_the_raw_message() -> Result<()>
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -241,7 +241,7 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_the_prompt_and_p
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -289,7 +289,7 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -336,7 +336,7 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -379,7 +379,7 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut collector = BusEventCollector::subscribe(&bus);
     let mut executor = make_executor(
         &config,

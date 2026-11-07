@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::McpUsabilityState;
 use agnt_runtime::llm::SessionCost;
+use agnt_runtime::orchestrator::events::UiStateEvent;
+use agnt_runtime::protocol::contracts::McpUsabilityState;
 
 use super::*;
 

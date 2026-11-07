@@ -6,7 +6,7 @@ async fn no_doom_loop_under_threshold() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     for _ in 0..(DOOM_LOOP_THRESHOLD - 1) {
         let result = detector
@@ -28,7 +28,7 @@ async fn doom_loop_fires_at_threshold() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     for i in 0..DOOM_LOOP_THRESHOLD {
         let result = detector
@@ -68,7 +68,7 @@ async fn different_args_does_not_trip_doom_loop() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     for i in 0..DOOM_LOOP_THRESHOLD {
         let result = detector

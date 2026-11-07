@@ -43,7 +43,7 @@ fn model_picker_navigation_table() -> Result<()> {
     state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 identity: "openai/gpt-4o-mini".to_string(),
@@ -55,7 +55,7 @@ fn model_picker_navigation_table() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),
@@ -102,7 +102,7 @@ fn model_picker_navigation_table() -> Result<()> {
     state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o-mini".to_string(),
                 identity: "openai/gpt-4o-mini".to_string(),
@@ -114,7 +114,7 @@ fn model_picker_navigation_table() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),
@@ -149,7 +149,7 @@ fn model_picker_query_table() -> Result<()> {
     state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-a".to_string(),
                 model: "jk-model-a".to_string(),
                 identity: "jk-provider-a/jk-model-a".to_string(),
@@ -161,7 +161,7 @@ fn model_picker_query_table() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-b".to_string(),
                 model: "jk-model-b".to_string(),
                 identity: "jk-provider-b/jk-model-b".to_string(),
@@ -198,7 +198,7 @@ fn model_picker_query_table() -> Result<()> {
     state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-a".to_string(),
                 model: "jk-model-a".to_string(),
                 identity: "jk-provider-a/jk-model-a".to_string(),
@@ -210,7 +210,7 @@ fn model_picker_query_table() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-b".to_string(),
                 model: "jk-model-b".to_string(),
                 identity: "jk-provider-b/jk-model-b".to_string(),
@@ -222,7 +222,7 @@ fn model_picker_query_table() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-c".to_string(),
                 model: "jk-model-c".to_string(),
                 identity: "jk-provider-c/jk-model-c".to_string(),
@@ -309,8 +309,8 @@ fn model_picker_control_j_and_k_move_without_touching_the_query() -> Result<()> 
 }
 
 /// One model-picker row for the Ctrl-J/Ctrl-K navigation fixture.
-fn model_option(name: &str, active: bool) -> agnt_core::protocol::picker::ModelPickerOption {
-    agnt_core::protocol::picker::ModelPickerOption {
+fn model_option(name: &str, active: bool) -> agnt_runtime::protocol::picker::ModelPickerOption {
+    agnt_runtime::protocol::picker::ModelPickerOption {
         provider: name.to_string(),
         model: "jk-model".to_string(),
         identity: format!("{name}/jk-model"),

@@ -50,7 +50,7 @@ async fn repetition_stop_empty_delta_retry_persists_original_prompt_placeholder(
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

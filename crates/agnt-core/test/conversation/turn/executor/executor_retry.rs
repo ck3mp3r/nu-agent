@@ -39,7 +39,7 @@ async fn retry_succeeds_on_second_attempt() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -100,7 +100,7 @@ async fn retry_exhausted_surfaces_attempt_count() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -157,7 +157,7 @@ async fn non_retryable_error_not_retried() {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -208,7 +208,7 @@ async fn retry_disabled_when_max_retries_is_zero() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor

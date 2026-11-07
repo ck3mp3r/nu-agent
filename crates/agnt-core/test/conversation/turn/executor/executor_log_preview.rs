@@ -33,7 +33,7 @@ async fn test_turn_executor_hard_error_log_preview_multibyte_utf8() -> Result<()
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec & Check
@@ -99,7 +99,7 @@ async fn test_turn_executor_path_a_error_log_preview_multibyte_utf8() -> Result<
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec & Check

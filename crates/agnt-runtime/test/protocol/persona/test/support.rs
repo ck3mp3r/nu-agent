@@ -3,12 +3,12 @@
 //! Holds the imports and the helper functions every topical persona test file
 //! needs. Sub-files pull them in with `use super::*;`.
 
+pub(super) use crate::config::AgentsConfig;
 pub(super) use crate::protocol::persona::builtins::BUILTIN_PLANNER_CONTENT;
 pub(super) use crate::protocol::persona::{
     FrontMatterError, FrontMatterParser, FsPersonaResolver, PersonaError, PersonaFileResolver,
     PersonaLister, PulldownCmarkFrontMatterParser, interpret_front_matter,
 };
-pub(super) use agnt_runtime::config::AgentsConfig;
 pub(super) use std::fs;
 pub(super) use tempfile::TempDir;
 

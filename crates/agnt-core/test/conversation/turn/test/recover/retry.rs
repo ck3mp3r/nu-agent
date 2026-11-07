@@ -32,9 +32,9 @@ async fn backoff_retry_persists_the_failed_attempt_delta() -> Result<()> {
         let mut executor = TurnExecutor::new(
             &config,
             &mut memory_state,
-            tool_infra(crate::bus::create_bus()),
+            tool_infra(agnt_runtime::bus::Bus::default()),
             shared_handle(model),
-            test_compaction_config(crate::bus::create_bus()),
+            test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         executor
             .execute(

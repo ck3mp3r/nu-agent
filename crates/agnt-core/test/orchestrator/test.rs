@@ -23,9 +23,9 @@ mod slash_commands;
 use agnt_kernel::CompactionSource;
 
 use super::test_shared::*;
-use crate::protocol::contracts::ProgressUi;
-use crate::protocol::events::{RequestId, SystemEvent, ToolCall, ToolOutcome};
 use agnt_kernel::ToolName;
+use agnt_runtime::protocol::contracts::ProgressUi;
 use agnt_runtime::protocol::event::PermissionDecisionSubmission;
+use agnt_runtime::protocol::events::{RequestId, SystemEvent, ToolCall, ToolOutcome};
 
 type TResult = core::result::Result<(), Box<dyn std::error::Error>>;

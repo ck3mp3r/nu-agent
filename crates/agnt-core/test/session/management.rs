@@ -1,4 +1,4 @@
-use super::session_management::{SessionPersistence, SessionState};
+use super::management::{SessionPersistence, SessionState};
 use agnt_runtime::session::SessionInfo;
 use std::path::Path;
 

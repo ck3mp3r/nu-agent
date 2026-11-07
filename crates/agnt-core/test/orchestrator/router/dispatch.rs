@@ -8,7 +8,7 @@ use super::*;
 async fn dispatch_execute_turn_publishes_exactly_one_started()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut turn_rx = bus.turn().subscribe();
     let sources = dispatch_sources(&bus);
     let mut runtime = AgentSwitchRuntime::default();
@@ -33,7 +33,7 @@ async fn dispatch_execute_turn_publishes_exactly_one_started()
     assert!(keep_going, "ExecuteTurn must keep the worker loop running");
     let mut started = Vec::new();
     while let Ok(event) = turn_rx.try_recv() {
-        if let crate::bus::TurnEvent::Started { prompt, task_id } = event {
+        if let agnt_runtime::bus::TurnEvent::Started { prompt, task_id } = event {
             started.push((prompt, task_id));
         }
     }
@@ -160,7 +160,7 @@ async fn dispatch_ui_request_switch_session() -> core::result::Result<(), Box<dy
     let mut runtime = SwitchSessionRuntime {
         loaded_session_id: Arc::clone(&loaded_session_id),
         active_model: "openai/gpt-4o-mini".to_string(),
-        bus: crate::bus::Bus::default(),
+        bus: agnt_runtime::bus::Bus::default(),
     };
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 

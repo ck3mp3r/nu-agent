@@ -31,7 +31,7 @@ async fn output_budget_raise_applies_multiplier_on_retry() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -96,7 +96,7 @@ async fn output_budget_raise_compounds_on_consecutive_failures() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -161,7 +161,7 @@ async fn output_budget_raise_disabled_keeps_max_tokens_unchanged() -> Result<()>
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -216,7 +216,7 @@ async fn output_budget_raise_no_base_max_tokens_no_raise() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -273,7 +273,7 @@ async fn output_budget_raise_base_at_cap_no_raise() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -332,7 +332,7 @@ async fn output_budget_raise_non_output_budget_kind_no_raise() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

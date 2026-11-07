@@ -7,12 +7,12 @@
 use super::*;
 
 /// Drain every event currently buffered on the ui-event channel.
-fn drain_turn_events(rx: &mut crate::bus::UiEventRx) -> Vec<SystemEvent> {
+fn drain_turn_events(rx: &mut agnt_runtime::bus::UiEventRx) -> Vec<SystemEvent> {
     let mut events = Vec::new();
     loop {
         match rx.try_recv() {
             Ok(event) => events.push(event),
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
@@ -55,7 +55,7 @@ async fn dispatch_completed_turn_publishes_turn_completed_with_the_tool_call_cou
     let temp_dir = tempfile::tempdir()?;
     let session_id = "test-dispatch-turn-completed";
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut turn_rx = bus.ui_event().subscribe();
     let mut executor = make_executor(
         &config,
@@ -103,7 +103,7 @@ async fn dispatch_cancelled_turn_publishes_turn_completed_with_the_tool_call_cou
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut turn_rx = bus.ui_event().subscribe();
     let mut executor = make_executor(
         &config,
@@ -147,7 +147,7 @@ async fn dispatch_completed_turn_publishes_the_accumulated_usage_and_duration() 
     let temp_dir = tempfile::tempdir()?;
     let session_id = "test-dispatch-turn-usage";
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut turn_rx = bus.ui_event().subscribe();
     let infra = default_tool_infra(bus);
     // Two calls. The first's wire omitted its total, so the chain passed input
@@ -203,7 +203,7 @@ async fn dispatch_completed_turn_narrates_one_turn_record() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut records = bus.stream().subscribe();
     let mut executor = make_executor(
         &config,
@@ -242,7 +242,7 @@ async fn dispatch_cancelled_turn_narrates_one_turn_record() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut records = bus.stream().subscribe();
     let mut executor = make_executor(
         &config,

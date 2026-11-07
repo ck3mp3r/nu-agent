@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::interaction::reducer::reduce;
-use agnt_core::protocol::events::{Key, SystemEvent};
+use agnt_runtime::protocol::events::{Key, SystemEvent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

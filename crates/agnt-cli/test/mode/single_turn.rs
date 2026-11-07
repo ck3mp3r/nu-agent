@@ -8,7 +8,7 @@ struct SingleTurnRuntime {
     prompts: Vec<String>,
 }
 
-impl agnt_core::protocol::contracts::CoreRuntime for SingleTurnRuntime {
+impl agnt_runtime::protocol::contracts::CoreRuntime for SingleTurnRuntime {
     async fn execute_turn(
         &mut self,
         prompt: String,
@@ -23,7 +23,7 @@ impl agnt_core::protocol::contracts::CoreRuntime for SingleTurnRuntime {
 #[tokio::test]
 async fn test_mode_run_single_turn_publishes_exactly_one_started() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut turn_rx = bus.turn().subscribe();
     let mut runtime = SingleTurnRuntime::default();
 

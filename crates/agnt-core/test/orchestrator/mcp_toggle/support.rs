@@ -7,7 +7,7 @@ pub(super) struct McpToggleRuntime {
     pub(super) next_state: McpUsabilityState,
     pub(super) visible_count: usize,
     pub(super) visible_count_by_server: usize,
-    pub(super) bus: crate::bus::Bus,
+    pub(super) bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for McpToggleRuntime {
@@ -82,7 +82,7 @@ crate::default_session!(McpToggleRuntime);
 pub(super) struct FailingMcpToggleRuntime {
     pub(super) toggles: Vec<(String, bool)>,
     pub(super) visible_count: usize,
-    pub(super) bus: crate::bus::Bus,
+    pub(super) bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for FailingMcpToggleRuntime {
@@ -161,7 +161,7 @@ pub(super) struct SequencedMcpToggleRuntime {
     pub(super) visible_counts_by_server: std::collections::VecDeque<usize>,
     pub(super) current_visible_count: usize,
     pub(super) current_visible_count_by_server: usize,
-    pub(super) bus: crate::bus::Bus,
+    pub(super) bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for SequencedMcpToggleRuntime {
@@ -261,7 +261,7 @@ impl StagedToggleUi {
         }
     }
 
-    pub(super) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(super) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let first_response_processed = Arc::clone(&self.first_response_processed);
         let second_response_processed = Arc::clone(&self.second_response_processed);
         let quit = Arc::clone(&self.quit);

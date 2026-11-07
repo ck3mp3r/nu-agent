@@ -17,7 +17,7 @@ async fn test_model_picker_footer_renders_fg_only_text_at_the_identity_column() 
     let mut driver = RenderLoopDriver::new(62, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: "anthropic/claude-opus-4.5".to_string(),
             identity: identity.clone(),
@@ -92,7 +92,7 @@ async fn test_model_picker_footer_leaves_a_gap_row_above_the_text() -> Result<()
     // -- Setup & Fixtures
     let theme = TuiTheme::default();
     let options = (0..20)
-        .map(|idx| agnt_core::protocol::picker::ModelPickerOption {
+        .map(|idx| agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: format!("model-{idx}"),
             identity: format!("openrouter/model-{idx}"),
@@ -165,7 +165,7 @@ async fn test_model_picker_footer_renders_fg_only_text_at_every_popup_height() -
         let mut driver = RenderLoopDriver::new(62, height + 4);
         driver.coordinator_mut().state.set_picker_options(
             ActivePicker::Model,
-            vec![agnt_core::protocol::picker::ModelPickerOption {
+            vec![agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openrouter".to_string(),
                 model: "anthropic/claude-opus-4.5".to_string(),
                 identity: identity.clone(),
@@ -223,7 +223,7 @@ async fn test_model_picker_footer_aligns_the_text_with_the_identity_column() -> 
     let mut driver = RenderLoopDriver::new(62, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: "anthropic/claude-opus-4.5".to_string(),
             identity: identity.clone(),

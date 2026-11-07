@@ -4,12 +4,12 @@ use agnt_kernel::CompactionSource;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
+use crate::protocol::event::PermissionDecisionSubmission;
 use crate::protocol::{
     contracts::{McpUsabilityState, SharedUiAction, UiMessageSnapshot},
     persona::PersonaSummary,
 };
-use agnt_runtime::protocol::event::PermissionDecisionSubmission;
-use agnt_runtime::session::SessionInfo;
+use crate::session::SessionInfo;
 
 pub type McpToggleResult = (
     Result<McpUsabilityState, String>,

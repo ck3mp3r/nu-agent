@@ -75,7 +75,7 @@ async fn journey_corrupt_session_is_tolerated_on_load() -> Result<()> {
         &mut ms,
         no_tools(),
         shared_model,
-        test_utils::test_compaction_config(crate::bus::create_bus()),
+        test_utils::test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
     let outcome = executor
         .execute(
@@ -278,7 +278,7 @@ async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
         &mut ms,
         no_tools(),
         shared_model,
-        test_utils::test_compaction_config(crate::bus::create_bus()),
+        test_utils::test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
     let outcome = executor
         .execute(

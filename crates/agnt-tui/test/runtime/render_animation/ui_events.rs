@@ -2,7 +2,7 @@ use super::*;
 
 use agnt_render::transcript::entry::TranscriptEntry;
 
-use agnt_core::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
+use agnt_runtime::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
 
 /// A warning SystemEvent sets the status line and marks the frame dirty; a
 /// TurnError falls through to the transcript and finalizes the cycle.
@@ -80,7 +80,7 @@ fn reduce_ui_state_event_routing() -> Result<()> {
 
     coordinator.reduce_ui_state_event(UiStateEvent::SetMcpServerState {
         server: "gh".to_string(),
-        state: agnt_core::protocol::contracts::McpUsabilityState::Failed,
+        state: agnt_runtime::protocol::contracts::McpUsabilityState::Failed,
         error: Some("boom".to_string()),
         total: 3,
     });
@@ -212,7 +212,7 @@ fn ui_event_permission_group() -> Result<()> {
     // -- Setup & Fixtures: a pending tool call for the pre-authorize display.
     let mut preview = RuntimeCoordinator::new(120, 40, Some(false));
     preview.reduce_system_event(SystemEvent::ToolStarted {
-        call: agnt_core::protocol::events::ToolCall::new(
+        call: agnt_runtime::protocol::events::ToolCall::new(
             agnt_render::transcript::ir::ToolName("edit".to_string()),
             agnt_runtime::tools::handler::ToolSource::Unknown,
             r#"{"path":"a.rs"}"#,

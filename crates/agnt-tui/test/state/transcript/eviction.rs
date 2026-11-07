@@ -7,7 +7,7 @@ use agnt_runtime::session::tool_status::ToolStatus;
 // ---------------------------------------------------------------------------
 
 use crate::interaction::reducer::reduce;
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
+use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
 
 /// A `ToolStarted` event for `name`/`arguments`.
 fn started(name: &str, arguments: &str) -> SystemEvent {

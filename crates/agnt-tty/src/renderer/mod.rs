@@ -1,6 +1,9 @@
 // region:    --- Modules
 
 pub mod backend;
+mod ui_renderer;
+
+pub use ui_renderer::UiRenderer;
 
 // endregion: --- Modules
 
@@ -11,11 +14,10 @@ mod contract_test;
 #[path = "../../test/renderer/streaming/test.rs"]
 mod streaming_test;
 
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
-use agnt_core::renderer::UiRenderer;
 use agnt_render::tool_args::plain_call_text;
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::ir::{Display, StyleHint, annotate_diff_hint};
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -27,7 +29,7 @@ use crate::spinner::SpinnerState;
 
 /// The call line the TTY prints for `call`: derived from the call's name and
 /// raw arguments, with the arrow the terminal adds itself stripped.
-fn call_line_for(call: &agnt_core::protocol::events::ToolCall) -> String {
+fn call_line_for(call: &agnt_runtime::protocol::events::ToolCall) -> String {
     let line = call.call_line();
     plain_call_text(&line).to_string()
 }

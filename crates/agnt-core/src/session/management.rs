@@ -1,6 +1,6 @@
 use agnt_kernel::CompactionSource;
 
-use crate::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 use agnt_runtime::session::SessionInfo;
 
 /// Pure session state lifecycle — synchronous, no I/O.

@@ -1,7 +1,6 @@
 //! TtyBackend tests: per-family decoration, the indicator clock, the color
 //! gate, the measure/render contract, and wrap parity with the plain backend.
 
-use agnt_core::protocol::events::ToolCall;
 use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -10,6 +9,7 @@ use agnt_render::transcript::ir::{
 };
 use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Gallery, PlainBackend, RenderBackend, RowRect, Theme};
+use agnt_runtime::protocol::events::ToolCall;
 
 use crate::renderer::backend::TtyBackend;
 

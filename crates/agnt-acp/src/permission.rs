@@ -18,12 +18,12 @@ use agent_client_protocol::schema::v1::{
     SessionId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{OneshotTx, UiEventTx};
 use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::events::{RequestId, SystemEvent, ToolCall};
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::bus::{OneshotTx, UiEventTx};
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::protocol::events::{RequestId, SystemEvent, ToolCall};
 use agnt_runtime::tools::handler::ToolSource;
 
 use crate::error::Result;

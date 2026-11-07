@@ -1,5 +1,4 @@
 pub mod config;
-pub mod events;
 pub mod handlers;
 mod r#loop;
 pub mod loop_impl;
@@ -10,11 +9,6 @@ pub mod turn_outcome;
 pub use router::{CommandRouter, DispatchSources};
 
 pub use config::{AgentSwitchHook, HydrationConfig, LoopConfig, NoAgentSwitchHook};
-pub use events::{
-    AgentSwitchResult, McpToggleResult, ModelSwitchResult, OrchestratorEvent,
-    RefreshSessionPickerResult, SessionSwitchResult, UiRequest, UiRequestResponse, UiStateEvent,
-    WorkerCommand,
-};
 
 // Re-export handlers privately for internal use by the loop_impl module.
 pub(crate) use handlers::{

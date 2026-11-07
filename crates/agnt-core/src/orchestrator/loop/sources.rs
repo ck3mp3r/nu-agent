@@ -4,10 +4,10 @@ use tokio::sync::mpsc;
 
 use agnt_a2a::{A2aCompletionEvent, IncomingTask};
 
-use crate::bus::CompactionRx;
-use crate::orchestrator::UiRequestResponse;
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use agnt_kernel::bus::ExternalRx;
+use agnt_runtime::bus::CompactionRx;
+use agnt_runtime::orchestrator::events::UiRequestResponse;
 
 /// The receivers the loop owns for one run.
 ///

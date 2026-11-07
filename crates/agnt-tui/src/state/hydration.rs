@@ -11,9 +11,9 @@
 //! function of the snapshot list; the driver only folds and discards the
 //! replayed effects.
 
-use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
+use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::AppState;

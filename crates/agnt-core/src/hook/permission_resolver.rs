@@ -12,15 +12,15 @@ use serde_json::Value as JsonValue;
 
 use agnt_kernel::bus::{CancelEvent, CancelTx, OneshotTx};
 
-use crate::bus::{RequestPermission, UiEventTx};
+use agnt_runtime::bus::{RequestPermission, UiEventTx};
 
-use crate::protocol::events::{
-    AutoResolutionAction, RequestId, SystemEvent, ToolCall as EventToolCall, ToolCallId,
-};
 use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
 use agnt_kernel::BuiltinKind;
 use agnt_runtime::protocol::event::{
     PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,
+};
+use agnt_runtime::protocol::events::{
+    AutoResolutionAction, RequestId, SystemEvent, ToolCall as EventToolCall, ToolCallId,
 };
 use agnt_runtime::tools::authz::{
     AskApprovalHook, AskChoice, AskContext, PermissionsConfig, SessionGrantCache, apply_ask_choice,

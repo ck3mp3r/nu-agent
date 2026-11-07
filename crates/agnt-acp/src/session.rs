@@ -18,19 +18,19 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigSelectOptions, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{
+use agnt_core::conversation::runtime::AgentConversationRuntime;
+use agnt_core::session::management::SessionPersistence;
+use agnt_core::session::resolver::generate_session_id;
+use agnt_core::types::{AssistantContent, Message, UserContent};
+use agnt_runtime::bus::{
     Bus, CancelTx, ChannelError, CompactionTx, RequestCancel, SessionEvent, SessionTx, TurnEvent,
     TurnTx, UiEventTx,
 };
-use agnt_core::conversation::runtime::AgentConversationRuntime;
-use agnt_core::protocol::contracts::CoreRuntime;
-use agnt_core::protocol::events::CompactionSource;
-use agnt_core::protocol::model_switching::ModelSwitching;
-use agnt_core::protocol::session_management::SessionPersistence;
-use agnt_core::session::resolver::generate_session_id;
-use agnt_core::types::{AssistantContent, Message, UserContent};
 use agnt_runtime::config::ModelsCache;
 use agnt_runtime::config::Paths;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::events::CompactionSource;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 use agnt_runtime::session::{RigStoreConfig, SessionInfo};
 use agnt_runtime::tools::mcp::config::McpServerConfig;
 use chrono::{DateTime, Utc};
@@ -416,7 +416,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         let _ = session
             .bus
             .session()
-            .send(agnt_core::bus::SessionEvent::ModelSwitched { from, to })
+            .send(agnt_runtime::bus::SessionEvent::ModelSwitched { from, to })
             .await;
         let mut options = model_options(&runtime, self.models_cache.as_deref());
         options.extend(agent_options(&runtime));

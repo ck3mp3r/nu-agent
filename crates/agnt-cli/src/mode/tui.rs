@@ -7,17 +7,18 @@ use agnt_a2a::{
     AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
     skill_from_persona,
 };
-use agnt_core::bus::OneshotTx;
+use agnt_core::conversation::contracts::{DecisionSource, RuntimeAccess};
 use agnt_core::orchestrator::{AgentSwitchHook, LoopConfig, run};
-use agnt_core::protocol::contracts::{CoreRuntime, DecisionSource, RuntimeAccess};
-use agnt_core::protocol::mcp_management::McpManagement;
-use agnt_core::protocol::model_switching::ModelSwitching;
-use agnt_core::protocol::picker::{
+use agnt_core::session::management::{SessionPersistence, SessionState};
+use agnt_runtime::bus::OneshotTx;
+use agnt_runtime::protocol::McpManagement;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::picker::{
     build_agent_picker_catalog, format_active_model_identity,
     model_picker_catalog_from_cached_startup_plugin_config,
 };
-use agnt_core::protocol::session_management::{SessionPersistence, SessionState};
-use agnt_runtime::protocol::event::PermissionDecision;
 use agnt_tty::policy::UiPolicy;
 use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;
@@ -231,7 +232,7 @@ where
     tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
     match caller_cwd {
         Some(cwd) => {
-            let skills = agnt_core::protocol::skills::discover_skill_catalog_for_cwd(&cwd);
+            let skills = agnt_runtime::protocol::skills::discover_skill_catalog_for_cwd(&cwd);
             tui_ui.set_skills_projection(skills);
         }
         None => tui_ui.mark_skills_discovery_failed(),
@@ -271,8 +272,8 @@ where
             loop {
                 match turn_rx.recv().await {
                     Ok(event) => apply_turn_event_to_store(&store, &event),
-                    Err(agnt_core::bus::ChannelError::Lagged { .. }) => {}
-                    Err(agnt_core::bus::ChannelError::Closed) => break,
+                    Err(agnt_runtime::bus::ChannelError::Lagged { .. }) => {}
+                    Err(agnt_runtime::bus::ChannelError::Closed) => break,
                     Err(_) => {}
                 }
             }

@@ -11,14 +11,14 @@ use std::time::Duration;
 
 use agnt_kernel::StopCause;
 
-use crate::bus::Bus;
 use crate::hook::agent_hook::{HookState, StopLedger};
 use crate::hook::chain::{HookChain, HookEnv};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
-use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::{Message, Text, ToolCall, ToolDefinition, UserContent};
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::defaults;
 use agnt_runtime::hook::turn_tools::TurnToolRecord;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use rig::tool::DynamicTool;
 
 use super::context::TurnContext;

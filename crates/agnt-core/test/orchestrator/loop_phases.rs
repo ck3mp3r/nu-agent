@@ -1,11 +1,11 @@
 use super::*;
 
-use crate::bus::SessionEvent;
+use agnt_runtime::bus::SessionEvent;
 
 #[tokio::test]
 async fn loop_hydrate_replays_the_prior_session_without_the_select_loop() -> TResult {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use rig::tool::{ToolExecutionError, ToolResult};
 
 use super::*;
-use crate::bus::create_bus;
+use agnt_runtime::bus::Bus;
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_runtime::tools::mcp::client::McpToolDefinition;
@@ -46,7 +46,7 @@ fn non_mcp_tool_check_returns_none() {
 async fn record_result_non_mcp_tool_is_noop() {
     let guard = make_guard(1);
     let registry = make_registry_empty();
-    let bus = create_bus();
+    let bus = Bus::default();
     // Even a transport-classified error must be a no-op for a tool that maps
     // to no MCP server: no panic, no state change, no emitted events.
     guard
@@ -83,7 +83,7 @@ async fn transport_source_variant_records_failure_and_trips_breaker() -> Result<
     ] {
         let guard = make_guard(1);
         let registry = make_registry("mcp__srv__ping", "srv")?;
-        let bus = create_bus();
+        let bus = Bus::default();
 
         guard
             .record_result(
@@ -117,7 +117,7 @@ async fn transport_source_found_through_error_source_chain() -> Result<()> {
     // first hop.
     let guard = make_guard(1);
     let registry = make_registry("mcp__srv__ping", "srv")?;
-    let bus = create_bus();
+    let bus = Bus::default();
 
     let raw_result = ToolResult::failed(
         ToolExecutionError::provider("outer failure")
@@ -151,7 +151,7 @@ async fn auth_http_status_bypasses_breaker_without_recording() -> Result<()> {
     for status in [401u16, 403] {
         let guard = make_guard(1);
         let registry = make_registry("mcp__srv__ping", "srv")?;
-        let bus = create_bus();
+        let bus = Bus::default();
         let raw_result = ToolResult::failed(
             ToolExecutionError::provider("auth failed").with_http_status(status),
         );
@@ -192,7 +192,7 @@ async fn unclassified_error_records_nothing() -> Result<()> {
     // trip either.
     let guard = make_guard(1);
     let registry = make_registry("mcp__srv__ping", "srv")?;
-    let bus = create_bus();
+    let bus = Bus::default();
 
     let timeout_result = ToolResult::failed(
         ToolExecutionError::provider("MCP tool 'x' timed out").with_source(
@@ -241,7 +241,7 @@ async fn success_resets_failure_count() -> Result<()> {
     // -- Setup & Fixtures
     let guard = make_guard(2);
     let registry = make_registry("mcp__srv__ping", "srv")?;
-    let bus = create_bus();
+    let bus = Bus::default();
 
     // -- Exec
     // One transport failure (count 1 of 2, no trip)...

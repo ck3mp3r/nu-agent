@@ -4,13 +4,13 @@
 use agnt_kernel::CompactionSource;
 use tokio::sync::mpsc;
 
-use crate::orchestrator::WorkerCommand;
 use crate::orchestrator::stages::{
     OrchestrationContext, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
-use crate::protocol::events::SystemEvent;
 use agnt_kernel::bus::CancelEvent;
+use agnt_runtime::orchestrator::events::WorkerCommand;
+use agnt_runtime::protocol::events::SystemEvent;
 
 /// Reason recorded on a task rejected or failed because the worker was busy.
 pub(crate) const WORKER_BUSY_REASON: &str = "Worker busy: another turn is already running";

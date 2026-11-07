@@ -20,8 +20,8 @@ mod construction;
 
 use super::*;
 
-use crate::bus::create_bus;
-use crate::protocol::session_management::SessionPersistence;
+use crate::session::management::SessionPersistence;
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
 use agnt_runtime::config::{
     AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
@@ -83,7 +83,7 @@ fn make_params(
         agents_config: AgentsConfig::default(),
         paths: crate::test_support::paths_in(&cwd),
         cwd,
-        bus: create_bus(),
+        bus: Bus::default(),
         hook_context: crate::hooks::HookAgentContext::default(),
         compactor_model: None,
     }

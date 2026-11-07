@@ -22,9 +22,9 @@ mod verbosity;
 
 // endregion: --- Modules
 
-use agnt_core::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::renderer::UiRenderer;
+use crate::renderer::UiRenderer;
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
 
 use super::StderrUiRenderer;
 use crate::policy::{UiPolicy, Verbosity};

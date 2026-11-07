@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn mcps_panel_mutations_mark_render() {
     use crate::interaction::dispatch::{KeyLens, rewrite_action};
-    use agnt_core::protocol::events::Key;
+    use agnt_runtime::protocol::events::Key;
 
     // Start the selection away from the wrap target so every move changes the
     // row the panel highlights.
@@ -36,7 +36,7 @@ fn mcps_panel_mutations_mark_render() {
 #[test]
 fn mcps_panel_noop_mutations_keep_the_frame_still() {
     use crate::interaction::dispatch::{KeyLens, rewrite_action};
-    use agnt_core::protocol::events::Key;
+    use agnt_runtime::protocol::events::Key;
 
     // -- Check: one server wraps a move onto the same row, which draws nothing new.
     for key in [Key::Up, Key::Down, Key::CtrlP, Key::CtrlN] {
@@ -154,7 +154,7 @@ fn mcps_panel_type_to_filter_through_the_dispatcher() -> Result<()> {
 #[test]
 fn mcps_panel_page_moves_clamp() -> Result<()> {
     use crate::interaction::dispatch::{KeyLens, rewrite_action};
-    use agnt_core::protocol::events::Key;
+    use agnt_runtime::protocol::events::Key;
 
     // -- Setup & Fixtures: twenty servers.
     let mut state = AppState::default();

@@ -1,6 +1,5 @@
 //! Shared fixtures for the widget suite.
 
-use agnt_core::protocol::events::ToolCall;
 use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -9,6 +8,7 @@ use agnt_render::transcript::ir::{
 };
 use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Color, RenderBackend, RowRect, Theme};
+use agnt_runtime::protocol::events::ToolCall;
 
 use crate::widgets::RatatuiBackend;
 

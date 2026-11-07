@@ -29,7 +29,7 @@ impl PermissionBridgeUi {
         }
     }
 
-    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let pending_decisions = Arc::clone(&self.pending_decisions);
         let events = Arc::clone(&self.events);
         let quit = Arc::clone(&self.quit);
@@ -104,7 +104,7 @@ impl UserInputUi for PermissionBridgeUi {
 
 #[tokio::test]
 async fn permission_flow_reaches_bus_through_worker_bridge() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = PermissionGateRuntime::new().with_bus(bus.clone());
     let pending = runtime.pending.clone();
     let ui = PermissionBridgeUi::new(PermissionDecision::AllowOnce).with_bus(bus.clone());
@@ -138,7 +138,7 @@ async fn permission_flow_reaches_bus_through_worker_bridge() -> TResult {
 
 struct PermissionTimeoutIgnoredRuntime {
     request_id: String,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
@@ -226,7 +226,7 @@ impl ModelSwitching for PermissionTimeoutIgnoredRuntime {
 
 #[tokio::test]
 async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = PermissionTimeoutIgnoredRuntime {
         request_id: "ask-0000000000000abc".to_string(),
         bus: bus.clone(),
@@ -261,7 +261,7 @@ async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() -> TRe
 
 #[tokio::test]
 async fn models_launcher_opens_picker_while_worker_active() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = ModelPickerLaunchWhileActiveUi::new(&["first"], 1).with_bus(bus.clone());
@@ -298,7 +298,7 @@ async fn models_launcher_opens_picker_while_worker_active() -> TResult {
 
 #[tokio::test]
 async fn models_slash_opens_picker_while_worker_active() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = ModelPickerLaunchWhileActiveUi::new(&["first"], 1).with_bus(bus.clone());

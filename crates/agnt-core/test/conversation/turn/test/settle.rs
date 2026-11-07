@@ -52,7 +52,7 @@ fn context<'a>(
             agent: "tester".to_string(),
             has_session,
             dyn_model: shared_handle(model),
-            compaction: test_compaction_config(crate::bus::create_bus()),
+            compaction: test_compaction_config(agnt_runtime::bus::Bus::default()),
         },
         TurnInput {
             prompt: "Hello".to_string(),
@@ -77,7 +77,7 @@ fn context<'a>(
             last_total_tokens: default_last_total_tokens(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         config,
@@ -157,7 +157,7 @@ async fn cancelled_turn_records_no_facts() -> Result<()> {
             .with_cache_dir(temp_dir.path().join("cache")),
     );
     let session_id = "test-settle-cancel";
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let handle = rig::tool::server::ToolServer::new()
         .tool(executor::test_utils::CancellingTool::new(bus.clone()))
         .run();
@@ -197,7 +197,7 @@ async fn cancelled_turn_records_no_facts() -> Result<()> {
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_handle(model),
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

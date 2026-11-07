@@ -35,10 +35,10 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_receive_request};
-use agnt_core::bus::{AgentEvent, AgentTx};
 use agnt_core::hooks::HookAgentContext;
-use agnt_core::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
+use agnt_runtime::bus::{AgentEvent, AgentTx};
 use agnt_runtime::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
+use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
 use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 /// The session registry shared by every protocol handler.
@@ -364,7 +364,7 @@ fn persona_slug(
 fn active_model_identity(plugin_config: &PluginConfig) -> String {
     let env = agnt_runtime::utils::env_map::process_env();
     match agnt_runtime::config::resolve_role_config(plugin_config, None, &env) {
-        Ok(config) => agnt_core::protocol::picker::format_active_model_identity(
+        Ok(config) => agnt_runtime::protocol::picker::format_active_model_identity(
             &config.provider,
             &config.model,
         ),

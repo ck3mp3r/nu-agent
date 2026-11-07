@@ -4,10 +4,10 @@
 //! functions every topical compactor test file needs. Sub-files pull them in
 //! with `use super::*;`.
 
-pub(super) use crate::bus::{Bus, CompactionRx};
 pub(super) use crate::conversation::compaction::compactor::{NuCompactor, resolve_model_spec};
-pub(super) use crate::protocol::events::SystemEvent;
 pub(super) use crate::types::{Message, UserContent};
+pub(super) use agnt_runtime::bus::{Bus, CompactionRx};
+pub(super) use agnt_runtime::protocol::events::SystemEvent;
 pub(super) use agnt_runtime::session::{MemoryError, RigStoreConfig, StoreType};
 
 pub(super) use rig::DynModel;

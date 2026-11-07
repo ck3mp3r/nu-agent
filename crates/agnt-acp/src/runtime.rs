@@ -10,6 +10,7 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
 };
 use agnt_core::conversation::builder::builtin_tool_definitions;
+use agnt_core::conversation::contracts::DecisionSource;
 use agnt_core::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
 use agnt_core::conversation::runtime_build::RuntimeBuildParams;
 use agnt_core::conversation::runtime_parts::RuntimeParts;
@@ -17,13 +18,12 @@ use agnt_core::conversation::state::{
     MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState,
 };
 use agnt_core::hooks::HookAgentContext;
-use agnt_core::protocol::contracts::DecisionSource;
-use agnt_core::protocol::model_switching::ModelSwitching;
-use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
 use agnt_core::types::{
     Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
 };
 use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
+use agnt_runtime::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaLister};
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::tools::authz::PermissionsConfig;
 use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
@@ -206,10 +206,12 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     // The hook envelopes stamp the model the session starts on. The startup
     // `switch_agent` below then writes the persona slug and the model the
     // persona resolves to.
-    hook_context.set_model(agnt_core::protocol::picker::format_active_model_identity(
-        &config.provider,
-        &config.model,
-    ));
+    hook_context.set_model(
+        agnt_runtime::protocol::picker::format_active_model_identity(
+            &config.provider,
+            &config.model,
+        ),
+    );
 
     let max_tool_result_bytes = config
         .max_tool_result_bytes
@@ -222,7 +224,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
 
     // -- Tool server: built-ins only, no closure tools
     let tool_server_handle = agnt_core::types::ToolServer::new().run();
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
 
     // -- Built-in tools. When the client advertises both filesystem
     // capabilities, the `read` and `edit` tools route through the client's
@@ -341,13 +343,13 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
 
     // -- Preamble cache: AGENTS.md chain and available skills
     let agents_load =
-        agnt_core::protocol::agents::load_agents_chain_for_cwd(&cwd, Some(&paths.agents_dir));
+        agnt_runtime::protocol::agents::load_agents_chain_for_cwd(&cwd, Some(&paths.agents_dir));
     for warning in &agents_load.warnings {
         log::warn!("AGENTS.md load warning: {warning}");
     }
     let cached_agents_chain = agents_load.merged_chain;
     let cached_available_skills =
-        agnt_core::protocol::skills::render_available_skills_preamble(&cwd);
+        agnt_runtime::protocol::skills::render_available_skills_preamble(&cwd);
 
     // -- Compaction from config.toml. The policy and the threshold ride the
     // composition's configuration record; the compactor's own model is built

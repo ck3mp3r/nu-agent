@@ -22,7 +22,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_the_prompt() -> 
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -139,11 +139,11 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             last_total_tokens: default_last_total_tokens(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor

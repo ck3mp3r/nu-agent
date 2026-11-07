@@ -10,7 +10,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_compaction_started_invokes_with_source() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::CompactionStarted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -46,7 +46,7 @@ async fn test_hooks_runner_compaction_started_invokes_with_source() -> Result<()
 #[tokio::test]
 async fn test_hooks_runner_compaction_completed_carries_preview_and_no_body() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::CompactionCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -92,7 +92,7 @@ async fn test_hooks_runner_compaction_completed_carries_preview_and_no_body() ->
 #[tokio::test]
 async fn test_hooks_runner_compaction_failed_carries_message() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::CompactionFailed])];
     let handles = spawn(&bus, &hooks, &process);
@@ -130,7 +130,7 @@ async fn test_hooks_runner_compaction_failed_carries_message() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_compaction_events_stamp_session_id() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::CompactionCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -172,7 +172,7 @@ async fn test_hooks_runner_compaction_events_stamp_session_id() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_compaction_summary_chunk_invokes_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook(
         "audit",

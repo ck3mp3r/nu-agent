@@ -26,7 +26,7 @@ async fn output_budget_error_surfaces_user_message() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

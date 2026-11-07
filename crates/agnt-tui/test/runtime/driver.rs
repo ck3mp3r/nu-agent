@@ -13,9 +13,9 @@
 
 use std::time::Duration;
 
-use agnt_core::bus::Bus;
-use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::bus::Bus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::events::SystemEvent;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -375,7 +375,7 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
     driver
         .advance(&[DriveEvent::SystemEvent(Box::new(
             SystemEvent::ToolStarted {
-                call: agnt_core::protocol::events::ToolCall::new(
+                call: agnt_runtime::protocol::events::ToolCall::new(
                     agnt_render::transcript::ir::ToolName("sentinel_tool".to_string()),
                     agnt_runtime::tools::handler::ToolSource::Mcp,
                     "{}",

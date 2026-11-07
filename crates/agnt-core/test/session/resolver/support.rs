@@ -3,12 +3,12 @@
 //! Holds the imports and the helpers every topical resolver test file needs.
 //! Sub-files pull them in with `use super::*;`.
 
-pub(super) use crate::protocol::contracts::UiMessageSnapshot;
 pub(super) use crate::session::resolver::StoredEntry;
 pub(super) use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
+pub(super) use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 pub(super) use agnt_runtime::session::tool_status::{ToolStatus, ToolStatusMap};
 pub(super) use rig_memory::summary_author;
 pub(super) use serde_json::json;

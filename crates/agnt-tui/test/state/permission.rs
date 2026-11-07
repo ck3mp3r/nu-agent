@@ -1,8 +1,8 @@
 use crate::state::*;
-use agnt_core::protocol::events::ToolCall;
 use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
 use agnt_render::transcript::ir::{MessageRole, ToolName};
 use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::events::ToolCall;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

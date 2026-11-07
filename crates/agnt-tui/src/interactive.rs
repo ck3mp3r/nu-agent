@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use agnt_core::bus::{CompactionTx, SessionTx, TryRecvError, UiEventTx, UiStateTx};
-use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_runtime::bus::{CompactionTx, SessionTx, TryRecvError, UiEventTx, UiStateTx};
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
@@ -86,7 +86,7 @@ impl TuiInteractiveUi {
 
     pub fn set_skills_projection(
         &mut self,
-        skills: Vec<agnt_core::protocol::skills::DiscoverableSkill>,
+        skills: Vec<agnt_runtime::protocol::skills::DiscoverableSkill>,
     ) {
         self.renderer.set_skills_projection(skills);
     }
@@ -103,7 +103,7 @@ impl TuiInteractiveUi {
 
     pub fn hydrate_transcript(
         &mut self,
-        messages: Vec<agnt_core::protocol::contracts::UiMessageSnapshot>,
+        messages: Vec<agnt_runtime::protocol::contracts::UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
     ) {
         self.renderer
@@ -182,7 +182,7 @@ impl TuiInteractiveUi {
 
     pub fn make_render_loop_spawner(
         &mut self,
-        bus: agnt_core::bus::Bus,
+        bus: agnt_runtime::bus::Bus,
     ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
         let coordinator = std::mem::replace(
             &mut self.renderer.coordinator,

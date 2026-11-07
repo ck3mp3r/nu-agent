@@ -13,7 +13,11 @@ async fn execute_turn_text_only_response() -> Result<()> {
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let ctx = make_turn_context(
+        shared_handle(model),
+        &config,
+        agnt_runtime::bus::Bus::default(),
+    );
     let resolver = MockResolver(PermissionDecision::Allow);
 
     let result = execute_turn(ctx, resolver)
@@ -46,7 +50,11 @@ async fn execute_turn_completes_when_no_events_arrive_on_bus() -> Result<()> {
     ]]);
 
     let config = Config::default();
-    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let ctx = make_turn_context(
+        shared_handle(model),
+        &config,
+        agnt_runtime::bus::Bus::default(),
+    );
     let resolver = MockResolver(PermissionDecision::Allow);
 
     let result = execute_turn(ctx, resolver)
@@ -82,7 +90,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
     ]);
 
     let config = Config::default();
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let handle = rig::tool::server::ToolServer::new()
         .tool(executor::test_utils::CancellingTool::new(bus.clone()))
         .run();
@@ -134,7 +142,11 @@ async fn execute_turn_with_additional_params_succeeds() -> Result<()> {
         additional_params: Some(serde_json::json!({"thinking": {"type": "disabled"}})),
         ..Config::default()
     };
-    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let ctx = make_turn_context(
+        shared_handle(model),
+        &config,
+        agnt_runtime::bus::Bus::default(),
+    );
     let resolver = MockResolver(PermissionDecision::Allow);
 
     let result = execute_turn(ctx, resolver)
@@ -159,7 +171,11 @@ async fn execute_turn_uses_config_max_tokens_when_set() -> Result<()> {
         max_output_tokens: Some(5000),
         ..Config::default()
     };
-    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let ctx = make_turn_context(
+        shared_handle(model),
+        &config,
+        agnt_runtime::bus::Bus::default(),
+    );
     let resolver = MockResolver(PermissionDecision::Allow);
 
     execute_turn(ctx, resolver)
@@ -190,7 +206,11 @@ async fn execute_turn_falls_back_to_max_output_tokens_when_max_tokens_unset() ->
         max_output_tokens: Some(4000),
         ..Config::default()
     };
-    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let ctx = make_turn_context(
+        shared_handle(model),
+        &config,
+        agnt_runtime::bus::Bus::default(),
+    );
     let resolver = MockResolver(PermissionDecision::Allow);
 
     execute_turn(ctx, resolver)
@@ -221,7 +241,11 @@ async fn execute_turn_sends_no_max_tokens_when_both_unset() -> Result<()> {
         max_output_tokens: None,
         ..Config::default()
     };
-    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let ctx = make_turn_context(
+        shared_handle(model),
+        &config,
+        agnt_runtime::bus::Bus::default(),
+    );
     let resolver = MockResolver(PermissionDecision::Allow);
 
     execute_turn(ctx, resolver)

@@ -7,13 +7,15 @@ pub(super) use agnt_a2a::InMemoryTaskStore;
 pub(super) use nu_protocol::Span;
 pub(super) use tokio::sync::mpsc;
 
-pub(super) use crate::bus::{Bus, SessionEvent, SessionRx, UiEventRx, UiStateRx, create_bus};
 pub(super) use crate::conversation::runtime::PendingPermissions;
 pub(super) use crate::orchestrator::stages::ui_request::UiRequestStage;
 pub(super) use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
-pub(super) use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
-pub(super) use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
-pub(super) use crate::protocol::events::SystemEvent;
+pub(super) use agnt_runtime::bus::{Bus, SessionEvent, SessionRx, UiEventRx, UiStateRx};
+pub(super) use agnt_runtime::orchestrator::events::{
+    UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
+};
+pub(super) use agnt_runtime::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
+pub(super) use agnt_runtime::protocol::events::SystemEvent;
 pub(super) use agnt_runtime::session::SessionInfo;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -62,7 +64,7 @@ impl Harness {
         let (worker_tx, worker_rx) = mpsc::channel::<WorkerCommand>(256);
         let (blocking_tx, _blocking_rx) = mpsc::channel::<UiRequestResponse>(256);
         let (concurrent_tx, _concurrent_rx) = mpsc::channel::<UiRequestResponse>(256);
-        let bus = create_bus();
+        let bus = Bus::default();
         let ui_event_rx = bus.ui_event().subscribe();
         let ui_state_rx = bus.ui_state().subscribe();
         let session_rx = bus.session().subscribe();

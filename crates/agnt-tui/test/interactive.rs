@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use agnt_core::bus::Bus;
-use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::bus::Bus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::protocol::events::SystemEvent;
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
@@ -156,7 +156,7 @@ fn hydrate_transcript_with_no_messages_leaves_the_transcript_empty() {
 fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let mut ui = make_ui();
     let event = SystemEvent::PermissionRequested {
-        request_id: agnt_core::protocol::events::RequestId::new("ask-0000000000000001"),
+        request_id: agnt_runtime::protocol::events::RequestId::new("ask-0000000000000001"),
         context: agnt_runtime::protocol::event::PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),

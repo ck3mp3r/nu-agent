@@ -1,11 +1,11 @@
 use agnt_kernel::CompactionSource;
 
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
-use crate::orchestrator::{UiStateEvent, WorkerCommand};
-use crate::protocol::contracts::SharedUiAction;
-use crate::protocol::events::{SystemEvent, SystemKind};
-use crate::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command};
 use agnt_kernel::bus::CancelEvent;
+use agnt_runtime::orchestrator::events::{UiStateEvent, WorkerCommand};
+use agnt_runtime::protocol::contracts::SharedUiAction;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
+use agnt_runtime::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command};
 
 /// Processes slash commands and regular prompt submissions from the UI.
 ///

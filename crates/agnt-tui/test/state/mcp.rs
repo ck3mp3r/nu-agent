@@ -1,6 +1,6 @@
 use crate::state::*;
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::McpUsabilityState;
+use agnt_runtime::orchestrator::events::UiStateEvent;
+use agnt_runtime::protocol::contracts::McpUsabilityState;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

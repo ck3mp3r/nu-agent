@@ -173,7 +173,7 @@ async fn reload_of_a_zero_stamp_carries_nothing() -> Result<()> {
 async fn reloaded_user(
     model: &str,
     agent: &str,
-) -> Result<crate::protocol::contracts::UiMessageSnapshot> {
+) -> Result<agnt_runtime::protocol::contracts::UiMessageSnapshot> {
     let temp_dir = tempfile::tempdir()?;
     let rig = RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(temp_dir.path().join("cache"));
     let session_id = "test-turn-facts-gate";

@@ -33,7 +33,7 @@ async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -151,7 +151,7 @@ async fn retryable_kind_failure_gets_no_feedback_steering() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -221,7 +221,7 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

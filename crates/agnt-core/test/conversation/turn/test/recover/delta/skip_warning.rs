@@ -12,7 +12,7 @@ async fn persist_turn_delta_skips_when_the_store_moved_mid_turn() -> Result<()> 
     let prior = vec![Message::user("q1"), Message::assistant("a1")];
     seed(&memory_state, session_id, prior.clone()).await?;
     let full_history = vec![Message::user("q1"), Message::assistant("a1")];
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut ui_events = bus.ui_event().subscribe();
 
     // -- Exec: the turn claims it started from one message, the store holds two

@@ -157,7 +157,7 @@ pub(crate) fn echo_tool(response: &'static str) -> Result<ToolInfra> {
 /// `new_messages` list before the cancel event is published.
 struct TestNuShellCancellingTool {
     output: &'static str,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
     fired: Arc<AtomicBool>,
 }
 
@@ -189,7 +189,7 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
             let _ = self
                 .bus
                 .cancel()
-                .send(crate::bus::CancelEvent::Requested)
+                .send(agnt_runtime::bus::CancelEvent::Requested)
                 .await;
         }
         Ok(result)
@@ -201,7 +201,7 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
 /// The `bus` is the same bus the turn executor uses for cancellation.
 pub(crate) fn nu_shell_cancelling_tool(
     output: &'static str,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 ) -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestNuShellCancellingTool {

@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_permission_decision_ignored_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionDecisionIgnored])];
     let handles = spawn(&bus, &hooks, &process);
@@ -43,7 +43,7 @@ async fn test_hooks_runner_permission_decision_ignored_invokes_with_payload() ->
 #[tokio::test]
 async fn test_hooks_runner_permission_decision_ignored_stamps_session_id() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionDecisionIgnored])];
     let handles = spawn(&bus, &hooks, &process);
@@ -84,7 +84,7 @@ async fn test_hooks_runner_permission_decision_ignored_stamps_session_id() -> Re
 #[tokio::test]
 async fn test_hooks_runner_permission_decision_ignored_ignores_other_decisions() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionDecisionIgnored])];
     let handles = spawn(&bus, &hooks, &process);

@@ -23,7 +23,7 @@ fn context<'a>(
             agent: String::new(),
             has_session: true,
             dyn_model: shared_handle(model),
-            compaction: test_compaction_config(crate::bus::create_bus()),
+            compaction: test_compaction_config(agnt_runtime::bus::Bus::default()),
         },
         TurnInput {
             prompt: "Hello".to_string(),
@@ -31,7 +31,7 @@ fn context<'a>(
             max_turns: None,
         },
         tool_infra(
-            crate::bus::create_bus(),
+            agnt_runtime::bus::Bus::default(),
             vec![],
             rig::tool::server::ToolServer::new().run(),
         ),
@@ -41,7 +41,7 @@ fn context<'a>(
 
 /// A `ToolInfra` with the given bus, visible definitions and tool server.
 fn tool_infra(
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
     visible_tool_definitions: Vec<ToolDefinition>,
     tool_server_handle: rig::tool::server::ToolServerHandle,
 ) -> executor::ToolInfra {
@@ -258,7 +258,7 @@ async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
     assert!(!log_before.is_empty(), "the seed writes the log");
 
     // -- Setup & Fixtures: a turn the hook cancels from inside a tool call
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let handle = rig::tool::server::ToolServer::new()
         .tool(executor::test_utils::CancellingTool::new(bus.clone()))
         .run();
@@ -287,7 +287,7 @@ async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
             handle,
         ),
         shared_handle(model),
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

@@ -12,7 +12,7 @@ async fn switch_session_dispatches_async_load_without_panic()
     let mut runtime = SwitchSessionRuntime {
         loaded_session_id: Arc::clone(&loaded_session_id),
         active_model: "openai/gpt-4o-mini".to_string(),
-        bus: crate::bus::Bus::default(),
+        bus: agnt_runtime::bus::Bus::default(),
     };
 
     // result_tx is unused by SwitchSession but required by the dispatch signature
@@ -31,7 +31,7 @@ async fn switch_session_dispatches_async_load_without_panic()
     // Dispatch from within an async context — this is the exact scenario
     // that was panicking with "Cannot start a runtime from within a runtime"
     // when load_session used Handle::current().block_on(...)
-    let sources = dispatch_sources(&create_bus());
+    let sources = dispatch_sources(&Bus::default());
     let should_continue = CommandRouter::dispatch(
         cmd,
         &mut runtime,
@@ -80,7 +80,7 @@ async fn on_agent_switch_callback_invoked_after_successful_switch()
     let hook = RecordingAgentSwitchHook::default();
     let hook_calls = Arc::clone(&hook.calls);
 
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Ok("research-agent".to_string())),
         bus: bus.clone(),

@@ -44,7 +44,7 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() -> Resu
     // -- Exec: turn completion unlocks via the reducer.
     reduce(
         &mut state,
-        agnt_core::protocol::events::SystemEvent::TurnCompleted {
+        agnt_runtime::protocol::events::SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -304,7 +304,7 @@ const REGURGITATED_DIFF: &str =
 fn completed_edit_with_diff(state: &mut AppState) {
     let edit_arguments = r#"{"path":"sample.txt"}"#;
     let edit_call = || {
-        agnt_core::protocol::events::ToolCall::new(
+        agnt_runtime::protocol::events::ToolCall::new(
             agnt_render::transcript::ir::ToolName("edit".to_string()),
             agnt_runtime::tools::handler::ToolSource::Closure,
             edit_arguments,
@@ -312,14 +312,14 @@ fn completed_edit_with_diff(state: &mut AppState) {
     };
     reduce(
         state,
-        agnt_core::protocol::events::SystemEvent::ToolStarted { call: edit_call() },
+        agnt_runtime::protocol::events::SystemEvent::ToolStarted { call: edit_call() },
         None,
     );
     reduce(
         state,
-        agnt_core::protocol::events::SystemEvent::ToolCompleted {
+        agnt_runtime::protocol::events::SystemEvent::ToolCompleted {
             call: edit_call(),
-            outcome: agnt_core::protocol::events::ToolOutcome {
+            outcome: agnt_runtime::protocol::events::ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
                 result: r#"{"path":"sample.txt","diff":"--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"}"#

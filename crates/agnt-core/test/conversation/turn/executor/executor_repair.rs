@@ -46,7 +46,7 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     // The cancelling tool publishes a CancelEvent from inside `call()` (after
     // the hook subscribes to `bus.cancel()`), driving the cancelled path
     // deterministically.
@@ -81,7 +81,7 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -148,7 +148,7 @@ async fn unknown_tool_error_with_a_tool_call_persists_the_closed_delta() -> Resu
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor

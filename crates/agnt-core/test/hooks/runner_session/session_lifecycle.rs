@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_session_started_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::SessionStarted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -34,7 +34,7 @@ async fn test_hooks_runner_session_started_invokes_with_payload() -> Result<()> 
 #[tokio::test]
 async fn test_hooks_runner_session_ended_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::SessionEnded])];
     let handles = spawn(&bus, &hooks, &process);
@@ -71,7 +71,7 @@ async fn test_hooks_runner_session_ended_invokes_with_payload() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_fires_again_for_a_repeated_started() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::SessionStarted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -102,7 +102,7 @@ async fn test_hooks_runner_fires_again_for_a_repeated_started() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_skips_agent_class_only_hooks() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook(
         "notify",

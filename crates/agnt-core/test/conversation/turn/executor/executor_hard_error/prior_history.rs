@@ -30,7 +30,7 @@ async fn hard_error_after_prior_history_persists_the_prompt() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -107,7 +107,7 @@ async fn hard_error_after_prior_history_appends_the_delta() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -162,7 +162,7 @@ async fn hard_errors_append_only_their_own_prompt() -> Result<()> {
             &config,
             &mut memory_state,
             shared_model,
-            default_tool_infra(crate::bus::create_bus()),
+            default_tool_infra(agnt_runtime::bus::Bus::default()),
         );
         let result = executor
             .execute(
@@ -188,7 +188,7 @@ async fn hard_errors_append_only_their_own_prompt() -> Result<()> {
             &config,
             &mut memory_state,
             shared_model,
-            default_tool_infra(crate::bus::create_bus()),
+            default_tool_infra(agnt_runtime::bus::Bus::default()),
         );
         let _ = executor
             .execute(
@@ -213,7 +213,7 @@ async fn hard_errors_append_only_their_own_prompt() -> Result<()> {
             &config,
             &mut memory_state,
             shared_model,
-            default_tool_infra(crate::bus::create_bus()),
+            default_tool_infra(agnt_runtime::bus::Bus::default()),
         );
         let _ = executor
             .execute(

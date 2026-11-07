@@ -20,7 +20,7 @@ pub(crate) struct FakeInteractiveUi {
     pub(crate) active_model_identity: Arc<Mutex<Option<String>>>,
     pub(crate) agent_switch_requests: Arc<Mutex<std::collections::VecDeque<String>>>,
     pub(crate) session_switch_requests: Arc<Mutex<std::collections::VecDeque<String>>>,
-    pub(crate) bus: Arc<Mutex<Option<crate::bus::Bus>>>,
+    pub(crate) bus: Arc<Mutex<Option<agnt_runtime::bus::Bus>>>,
     pub(crate) pending_external_prompts: Arc<Mutex<std::collections::VecDeque<String>>>,
     pub(crate) turn_active: Arc<AtomicBool>,
     pub(crate) expected_external_prompts: usize,
@@ -86,7 +86,7 @@ impl FakeInteractiveUi {
         self
     }
 
-    pub(crate) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(crate) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         *self.bus.lock().expect("bus lock") = Some(bus.clone());
         let submitted = Arc::clone(&self.submitted);
         let mcp_toggle_requests = Arc::clone(&self.mcp_toggle_requests);

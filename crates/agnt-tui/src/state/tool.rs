@@ -2,11 +2,11 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use agnt_core::protocol::events::{ToolCall, ToolCallId, ToolOutcome};
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::entry::{ToolEntry, ToolKind, TranscriptEntry};
 use agnt_render::transcript::ir::Display;
 use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::events::{ToolCall, ToolCallId, ToolOutcome};
 use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::transcript_store::TranscriptStore;

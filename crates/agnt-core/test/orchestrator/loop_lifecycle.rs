@@ -6,7 +6,7 @@ use agnt_runtime::session::tool_status::ToolStatus;
 
 #[derive(Default)]
 struct ToolDisplayOnlyRuntime {
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for ToolDisplayOnlyRuntime {
@@ -86,7 +86,7 @@ impl ModelSwitching for ToolDisplayOnlyRuntime {
 #[derive(Default)]
 struct CancelFirstRuntime {
     prompts: Vec<String>,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for CancelFirstRuntime {
@@ -143,7 +143,7 @@ crate::default_mcp!(CancelFirstRuntime);
 #[derive(Default)]
 struct ErrorFirstRuntime {
     prompts: Vec<String>,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for ErrorFirstRuntime {
@@ -197,7 +197,7 @@ crate::default_mcp!(ErrorFirstRuntime);
 
 #[tokio::test]
 async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut runtime = ToolDisplayOnlyRuntime { bus: bus.clone() };
     let mut ui_event_rx = bus.ui_event().subscribe();
 
@@ -218,9 +218,9 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> 
     loop {
         match ui_event_rx.try_recv() {
             Ok(event) => events.push(event),
-            Err(crate::bus::TryRecvError::Empty) => break,
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
-            Err(crate::bus::TryRecvError::Closed) => break,
+            Err(agnt_runtime::bus::TryRecvError::Empty) => break,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Closed) => break,
         }
     }
 
@@ -241,7 +241,7 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> 
 
 #[tokio::test]
 async fn run_single_turn_uses_progress_ui_trait_boundary() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut runtime = FakeRuntime::default();
 
     let value = run_single_turn(
@@ -261,7 +261,7 @@ async fn run_single_turn_uses_progress_ui_trait_boundary() -> TResult {
 
 #[tokio::test]
 async fn run_interactive_loop_uses_interactive_ui_trait_boundary() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -284,7 +284,7 @@ async fn run_interactive_loop_uses_interactive_ui_trait_boundary() -> TResult {
 
 #[tokio::test]
 async fn interactive_loop_does_not_return_per_turn_values_to_stdout() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeValueRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -307,7 +307,7 @@ async fn interactive_loop_does_not_return_per_turn_values_to_stdout() -> TResult
 
 #[tokio::test]
 async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = CancelFirstRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -334,7 +334,7 @@ async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() -
 
 #[tokio::test]
 async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = ErrorFirstRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -368,7 +368,7 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() -> TR
 
 #[tokio::test]
 async fn run_hydrated_interactive_loop_hydrates_before_first_pump() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -402,7 +402,7 @@ async fn run_hydrated_interactive_loop_hydrates_before_first_pump() -> TResult {
 
 #[tokio::test]
 async fn run_hydrated_interactive_loop_hydrates_exactly_once() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()

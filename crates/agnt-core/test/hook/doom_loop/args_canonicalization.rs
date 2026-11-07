@@ -44,7 +44,7 @@ async fn reordered_json_args_trip_doom_loop() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
     let variants = [
         r#"{"path": "same", "mode": "r"}"#,
         r#"{"mode": "r", "path": "same"}"#,
@@ -82,7 +82,7 @@ async fn whitespace_only_args_trip_doom_loop() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
     let variants = [
         r#"{"path":"same"}"#,
         r#"{ "path": "same" }"#,
@@ -120,7 +120,7 @@ async fn non_json_args_use_raw_signature() {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     // -- Exec & Check
     for i in 0..DOOM_LOOP_THRESHOLD {

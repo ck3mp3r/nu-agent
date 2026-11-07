@@ -41,7 +41,7 @@ impl std::error::Error for XdgError {}
 /// # Examples
 ///
 /// ```
-/// use agnt_runtime::utils::xdg;
+/// use crate::utils::xdg;
 ///
 /// let data_dir = xdg::data_dir().unwrap();
 /// println!("Data directory: {:?}", data_dir);
@@ -66,7 +66,7 @@ pub fn data_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
 /// # Examples
 ///
 /// ```
-/// use agnt_runtime::utils::xdg;
+/// use crate::utils::xdg;
 ///
 /// let cache_dir = xdg::cache_dir().unwrap();
 /// println!("Cache directory: {:?}", cache_dir);
@@ -91,7 +91,7 @@ pub fn cache_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
 /// # Examples
 ///
 /// ```
-/// use agnt_runtime::utils::xdg;
+/// use crate::utils::xdg;
 ///
 /// let config_dir = xdg::config_dir().unwrap();
 /// println!("Config directory: {:?}", config_dir);
@@ -116,7 +116,7 @@ pub fn config_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
 /// # Examples
 ///
 /// ```
-/// use agnt_runtime::utils::xdg;
+/// use crate::utils::xdg;
 ///
 /// let state_dir = xdg::state_dir().unwrap();
 /// println!("State directory: {:?}", state_dir);

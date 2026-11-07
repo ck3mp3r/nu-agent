@@ -8,9 +8,9 @@ use super::super::test::{
 };
 use super::test_utils::{message_text, test_compaction_config};
 use super::*;
-use crate::bus::Bus;
 use crate::conversation::managers::SessionManager;
 use crate::conversation::state::memory::MemoryState;
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::Config;
 use agnt_runtime::session::{CachedMemory, RigStoreConfig};
 use agnt_runtime::tools::closure::ClosureRegistry;
@@ -72,7 +72,7 @@ where
         memory_state,
         tool_infra,
         model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     )
 }
 

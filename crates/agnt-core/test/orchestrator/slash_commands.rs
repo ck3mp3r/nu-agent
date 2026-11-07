@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn recognized_slash_commands_never_sent_to_llm() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -29,7 +29,7 @@ async fn recognized_slash_commands_never_sent_to_llm() -> TResult {
 
 #[tokio::test]
 async fn new_slash_command_clears_transcript_and_pushes_startup_logo() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -54,7 +54,7 @@ async fn new_slash_command_clears_transcript_and_pushes_startup_logo() -> TResul
 
 #[tokio::test]
 async fn models_slash_command_not_sent_to_llm() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -77,7 +77,7 @@ async fn models_slash_command_not_sent_to_llm() -> TResult {
 
 #[tokio::test]
 async fn models_slash_command_routes_to_shared_models_action() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -103,7 +103,7 @@ async fn models_slash_command_routes_to_shared_models_action() -> TResult {
 
 #[tokio::test]
 async fn interactive_loop_routes_compact_slash_to_compaction_executor() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -130,7 +130,7 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() -> TResu
 
 #[tokio::test]
 async fn typed_compact_submit_triggers_compaction_path() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -154,7 +154,7 @@ async fn typed_compact_submit_triggers_compaction_path() -> TResult {
 
 #[tokio::test]
 async fn interactive_loop_unknown_slash_emits_warning_and_continues() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -185,7 +185,7 @@ async fn interactive_loop_unknown_slash_emits_warning_and_continues() -> TResult
 
 #[tokio::test]
 async fn recognized_slash_commands_not_persisted_as_session_turn_messages() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -213,7 +213,7 @@ async fn recognized_slash_commands_not_persisted_as_session_turn_messages() -> T
 
 #[tokio::test]
 async fn manual_compaction_failure_is_not_surfaced_as_warning() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         run_compaction_fail: true,
         bus: bus.clone(),
@@ -255,7 +255,7 @@ async fn manual_compaction_failure_is_not_surfaced_as_warning() -> TResult {
 
 #[tokio::test]
 async fn slash_commands_reuse_command_palette_action_handlers() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -292,7 +292,7 @@ async fn slash_commands_reuse_command_palette_action_handlers() -> TResult {
 
 #[tokio::test]
 async fn command_palette_models_action_opens_inline_model_picker() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -320,7 +320,7 @@ async fn command_palette_models_action_opens_inline_model_picker() -> TResult {
 
 #[tokio::test]
 async fn manual_compaction_slash_works_with_turn_processing() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()

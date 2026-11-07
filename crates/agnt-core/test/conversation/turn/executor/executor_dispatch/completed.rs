@@ -9,7 +9,7 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
     let temp_dir = tempfile::tempdir()?;
     let session_id = "test-dispatch-completed";
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut collector = BusEventCollector::subscribe(&bus);
     let mut executor = make_executor(
         &config,
@@ -75,7 +75,7 @@ async fn dispatch_completed_turn_skips_the_assistant_message_when_deltas_were_em
     let temp_dir = tempfile::tempdir()?;
     let session_id = "test-dispatch-completed-streamed";
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut collector = BusEventCollector::subscribe(&bus);
     let mut executor = make_executor(
         &config,
@@ -124,7 +124,7 @@ async fn dispatch_completed_turn_without_a_session_skips_token_tracking() -> Res
         &config,
         &mut memory_state,
         super::test_utils::shared_mock_model(),
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

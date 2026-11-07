@@ -7,10 +7,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::bus::{BroadcastRx, Bus, CompactionRx, UiEventRx};
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::protocol::events::SystemEvent;
+use agnt_runtime::bus::{BroadcastRx, Bus, CompactionRx, UiEventRx};
 use agnt_runtime::config::Config;
+use agnt_runtime::protocol::events::SystemEvent;
 use rig::DynModel;
 use rig::operation::Completion;
 use rig::test_utils::MockCompletionModel;
@@ -40,9 +40,9 @@ impl BusEventCollector {
         loop {
             match rx.try_recv() {
                 Ok(event) => events.push(event),
-                Err(crate::bus::TryRecvError::Empty) => break,
-                Err(crate::bus::TryRecvError::Lagged(_)) => continue,
-                Err(crate::bus::TryRecvError::Closed) => break,
+                Err(agnt_runtime::bus::TryRecvError::Empty) => break,
+                Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
+                Err(agnt_runtime::bus::TryRecvError::Closed) => break,
             }
         }
     }
@@ -106,7 +106,7 @@ impl rig::tool::Tool for CancellingTool {
             let _ = self
                 .bus
                 .cancel()
-                .send(crate::bus::CancelEvent::Requested)
+                .send(agnt_runtime::bus::CancelEvent::Requested)
                 .await;
         }
         Ok("cancelling_tool_result".to_string())
@@ -193,8 +193,8 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _ui_event: &crate::bus::UiEventTx,
-        _cancel: &crate::bus::CancelTx,
+        _ui_event: &agnt_runtime::bus::UiEventTx,
+        _cancel: &agnt_runtime::bus::CancelTx,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = PermissionDecision::Allow;
         async move { decision }

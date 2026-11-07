@@ -3,7 +3,6 @@
 //! Holds the imports and the helpers every topical transcript test file needs.
 //! Sub-files pull them in with `use super::*;`.
 
-pub(super) use agnt_core::protocol::events::ToolCall;
 pub(super) use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -11,6 +10,7 @@ pub(super) use agnt_render::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, ToolName,
 };
 pub(super) use agnt_render::transcript::renderer::ItemStatus;
+pub(super) use agnt_runtime::protocol::events::ToolCall;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

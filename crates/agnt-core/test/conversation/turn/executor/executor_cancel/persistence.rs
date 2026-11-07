@@ -45,7 +45,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut ui_event_rx = bus.ui_event().subscribe();
 
     let handle = rig::tool::server::ToolServer::new()
@@ -81,7 +81,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -174,7 +174,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     // The cancelling tool publishes a CancelEvent from inside `call()` (after
     // the hook subscribes to `bus.cancel()`), driving the cancelled path
     // deterministically.
@@ -209,7 +209,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -276,7 +276,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
         ],
     ]);
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     // The cancelling tool publishes a CancelEvent from inside `call()` (after
     // the hook subscribes to `bus.cancel()`), driving the cancelled path
     // deterministically.
@@ -311,7 +311,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor

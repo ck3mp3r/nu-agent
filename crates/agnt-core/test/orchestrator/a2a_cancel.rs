@@ -11,7 +11,7 @@ struct CancellableBlockingRuntime {
     cancelled: Arc<AtomicBool>,
     started_tx: tokio::sync::watch::Sender<bool>,
     prompts: Arc<Mutex<Vec<String>>>,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CancellableBlockingRuntime {
@@ -22,7 +22,7 @@ impl CancellableBlockingRuntime {
             cancelled: Arc::new(AtomicBool::new(false)),
             started_tx,
             prompts: Arc::new(Mutex::new(Vec::new())),
-            bus: crate::bus::Bus::default(),
+            bus: agnt_runtime::bus::Bus::default(),
         }
     }
 
@@ -36,7 +36,7 @@ impl CancellableBlockingRuntime {
         self.cancelled.load(Ordering::SeqCst)
     }
 
-    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         self.bus = bus;
         self
     }
@@ -59,7 +59,7 @@ impl CoreRuntime for CancellableBlockingRuntime {
         loop {
             tokio::select! {
                 recv = cancel_rx.recv() => {
-                    if matches!(recv, Ok(crate::bus::CancelEvent::Requested) | Err(crate::bus::ChannelError::Lagged { .. })) {
+                    if matches!(recv, Ok(agnt_runtime::bus::CancelEvent::Requested) | Err(agnt_runtime::bus::ChannelError::Lagged { .. })) {
                         self.cancelled.store(true, Ordering::SeqCst);
                         let _ = self
                             .bus
@@ -117,7 +117,7 @@ crate::default_mcp!(CancellableBlockingRuntime);
 #[tokio::test]
 async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
     let block = Arc::new(AtomicBool::new(false));
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = CancellableBlockingRuntime::new(Arc::clone(&block)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&[])
         .with_expected_external_prompts(1)
@@ -173,7 +173,7 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
 #[tokio::test]
 async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult {
     let block_first_turn = Arc::new(AtomicBool::new(false));
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&[])
         .with_expected_external_prompts(1)
@@ -231,7 +231,7 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult
 #[tokio::test]
 async fn matching_a2a_task_cancel_stops_running_turn() -> TResult {
     let block = Arc::new(AtomicBool::new(false));
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = CancellableBlockingRuntime::new(Arc::clone(&block)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&[])
         .with_expected_external_prompts(1)

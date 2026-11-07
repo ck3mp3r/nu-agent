@@ -8,9 +8,9 @@ pub(super) use crate::interaction::dispatch::dispatch_terminal_event;
 pub(super) use crate::interaction::input::{TerminalEvent, TerminalKey};
 pub(super) use crate::state::*;
 pub(super) use crate::test_support::open_command_palette_for_test;
-pub(super) use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
-pub(super) use agnt_core::protocol::contracts::SharedUiAction;
-pub(super) use agnt_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
+pub(super) use agnt_runtime::orchestrator::events::{OrchestratorEvent, UiRequest, UiStateEvent};
+pub(super) use agnt_runtime::protocol::contracts::SharedUiAction;
+pub(super) use agnt_runtime::protocol::picker::{AgentPickerOption, ModelPickerOption};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -6,7 +6,7 @@
 use super::*;
 
 /// A `ToolInfra` with no tools and the given bus.
-pub(super) fn tool_infra(bus: crate::bus::Bus) -> executor::ToolInfra {
+pub(super) fn tool_infra(bus: agnt_runtime::bus::Bus) -> executor::ToolInfra {
     executor::ToolInfra {
         store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
@@ -33,9 +33,9 @@ pub(super) fn executor<'a>(
     TurnExecutor::new(
         config,
         memory_state,
-        tool_infra(crate::bus::create_bus()),
+        tool_infra(agnt_runtime::bus::Bus::default()),
         shared_handle(MockCompletionModel::text("unused")),
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     )
 }
 
@@ -44,7 +44,7 @@ pub(super) fn executor<'a>(
 pub(super) fn executor_with_bus<'a>(
     config: &'a Config,
     memory_state: &'a mut MemoryState,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 ) -> TurnExecutor<'a, MemoryState> {
     TurnExecutor::new(
         config,
@@ -98,7 +98,7 @@ pub(super) async fn stored(memory_state: &MemoryState, session_id: &str) -> Resu
 pub(super) fn with_tool<'a, T>(
     ctx: TurnContext<'a>,
     config: &'a Config,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
     tool: T,
     name: &str,
 ) -> Result<TurnContext<'a>>

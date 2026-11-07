@@ -10,7 +10,7 @@ struct LongRunningAgentRuntime {
     active: Arc<AtomicBool>,
     block_first_turn: Arc<AtomicBool>,
     active_model: String,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
     turn_started_tx: tokio::sync::watch::Sender<bool>,
 }
 
@@ -23,7 +23,7 @@ impl LongRunningAgentRuntime {
             active: Arc::new(AtomicBool::new(false)),
             block_first_turn,
             active_model: "openai/gpt-4o-mini".to_string(),
-            bus: crate::bus::Bus::default(),
+            bus: agnt_runtime::bus::Bus::default(),
             turn_started_tx,
         }
     }
@@ -34,7 +34,7 @@ impl LongRunningAgentRuntime {
         self.turn_started_tx.subscribe()
     }
 
-    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         self.bus = bus;
         self
     }
@@ -60,7 +60,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
             let mut cancel_rx = self.bus.cancel().subscribe();
             loop {
                 tokio::select! {
-                    Ok(crate::bus::CancelEvent::Requested) = cancel_rx.recv() => {
+                    Ok(agnt_runtime::bus::CancelEvent::Requested) = cancel_rx.recv() => {
                         self.active.store(false, Ordering::SeqCst);
                         return Err(LabeledError::new("LLM call cancelled"));
                     }
@@ -193,7 +193,7 @@ impl ResponsiveAgentSwitchUi {
         self.drained_tx.subscribe()
     }
 
-    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let quit = Arc::clone(&self.quit);
         let completed_count = Arc::clone(&self.completed_count);
         let expected_completions = self.expected_completions;
@@ -225,7 +225,7 @@ impl ResponsiveAgentSwitchUi {
                         }
                     }
                     Ok(event) = ui_state_rx.recv() => {
-                        if let crate::orchestrator::UiStateEvent::SetActiveAgentIdentity(identity) = event {
+                        if let agnt_runtime::orchestrator::events::UiStateEvent::SetActiveAgentIdentity(identity) = event {
                             *active_agent_identity.lock().expect("active agent identity lock") = Some(identity);
                         }
                     }
@@ -291,7 +291,7 @@ impl UserInputUi for ResponsiveAgentSwitchUi {
 #[tokio::test]
 async fn agent_switch_sends_command_and_updates_ui_identity()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = AgentSwitchRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -327,7 +327,7 @@ async fn agent_switch_sends_command_and_updates_ui_identity()
 #[tokio::test]
 async fn agent_switch_failure_warns_and_keeps_previous_agent()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Err("agent not found".to_string())),
         bus: bus.clone(),
@@ -364,7 +364,7 @@ async fn agent_switch_failure_warns_and_keeps_previous_agent()
 #[tokio::test]
 async fn agent_switch_while_worker_active_is_queued_for_next_turn()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = ResponsiveAgentSwitchUi::new(&["first"], &["research-agent"], 1).with_bus(bus.clone());
@@ -410,7 +410,7 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn()
 #[tokio::test]
 async fn queued_agent_switch_last_write_wins()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui =

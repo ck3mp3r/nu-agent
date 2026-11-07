@@ -2,10 +2,10 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-use crate::bus::{RequestCancel, RequestPermission, UiEventTx, create_bus};
+use crate::bus::{Bus, RequestCancel, RequestPermission, UiEventTx};
+use crate::protocol::event::PermissionRequestContext;
 use crate::protocol::events::SystemEvent;
 use agnt_kernel::bus::{CancelEvent, CancelTx, ChannelError};
-use agnt_runtime::protocol::event::PermissionRequestContext;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -31,7 +31,7 @@ fn permission_context() -> PermissionRequestContext {
 #[tokio::test]
 async fn ui_event_request_permission() -> Result<()> {
     // -- Case 1: a subscriber receives the event with the returned id
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut ui_event_rx = bus.ui_event().subscribe();
     let context = permission_context();
 
@@ -85,7 +85,7 @@ async fn ui_event_request_permission() -> Result<()> {
 #[tokio::test]
 async fn request_cancel() -> Result<()> {
     // -- Case 1: a subscriber receives the cancel request
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut cancel_rx = bus.cancel().subscribe();
     bus.cancel().request_cancel().await?;
     let event = timeout(Duration::from_millis(100), cancel_rx.recv())

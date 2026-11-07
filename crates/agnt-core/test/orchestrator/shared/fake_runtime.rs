@@ -1,7 +1,7 @@
 use agnt_kernel::CompactionSource;
 
 use super::*;
-use crate::protocol::events::compaction_source_text;
+use agnt_runtime::protocol::events::compaction_source_text;
 
 #[derive(Default)]
 pub(crate) struct FakeRuntime {
@@ -12,7 +12,7 @@ pub(crate) struct FakeRuntime {
     pub(crate) switched_models: Vec<String>,
     pub(crate) switch_model_result: Option<Result<String, String>>,
     pub(crate) session_id: Option<String>,
-    pub(crate) bus: crate::bus::Bus,
+    pub(crate) bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for FakeRuntime {
@@ -123,7 +123,7 @@ impl SessionPersistence for FakeRuntime {
 #[derive(Default)]
 pub(crate) struct FakeValueRuntime {
     pub(crate) prompts: Vec<String>,
-    pub(crate) bus: crate::bus::Bus,
+    pub(crate) bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for FakeValueRuntime {

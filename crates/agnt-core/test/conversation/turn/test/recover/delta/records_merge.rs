@@ -22,7 +22,7 @@ async fn persist_turn_delta_appends_the_closed_delta() -> Result<()> {
         Message::user("q2"),
         assistant_tool_calls(&["tc1"])?,
     ];
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut ui_events = bus.ui_event().subscribe();
 
     // -- Exec

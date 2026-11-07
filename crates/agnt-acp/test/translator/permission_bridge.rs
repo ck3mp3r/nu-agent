@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use agnt_core::bus::RequestPermission;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::bus::RequestPermission;
 use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::events::SystemEvent;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -15,7 +15,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn test_translator_drain_routes_permission_request_to_bridge() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
@@ -47,7 +47,7 @@ async fn test_translator_drain_routes_permission_request_to_bridge() -> Result<(
 #[tokio::test]
 async fn test_translator_drain_resolves_pending_permission_with_client_decision() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
@@ -73,7 +73,7 @@ async fn test_translator_drain_resolves_pending_permission_with_client_decision(
 #[tokio::test]
 async fn test_translator_drain_denies_pending_permission_when_bus_closes() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
@@ -94,7 +94,7 @@ async fn test_translator_drain_denies_pending_permission_when_bus_closes() -> Re
 #[tokio::test]
 async fn test_translator_drain_denies_pending_permission_when_sink_fails() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::failing();
     let mut translator = translator();
@@ -121,7 +121,7 @@ async fn test_translator_drain_denies_pending_permission_when_sink_fails() -> Re
 #[tokio::test]
 async fn test_translator_run_turn_denies_pending_permission_when_turn_completes() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut rx = bus.ui_event().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();

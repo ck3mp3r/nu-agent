@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_permission_requested_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequested])];
     let handles = spawn(&bus, &hooks, &process);
@@ -47,7 +47,7 @@ async fn test_hooks_runner_permission_requested_invokes_with_payload() -> Result
 async fn test_hooks_runner_permission_requested_payload_omits_pre_authorize_display() -> Result<()>
 {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequested])];
     let handles = spawn(&bus, &hooks, &process);
@@ -77,7 +77,7 @@ async fn test_hooks_runner_permission_requested_payload_omits_pre_authorize_disp
 #[tokio::test]
 async fn test_hooks_runner_permission_requested_stamps_session_id() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequested])];
     let handles = spawn(&bus, &hooks, &process);
@@ -118,7 +118,7 @@ async fn test_hooks_runner_permission_requested_stamps_session_id() -> Result<()
 #[tokio::test]
 async fn test_hooks_runner_permission_requested_ignores_tool_preview() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequested])];
     let handles = spawn(&bus, &hooks, &process);

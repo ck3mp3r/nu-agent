@@ -84,7 +84,7 @@ impl PersonaManager for PersonaState {
         agents_dir: &std::path::Path,
         agents_config: &agnt_runtime::config::AgentsConfig,
     ) -> Result<SwitchAgentResult, String> {
-        use crate::protocol::persona::{
+        use agnt_runtime::protocol::persona::{
             FrontMatterParser, FsPersonaResolver, PersonaFileResolver,
             PulldownCmarkFrontMatterParser, interpret_front_matter,
         };

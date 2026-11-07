@@ -9,15 +9,16 @@ use agnt_a2a::{
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, CompactionRx, ExternalRx, UiStateRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
+use crate::orchestrator::SourceChannels;
 pub(crate) use crate::orchestrator::loop_impl::WORKER_CMD_CAPACITY;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
-use crate::orchestrator::{
-    OrchestratorEvent, SourceChannels, UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
+use agnt_runtime::bus::{Bus, CompactionRx, ExternalRx, UiStateRx};
+use agnt_runtime::orchestrator::events::{
+    OrchestratorEvent, UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
 };
 use agnt_runtime::protocol::event::PermissionDecisionSubmission;
 
@@ -228,7 +229,7 @@ impl Harness {
         let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
         let (blocking_tx, blocking_response_rx) = mpsc::channel::<UiRequestResponse>(256);
         let (concurrent_tx, concurrent_response_rx) = mpsc::channel::<UiRequestResponse>(256);
-        let bus = create_bus();
+        let bus = Bus::default();
         let external_rx = bus.external().subscribe();
         let compaction_rx = bus.compaction().subscribe();
         let (_cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();

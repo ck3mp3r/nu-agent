@@ -1,7 +1,7 @@
 use agnt_kernel::CompactionSource;
 
 use super::*;
-use crate::protocol::events::SystemEvent;
+use agnt_runtime::protocol::events::SystemEvent;
 
 // ---------------------------------------------------------------------------
 // Compaction dispatch

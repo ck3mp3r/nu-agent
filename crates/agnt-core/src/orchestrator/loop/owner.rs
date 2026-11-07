@@ -9,15 +9,15 @@ use crate::orchestrator::loop_impl::{WORKER_CMD_CAPACITY, run_orchestrator_loop}
 use crate::orchestrator::router::{CommandRouter, DispatchSources};
 use crate::orchestrator::stages::OrchestrationContext;
 use crate::orchestrator::turn_outcome::TurnOutcome;
-use crate::orchestrator::{
-    AgentSwitchHook, LoopConfig, NoAgentSwitchHook, OrchestratorEvent, ProductionStages,
-    UiRequestResponse, UiStateEvent, WorkerCommand,
-};
-use crate::protocol::contracts::CoreRuntime;
-use crate::protocol::mcp_management::McpManagement;
-use crate::protocol::model_switching::ModelSwitching;
-use crate::protocol::session_management::{SessionPersistence, SessionState};
+use crate::orchestrator::{AgentSwitchHook, LoopConfig, NoAgentSwitchHook, ProductionStages};
+use crate::session::management::{SessionPersistence, SessionState};
 use agnt_kernel::bus::SessionEvent;
+use agnt_runtime::orchestrator::events::{
+    OrchestratorEvent, UiRequestResponse, UiStateEvent, WorkerCommand,
+};
+use agnt_runtime::protocol::McpManagement;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 
 use super::sources::{LoopContext, LoopSources, SourceChannels};
 

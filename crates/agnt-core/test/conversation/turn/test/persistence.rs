@@ -30,7 +30,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         agent: String::new(),
         has_session: false,
         dyn_model: shared_handle(model),
-        compaction: test_compaction_config(crate::bus::create_bus()),
+        compaction: test_compaction_config(agnt_runtime::bus::Bus::default()),
     };
     let input = TurnInput {
         prompt: "Hello".to_string(),
@@ -50,7 +50,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         last_total_tokens: default_last_total_tokens(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
-        bus: crate::bus::create_bus(),
+        bus: agnt_runtime::bus::Bus::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };
     let config = Config::default();

@@ -146,8 +146,8 @@ async fn agent_picker_refresh_error_warns() {
 }
 
 /// One persona summary for the stage fixtures.
-fn persona_summary(name: &str) -> crate::protocol::persona::PersonaSummary {
-    crate::protocol::persona::PersonaSummary {
+fn persona_summary(name: &str) -> agnt_runtime::protocol::persona::PersonaSummary {
+    agnt_runtime::protocol::persona::PersonaSummary {
         name: name.to_string(),
         description: None,
         builtin: false,

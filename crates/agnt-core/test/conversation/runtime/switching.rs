@@ -3,9 +3,9 @@
 
 use super::harness::*;
 use super::*;
-use crate::protocol::contracts::McpUsabilityState;
-use crate::protocol::mcp_management::McpManagement;
-use crate::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::McpManagement;
+use agnt_runtime::protocol::contracts::McpUsabilityState;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 use agnt_runtime::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::client::McpToolDefinition;

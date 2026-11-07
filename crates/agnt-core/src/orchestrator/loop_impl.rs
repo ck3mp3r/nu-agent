@@ -10,18 +10,18 @@ use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
 use super::SourceChannels;
-use crate::bus::RequestCancel;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::{
-    DeferredPrompt, OrchestratorEvent, UiStateEvent, WorkerCommand, dispatch_compaction,
-    handle_external_cancel, handle_worker_result, recv_or_pending, reject_busy_task,
-    reject_superseded_task, submit_deferred_prompt,
+    DeferredPrompt, dispatch_compaction, handle_external_cancel, handle_worker_result,
+    recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
 };
-use crate::protocol::contracts::CoreRuntime;
-use crate::protocol::events::SystemEvent;
 use agnt_kernel::bus::{ChannelError, ExternalEvent, TurnEvent, TurnTx};
+use agnt_runtime::bus::RequestCancel;
+use agnt_runtime::orchestrator::events::{OrchestratorEvent, UiStateEvent, WorkerCommand};
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::events::SystemEvent;
 
 /// Capacity of the worker command channel. The test harness builds its worker
 /// channel from this constant, so a saturation test fills the real production

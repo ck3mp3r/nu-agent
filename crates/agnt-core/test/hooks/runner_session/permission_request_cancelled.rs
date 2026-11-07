@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_permission_request_cancelled_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequestCancelled])];
     let handles = spawn(&bus, &hooks, &process);
@@ -43,7 +43,7 @@ async fn test_hooks_runner_permission_request_cancelled_invokes_with_payload() -
 #[tokio::test]
 async fn test_hooks_runner_permission_request_cancelled_stamps_session_id() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequestCancelled])];
     let handles = spawn(&bus, &hooks, &process);
@@ -85,7 +85,7 @@ async fn test_hooks_runner_permission_request_cancelled_stamps_session_id() -> R
 async fn test_hooks_runner_permission_request_cancelled_ignores_other_permission_events()
 -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionRequestCancelled])];
     let handles = spawn(&bus, &hooks, &process);

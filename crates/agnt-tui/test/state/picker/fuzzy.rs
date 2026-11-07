@@ -1,5 +1,5 @@
 use super::*;
-use agnt_core::protocol::slash::SlashCommand;
+use agnt_runtime::protocol::slash::SlashCommand;
 
 /// Every picker payload kind filters through the one shared subsequence
 /// matcher: a query whose characters are not contiguous in the row still

@@ -7,12 +7,12 @@
 pub(super) use std::collections::HashMap;
 pub(super) use std::sync::{Arc, Mutex as StdMutex};
 
-pub(super) use crate::bus::Bus;
 pub(super) use crate::hook::permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PolicyPermissionResolver,
 };
-pub(super) use crate::protocol::events::SystemEvent;
+pub(super) use agnt_runtime::bus::Bus;
 pub(super) use agnt_runtime::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+pub(super) use agnt_runtime::protocol::events::SystemEvent;
 pub(super) use agnt_runtime::tools::authz::{
     PermissionAction, PermissionDecision as AuthzPermissionDecision, PermissionRuleMatch,
     PermissionsConfig, SessionGrantCache,
@@ -124,7 +124,7 @@ pub(super) fn deny_all_toml_config() -> PermissionsConfig {
 }
 
 /// Every event already queued on `rx`.
-pub(super) fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<SystemEvent> {
+pub(super) fn drain(rx: &mut agnt_runtime::bus::UiEventRx) -> Vec<SystemEvent> {
     let mut events = Vec::new();
     while let Ok(event) = rx.try_recv() {
         events.push(event);

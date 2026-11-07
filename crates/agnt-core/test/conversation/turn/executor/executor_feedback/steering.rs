@@ -37,7 +37,7 @@ async fn model_correctable_failure_steers_and_reruns_turn() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -115,7 +115,7 @@ async fn successful_feedback_retry_delivers_feedback_exactly_once() -> Result<()
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -203,7 +203,7 @@ async fn no_session_turn_gets_feedback_steering() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

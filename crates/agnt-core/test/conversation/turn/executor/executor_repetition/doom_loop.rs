@@ -34,7 +34,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
         .collect();
     let model = MockCompletionModel::from_stream_turns(turns);
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
 
     let mut executor = TurnExecutor::new(
@@ -62,7 +62,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

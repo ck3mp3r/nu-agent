@@ -10,11 +10,11 @@
 use std::sync::Arc;
 
 use crate::conversation::managers::SessionManager;
-use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, UserContent,
 };
 use agnt_runtime::hook::turn_tools::TurnToolRecord;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use agnt_runtime::session::CachedMemory;
 
 use super::core::TurnExecutor;

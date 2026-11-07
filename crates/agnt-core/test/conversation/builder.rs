@@ -14,8 +14,8 @@ use super::{
     builtin_tool_definitions, merge_compaction_configs, messaging_tool_definitions,
     orchestrator_tool_definitions,
 };
-use crate::protocol::persona::PersonaSummary;
 use agnt_runtime::config::CompactionConfig;
+use agnt_runtime::protocol::persona::PersonaSummary;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

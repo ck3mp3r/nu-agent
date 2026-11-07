@@ -2,9 +2,9 @@ use std::time::{Duration, Instant};
 
 use crate::interaction::reducer::reduce;
 use crate::state::*;
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::McpUsabilityState;
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
+use agnt_runtime::orchestrator::events::UiStateEvent;
+use agnt_runtime::protocol::contracts::McpUsabilityState;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

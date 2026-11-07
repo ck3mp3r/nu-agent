@@ -1,8 +1,8 @@
 //! `FilteredToolProxy` — a proxy tool that forwards `call` to an existing
 //! `ToolServerHandle` while providing a pre-filtered `ToolDefinition`.
 
-use crate::bus::Bus;
 use crate::types::{ToolDefinition, ToolName};
+use agnt_runtime::bus::Bus;
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult};
 
 /// A proxy tool that forwards `call` to an existing `ToolServerHandle`

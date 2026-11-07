@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn palette_models_does_not_bypass_shared_models_action_path() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -29,7 +29,7 @@ async fn palette_models_does_not_bypass_shared_models_action_path() -> TResult {
 
 #[tokio::test]
 async fn inline_model_picker_enter_switches_active_model_and_provider() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -65,7 +65,7 @@ async fn inline_model_picker_enter_switches_active_model_and_provider() -> TResu
 
 #[tokio::test]
 async fn model_switch_failure_keeps_previous_model_and_warns() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         switch_model_result: Some(Err("switch failed".to_string())),
         ..Default::default()
@@ -106,7 +106,7 @@ async fn model_switch_failure_keeps_previous_model_and_warns() -> TResult {
 
 #[tokio::test]
 async fn model_switch_uses_cached_startup_plugin_config() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -136,7 +136,7 @@ async fn model_switch_uses_cached_startup_plugin_config() -> TResult {
 
 #[tokio::test]
 async fn model_switch_updates_footer_active_model_identity_immediately() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -166,7 +166,7 @@ async fn model_switch_updates_footer_active_model_identity_immediately() -> TRes
 
 #[tokio::test]
 async fn model_switch_result_artifact_is_rendered() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -199,7 +199,7 @@ async fn model_switch_result_artifact_is_rendered() -> TResult {
 
 #[tokio::test]
 async fn next_turn_uses_newly_selected_model() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -230,7 +230,7 @@ async fn next_turn_uses_newly_selected_model() -> TResult {
 
 #[tokio::test]
 async fn model_switch_while_worker_active_is_queued_for_next_turn() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let active_pump_count = Arc::new(AtomicUsize::new(0));
@@ -283,7 +283,7 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() -> TResult {
 
 #[tokio::test]
 async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let active_pump_count = Arc::new(AtomicUsize::new(0));
@@ -332,7 +332,7 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() -
 
 #[tokio::test]
 async fn queued_model_switch_last_write_wins() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let active_pump_count = Arc::new(AtomicUsize::new(0));
@@ -381,7 +381,7 @@ async fn queued_model_switch_last_write_wins() -> TResult {
 
 #[tokio::test]
 async fn queued_model_switch_failure_keeps_previous_model_and_warns() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn))
         .with_switch_model_result(Err("queued switch failed".to_string()))

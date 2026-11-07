@@ -1,15 +1,12 @@
-use crate::bus::{CompactionTx, UiStateTx};
-use crate::orchestrator::{
-    AgentSwitchHook, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
-};
-use crate::protocol::events::{SystemEvent, compaction_source_text};
-use crate::protocol::{
-    contracts::CoreRuntime,
-    mcp_management::McpManagement,
-    model_switching::ModelSwitching,
-    session_management::{SessionPersistence, SessionState},
-};
+use crate::orchestrator::{AgentSwitchHook, turn_outcome::TurnOutcome};
+use crate::session::management::{SessionPersistence, SessionState};
 use agnt_kernel::bus::{SessionTx, TurnTx};
+use agnt_runtime::bus::{CompactionTx, UiStateTx};
+use agnt_runtime::orchestrator::events::{UiRequest, UiRequestResponse, WorkerCommand};
+use agnt_runtime::protocol::McpManagement;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::events::{SystemEvent, compaction_source_text};
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 
 use tokio::sync::mpsc;
 
@@ -66,7 +63,7 @@ impl CommandRouter {
                 // travels with the command.
                 let _ = sources
                     .turn
-                    .send(crate::bus::TurnEvent::Started {
+                    .send(agnt_runtime::bus::TurnEvent::Started {
                         prompt: prompt.clone(),
                         task_id,
                     })
@@ -117,7 +114,7 @@ impl CommandRouter {
                 if runtime.current_session_id() == Some(key.as_str()) {
                     let _ = sources
                         .ui_state
-                        .send(crate::orchestrator::UiStateEvent::EnqueueExternalPrompt {
+                        .send(agnt_runtime::orchestrator::events::UiStateEvent::EnqueueExternalPrompt {
                             text: prompt,
                         })
                         .await;
@@ -127,7 +124,7 @@ impl CommandRouter {
                     Ok(snapshots) => {
                         let _ = sources
                             .session
-                            .send(crate::bus::SessionEvent::Switched {
+                            .send(agnt_runtime::bus::SessionEvent::Switched {
                                 from_session_id: None,
                                 to_session_id: key,
                             })
@@ -139,15 +136,15 @@ impl CommandRouter {
                         // the first entry.
                         let _ = sources
                             .ui_state
-                            .send(crate::orchestrator::UiStateEvent::ClearTranscript)
+                            .send(agnt_runtime::orchestrator::events::UiStateEvent::ClearTranscript)
                             .await;
                         let _ = sources
                             .ui_state
-                            .send(crate::orchestrator::UiStateEvent::PushStartupLogo)
+                            .send(agnt_runtime::orchestrator::events::UiStateEvent::PushStartupLogo)
                             .await;
                         let _ = sources
                             .ui_state
-                            .send(crate::orchestrator::UiStateEvent::HydrateTranscript {
+                            .send(agnt_runtime::orchestrator::events::UiStateEvent::HydrateTranscript {
                                 messages: snapshots,
                                 last_total_tokens: None,
                             })
@@ -162,7 +159,11 @@ impl CommandRouter {
                 // session's history.
                 let _ = sources
                     .ui_state
-                    .send(crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text: prompt })
+                    .send(
+                        agnt_runtime::orchestrator::events::UiStateEvent::EnqueueExternalPrompt {
+                            text: prompt,
+                        },
+                    )
                     .await;
                 true
             }

@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Disabled,
@@ -45,7 +45,7 @@ async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() -
 
 #[tokio::test]
 async fn interactive_loop_marks_enable_failure_as_failed_state() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Failed,
@@ -88,7 +88,7 @@ async fn interactive_loop_marks_enable_failure_as_failed_state() -> TResult {
 
 #[tokio::test]
 async fn interactive_loop_marks_enable_success_as_enabled_state() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
         next_state: McpUsabilityState::Enabled,
@@ -132,7 +132,7 @@ async fn interactive_loop_marks_enable_success_as_enabled_state() -> TResult {
 #[tokio::test]
 async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_error()
 -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FailingMcpToggleRuntime {
         toggles: Vec::new(),
         visible_count: 4,
@@ -178,7 +178,7 @@ async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_to
 
 #[tokio::test]
 async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_counts() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = SequencedMcpToggleRuntime {
         toggles: Vec::new(),
         states: [McpUsabilityState::Disabled, McpUsabilityState::Enabled]

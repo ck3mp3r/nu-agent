@@ -21,14 +21,14 @@ use std::sync::Arc;
 use agnt_a2a::{
     A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache, PeerDiscoveryImpl,
 };
-use agnt_core::bus::{AgentEvent, AgentTx, TurnEvent};
 use agnt_core::hooks::{
     HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
     spawn_agent_hook_runner, spawn_hook_runner,
 };
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::session_management::SessionPersistence;
+use agnt_core::session::management::SessionPersistence;
+use agnt_runtime::bus::{AgentEvent, AgentTx, TurnEvent};
 use agnt_runtime::config::{PluginConfig, ResolvedHook};
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 use nu_protocol::Value;
 use tokio::task::JoinHandle;

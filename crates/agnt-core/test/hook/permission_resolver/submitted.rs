@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use super::*;
 
-use crate::bus::RequestCancel;
+use agnt_runtime::bus::RequestCancel;
 
 /// A submitted decision must reach the bus with the request id, the decision,
 /// and the identity of the rule that produced the prompt.
@@ -264,7 +264,7 @@ async fn test_hook_permission_resolver_submitted_absent_on_cancel() -> Result<()
 // region:    --- Test Support
 
 /// Every event already queued on `rx`.
-fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<SystemEvent> {
+fn drain(rx: &mut agnt_runtime::bus::UiEventRx) -> Vec<SystemEvent> {
     let mut events = Vec::new();
     while let Ok(event) = rx.try_recv() {
         events.push(event);

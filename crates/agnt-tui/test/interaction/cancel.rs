@@ -4,7 +4,7 @@ use crate::{
     interaction::{cancel::CancelController, reducer::reduce},
     state::{AppState, InputState},
 };
-use agnt_core::protocol::events::{Key, SystemEvent};
+use agnt_runtime::protocol::events::{Key, SystemEvent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

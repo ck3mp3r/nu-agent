@@ -22,7 +22,7 @@ async fn cancel_grace_captures_the_cancelled_history() -> Result<()> {
         ],
     ]);
     let config = Config::default();
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let ctx = make_turn_context(shared_handle(model), &config, bus.clone())
         .with_cancel_grace(Duration::from_millis(50));
     let ctx = with_tool(

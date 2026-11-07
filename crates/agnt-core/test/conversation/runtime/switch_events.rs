@@ -9,7 +9,7 @@
 use super::harness::*;
 use super::switch_support::*;
 use super::*;
-use crate::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 
 /// A persona whose front matter selects `ollama/large`.
 const LARGE_PERSONA: &str = r#"---
@@ -42,19 +42,19 @@ You are the unresolvable agent.
 type Switch = (String, Option<String>, String);
 
 /// The switch events currently buffered on the fixture's session channel.
-fn take_switches(fixture: &RuntimeFixture, rx: &mut crate::bus::SessionRx) -> Vec<Switch> {
+fn take_switches(fixture: &RuntimeFixture, rx: &mut agnt_runtime::bus::SessionRx) -> Vec<Switch> {
     let _ = fixture;
     let mut switches = Vec::new();
     loop {
         match rx.try_recv() {
-            Ok(crate::bus::SessionEvent::AgentSwitched { from, to }) => {
+            Ok(agnt_runtime::bus::SessionEvent::AgentSwitched { from, to }) => {
                 switches.push(("agent_switched".to_string(), from, to));
             }
-            Ok(crate::bus::SessionEvent::ModelSwitched { from, to }) => {
+            Ok(agnt_runtime::bus::SessionEvent::ModelSwitched { from, to }) => {
                 switches.push(("model_switched".to_string(), Some(from), to));
             }
             Ok(_) => {}
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }

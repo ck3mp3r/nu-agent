@@ -45,7 +45,9 @@ fn position_selection_on_matching_id() -> Result<()> {
 
     // -- Exec
     matching.reduce_ui_state_event(
-        agnt_core::orchestrator::UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models),
+        agnt_runtime::orchestrator::events::UiStateEvent::ExecuteSharedUiAction(
+            SharedUiAction::Models,
+        ),
     );
 
     // -- Check: the selection lands on the active identity row.
@@ -65,7 +67,9 @@ fn position_selection_on_matching_id() -> Result<()> {
 
     // -- Exec
     no_match.reduce_ui_state_event(
-        agnt_core::orchestrator::UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models),
+        agnt_runtime::orchestrator::events::UiStateEvent::ExecuteSharedUiAction(
+            SharedUiAction::Models,
+        ),
     );
 
     // -- Check: the selection stays at 0.

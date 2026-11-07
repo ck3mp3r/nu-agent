@@ -31,16 +31,16 @@ use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 use rig_memory::CompactReason;
 
-use crate::bus::{Bus, CompactionTx, UiEventTx};
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
-use crate::protocol::events::{
-    SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
-};
 use crate::types::ToolName;
 use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
+use agnt_runtime::bus::{Bus, CompactionTx, UiEventTx};
 use agnt_runtime::config::defaults;
 use agnt_runtime::llm::{PricedOutcome, PricingSkip, computed_cost};
+use agnt_runtime::protocol::events::{
+    SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
+};
 use agnt_runtime::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
@@ -674,7 +674,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // [`call_line_render_for`](agnt_runtime::tools::handler::builtin_tool::call_line_render_for):
             // the builtin's tailored render when the name parses as a builtin
             // kind, otherwise the generic JSON summary
-            // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
+            // [`CallLine::from_json_summary`](agnt_runtime::protocol::tool_args::CallLine::from_json_summary)
             // of the raw arguments. The fallback is display-only: the TUI
             // matches the pending call by `ToolCallId`, never by this text.
             let call = ToolCall::new(tool_name.clone(), source, args.clone());

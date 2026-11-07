@@ -5,14 +5,14 @@
 
 use super::*;
 
-use crate::protocol::events::SystemKind;
+use agnt_runtime::protocol::events::SystemKind;
 
 /// The warning `persist_turn_delta` publishes when the store moved mid-turn.
 pub(super) const MOVED_MID_TURN_WARNING: &str =
     "Turn stopped: the session log moved mid-turn; this turn's work was not saved";
 
 /// The texts of every warning `SystemMessage` the executor published.
-pub(super) fn warnings(rx: &mut crate::bus::UiEventRx) -> Vec<String> {
+pub(super) fn warnings(rx: &mut agnt_runtime::bus::UiEventRx) -> Vec<String> {
     std::iter::from_fn(|| rx.try_recv().ok())
         .filter_map(|event| match event {
             SystemEvent::SystemMessage {

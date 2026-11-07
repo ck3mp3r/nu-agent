@@ -24,7 +24,7 @@ fn turn_executor_new_constructs_without_panic() {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
     // Construction succeeded — no panic.
 }
@@ -40,7 +40,7 @@ fn turn_executor_exposes_memory_state() {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // Verify memory_state is accessible and last_total_tokens starts None
@@ -58,7 +58,7 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     assert!(executor.take_response_data().is_none());
@@ -91,7 +91,7 @@ async fn completed_turn_no_explicit_store_append_needed() -> Result<()> {
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -185,11 +185,11 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
             last_total_tokens: default_last_total_tokens(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor
@@ -231,7 +231,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let config = test_config();
     let session_id = "test-compaction-fires";
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut compaction_rx = bus.compaction().subscribe();
 
     // The compactor needs a model that streams a summary (a plain `text()` model
@@ -346,7 +346,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     while let Ok(ev) = compaction_rx.try_recv() {
         if matches!(
             ev,
-            crate::protocol::events::SystemEvent::CompactionRequested { source }
+            agnt_runtime::protocol::events::SystemEvent::CompactionRequested { source }
                 if source == agnt_kernel::CompactionSource::Auto
         ) {
             saw_requested = true;
@@ -409,11 +409,11 @@ async fn on_outcome_stores_total_tokens() -> Result<()> {
             last_total_tokens: last_total_tokens.clone(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     let result = executor

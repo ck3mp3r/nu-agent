@@ -29,7 +29,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     let session_id = "test-repetition-stop-surface";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
 
     // Subscribe BEFORE the turns run — broadcast sends are not buffered for
     // later subscribers. Raw SystemEvents are read from the ui_event channel in
@@ -72,7 +72,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
                 cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
-            test_compaction_config(crate::bus::create_bus()),
+            test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         let result = executor
             .execute(
@@ -136,7 +136,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     loop {
         match ui_event_rx.try_recv() {
             Ok(event) => ui_events.push(event),
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
@@ -178,7 +178,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
     let session_id = "test-repetition-stop-retry";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
 
     // Generous identical scripted turn supply; the exact consumption is
@@ -222,7 +222,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
                 cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
-            test_compaction_config(crate::bus::create_bus()),
+            test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         let result = executor
             .execute(
@@ -400,11 +400,11 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
                 last_total_tokens: default_last_total_tokens(),
                 turn_usage: crate::hook::TurnUsage::default(),
                 session_usage: crate::hook::TurnUsage::default(),
-                bus: crate::bus::create_bus(),
+                bus: agnt_runtime::bus::Bus::default(),
                 cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
-            test_compaction_config(crate::bus::create_bus()),
+            test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         let result = executor
             .execute(

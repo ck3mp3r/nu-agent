@@ -1,6 +1,6 @@
 //! Construction and tool-registration tests for `build_acp_runtime()`.
 
-use agnt_core::protocol::session_management::SessionPersistence;
+use agnt_core::session::management::SessionPersistence;
 use agnt_runtime::tools::handler::is_builtin_tool_name;
 
 use super::runtime_support::*;

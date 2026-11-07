@@ -45,7 +45,7 @@ async fn dispatch_user_cancel_without_a_reason_sends_the_notice_before_completed
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut collector = BusEventCollector::subscribe(&bus);
     let mut executor = make_executor(
         &config,
@@ -89,7 +89,7 @@ async fn dispatch_user_cancel_with_the_hook_reason_sends_the_notice_before_compl
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut collector = BusEventCollector::subscribe(&bus);
     let mut executor = make_executor(
         &config,

@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use agnt_kernel::bus::{CancelEvent, CancelTx, ChannelResult};
 
 use super::channel::UiEventTx;
+use crate::protocol::event::PermissionRequestContext;
 use crate::protocol::events::{RequestId, SystemEvent};
-use agnt_runtime::protocol::event::PermissionRequestContext;
 
 // region:    --- Support
 

@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_publishes_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook(
         "audit",

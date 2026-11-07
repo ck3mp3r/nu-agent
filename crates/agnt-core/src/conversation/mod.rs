@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod compaction;
+pub mod contracts;
 pub mod managers;
 pub mod mcp_helpers;
 pub mod mode_logic;

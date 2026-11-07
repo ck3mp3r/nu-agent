@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use rig::agent::DispatchAction;
 use rig::tool::{ToolExecutionError, ToolResult};
 
-use crate::bus::UiEventTx;
-use crate::protocol::events::{SystemEvent, SystemKind};
+use agnt_runtime::bus::UiEventTx;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::auth_error::McpAuthError;
 use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;

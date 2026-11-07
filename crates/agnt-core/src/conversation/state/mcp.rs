@@ -1,4 +1,4 @@
-use crate::protocol::contracts::McpUsabilityState;
+use agnt_runtime::protocol::contracts::McpUsabilityState;
 use std::sync::Arc;
 
 use crate::types::ToolDefinition;

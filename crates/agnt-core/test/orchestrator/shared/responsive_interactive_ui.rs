@@ -56,7 +56,7 @@ impl ResponsiveInteractiveUi {
         self.drained_tx.subscribe()
     }
 
-    pub(crate) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(crate) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let quit = Arc::clone(&self.quit);
         let completed_count = Arc::clone(&self.completed_count);
         let active = Arc::clone(&self.active);

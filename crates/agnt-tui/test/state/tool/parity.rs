@@ -129,7 +129,7 @@ fn live_entries(
 ) -> Result<Vec<TranscriptEntry>> {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let call = || {
-        agnt_core::protocol::events::ToolCall::new(
+        agnt_runtime::protocol::events::ToolCall::new(
             agnt_render::transcript::ir::ToolName(tool.to_string()),
             agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
@@ -142,7 +142,7 @@ fn live_entries(
     });
     coordinator.reduce_system_event(SystemEvent::ToolCompleted {
         call: call(),
-        outcome: agnt_core::protocol::events::ToolOutcome {
+        outcome: agnt_runtime::protocol::events::ToolOutcome {
             success: matches!(status, ToolStatus::Success),
             status,
             result: String::new(),

@@ -4,7 +4,7 @@ use crate::interaction::{
     reducer::reduce,
 };
 use crate::state::{AppState, InputMode, UiPhase};
-use agnt_core::protocol::events::{Key, SystemEvent};
+use agnt_runtime::protocol::events::{Key, SystemEvent};
 
 #[test]
 fn table_driven_key_mapping_to_the_system_vocabulary() {

@@ -133,7 +133,7 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     let mut h = JourneyHarness::new("journey-cancel-tool");
 
     // Turn 1: the tool executes and cancels the turn from within call().
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let model1 = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::tool_call(
@@ -222,7 +222,7 @@ async fn journey_session_reload_from_disk() -> Result<()> {
             &mut ms,
             no_tools(),
             shared_model,
-            test_utils::test_compaction_config(crate::bus::create_bus()),
+            test_utils::test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         let r = executor
             .execute(
@@ -257,7 +257,7 @@ async fn journey_session_reload_from_disk() -> Result<()> {
             &mut ms,
             no_tools(),
             shared_model,
-            test_utils::test_compaction_config(crate::bus::create_bus()),
+            test_utils::test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         let r = executor
             .execute(

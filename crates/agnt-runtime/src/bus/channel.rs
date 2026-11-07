@@ -7,7 +7,7 @@
 
 use agnt_kernel::bus::{BroadcastRx, BroadcastTx};
 
-use crate::orchestrator::UiStateEvent;
+use crate::orchestrator::events::UiStateEvent;
 use crate::protocol::events::SystemEvent;
 
 // region:    --- Level 2 Aliases

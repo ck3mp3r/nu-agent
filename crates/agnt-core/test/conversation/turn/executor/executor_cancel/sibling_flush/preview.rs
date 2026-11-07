@@ -34,7 +34,7 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     // Subscribe BEFORE driving the turn: broadcast sends are not buffered for
     // later subscribers.
     let mut ui_event_rx = bus.ui_event().subscribe();
@@ -64,7 +64,7 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

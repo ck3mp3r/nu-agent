@@ -36,14 +36,14 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
 
     use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
-    use crate::bus::CancelEvent;
+    use agnt_runtime::bus::CancelEvent;
     use agnt_runtime::tools::closure::ClosureRegistry;
     use agnt_runtime::tools::handler::McpToolRegistry;
 
     // -- cancelling tool (fires cancel after producing its result) ----------
     struct CancellingTool {
         output: &'static str,
-        bus: crate::bus::Bus,
+        bus: agnt_runtime::bus::Bus,
         fired: Arc<AtomicBool>,
     }
 
@@ -81,7 +81,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
     let session_id = "test-path-b-lkh";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let (bus,) = (crate::bus::create_bus(),);
+    let (bus,) = (agnt_runtime::bus::Bus::default(),);
 
     // Model: sub-turn 1 emits tool_call → tool executes (cancels after result).
     // Sub-turn 2 would normally proceed but cancel fires first.
@@ -204,7 +204,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
         ],
     ]);
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let handle = rig::tool::server::ToolServer::new()
         .tool(super::test_utils::CancellingTool::new(bus.clone()))
         .run();
@@ -235,7 +235,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

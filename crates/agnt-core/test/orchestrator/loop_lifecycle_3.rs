@@ -7,10 +7,10 @@
 use super::*;
 
 /// The `TurnEvent::Started` events a receiver holds, as `(prompt, task_id)`.
-fn started_turns(rx: &mut crate::bus::TurnRx) -> Vec<(String, Option<String>)> {
+fn started_turns(rx: &mut agnt_runtime::bus::TurnRx) -> Vec<(String, Option<String>)> {
     let mut started = Vec::new();
     while let Ok(event) = rx.try_recv() {
-        if let crate::bus::TurnEvent::Started { prompt, task_id } = event {
+        if let agnt_runtime::bus::TurnEvent::Started { prompt, task_id } = event {
             started.push((prompt, task_id));
         }
     }
@@ -20,7 +20,7 @@ fn started_turns(rx: &mut crate::bus::TurnRx) -> Vec<(String, Option<String>)> {
 #[tokio::test]
 async fn interactive_loop_publishes_exactly_one_turn_started_per_turn() -> TResult {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()

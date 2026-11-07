@@ -4,8 +4,8 @@
 //! helpers every topical doom-loop test file needs. Sub-files pull them in
 //! with `use super::*;`.
 
-pub(super) use crate::bus::{Bus, create_bus};
 pub(super) use crate::hook::doom_loop::{DOOM_LOOP_THRESHOLD, DoomLoopDetector};
+pub(super) use agnt_runtime::bus::Bus;
 pub(super) use rig::agent::DispatchAction;
 pub(super) use rig::error::ErrorKind;
 

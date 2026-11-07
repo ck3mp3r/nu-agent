@@ -7,8 +7,8 @@
 
 use super::*;
 
-use agnt_core::bus::TurnEvent;
 use agnt_core::hooks::HookProcessError;
+use agnt_runtime::bus::TurnEvent;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -83,7 +83,7 @@ async fn test_integration_hooks_zero_hooks_spawns_no_runner() -> Result<()> {
     let env = support::TestEnv::new().await?;
     env.write_default_config()?;
     let config = agnt_runtime::config::toml_config::load_from(&env.config_path())?;
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
 
     // -- Exec
@@ -124,7 +124,7 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
         env.llm().uri()
     ))?;
     let config = agnt_runtime::config::toml_config::load_from(&env.config_path())?;
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
     let config_dir = env
         .config_path()

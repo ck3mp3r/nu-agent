@@ -77,7 +77,7 @@ async fn attach_a2a_context_derives_prefixed_session_key()
         current_session_id: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut session_rx = bus.session().subscribe();
     let sources = dispatch_sources(&bus);
 
@@ -107,7 +107,7 @@ async fn attach_a2a_context_derives_prefixed_session_key()
         .try_recv()
         .map_err(|e| format!("session event should be published: {e:?}"))?;
     match event {
-        crate::bus::SessionEvent::Switched { to_session_id, .. } => {
+        agnt_runtime::bus::SessionEvent::Switched { to_session_id, .. } => {
             assert_eq!(to_session_id, expected_key);
         }
         other => panic!("expected SessionEvent::Switched, got {other:?}"),
@@ -128,7 +128,7 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         current_session_id: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut ui_state_rx = bus.ui_state().subscribe();
     let sources = dispatch_sources(&bus);
 
@@ -151,14 +151,14 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         .try_recv()
         .map_err(|e| format!("ui state event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::ClearTranscript => {}
+        agnt_runtime::orchestrator::events::UiStateEvent::ClearTranscript => {}
         _ => panic!("expected UiStateEvent::ClearTranscript for an empty snapshot list"),
     }
     let event = ui_state_rx
         .try_recv()
         .map_err(|e| format!("startup logo event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::PushStartupLogo => {}
+        agnt_runtime::orchestrator::events::UiStateEvent::PushStartupLogo => {}
         _ => panic!(
             "expected UiStateEvent::PushStartupLogo after the clear; a fresh session must mirror the /new visual"
         ),
@@ -167,7 +167,9 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         .try_recv()
         .map_err(|e| format!("transcript hydrate event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::HydrateTranscript { messages, .. } => {
+        agnt_runtime::orchestrator::events::UiStateEvent::HydrateTranscript {
+            messages, ..
+        } => {
             assert!(
                 messages.is_empty(),
                 "an empty snapshot list must hydrate an empty transcript"
@@ -179,7 +181,9 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         .try_recv()
         .map_err(|e| format!("incoming message event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text: message } => {
+        agnt_runtime::orchestrator::events::UiStateEvent::EnqueueExternalPrompt {
+            text: message,
+        } => {
             assert_eq!(message, "[A2A] fresh task");
         }
         _ => panic!("expected UiStateEvent::EnqueueExternalPrompt after the transcript hydrate"),
@@ -204,7 +208,7 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         current_session_id: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut ui_state_rx = bus.ui_state().subscribe();
     let sources = dispatch_sources(&bus);
 
@@ -227,14 +231,14 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         .try_recv()
         .map_err(|e| format!("ui state event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::ClearTranscript => {}
+        agnt_runtime::orchestrator::events::UiStateEvent::ClearTranscript => {}
         _ => panic!("expected UiStateEvent::ClearTranscript before the transcript hydrate"),
     }
     let event = ui_state_rx
         .try_recv()
         .map_err(|e| format!("startup logo event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::PushStartupLogo => {}
+        agnt_runtime::orchestrator::events::UiStateEvent::PushStartupLogo => {}
         _ => panic!(
             "expected UiStateEvent::PushStartupLogo after the clear; the logo must precede the hydration"
         ),
@@ -243,7 +247,7 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         .try_recv()
         .map_err(|e| format!("ui state event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::HydrateTranscript {
+        agnt_runtime::orchestrator::events::UiStateEvent::HydrateTranscript {
             messages,
             last_total_tokens,
         } => {
@@ -256,7 +260,9 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         .try_recv()
         .map_err(|e| format!("incoming message event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text: message } => {
+        agnt_runtime::orchestrator::events::UiStateEvent::EnqueueExternalPrompt {
+            text: message,
+        } => {
             assert_eq!(message, "[A2A] resumed task");
         }
         _ => panic!("expected UiStateEvent::EnqueueExternalPrompt after the transcript hydrate"),
@@ -279,7 +285,7 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
         current_session_id: Some(active_key),
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut ui_state_rx = bus.ui_state().subscribe();
     let mut session_rx = bus.session().subscribe();
     let sources = dispatch_sources(&bus);
@@ -303,7 +309,7 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
         .try_recv()
         .map_err(|e| format!("enqueue event should be published: {e:?}"))?;
     match event {
-        crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text } => {
+        agnt_runtime::orchestrator::events::UiStateEvent::EnqueueExternalPrompt { text } => {
             assert_eq!(text, "[A2A] same session task");
         }
         _ => panic!("expected UiStateEvent::EnqueueExternalPrompt as the only ui state event"),

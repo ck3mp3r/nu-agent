@@ -6,12 +6,12 @@ use crate::{
         UiPhase,
     },
 };
-use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::protocol::events::{Key, SystemEvent, SystemKind, ToolCall};
-use agnt_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
 use agnt_render::transcript::entry::{NoticeEntry, TranscriptEntry};
 use agnt_render::transcript::ir::NoticeKind;
+use agnt_runtime::protocol::contracts::SharedUiAction;
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::protocol::events::{Key, SystemEvent, SystemKind, ToolCall};
+use agnt_runtime::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
 use agnt_runtime::tools::handler::ToolSource;
 
 use std::time::Instant;
@@ -590,15 +590,15 @@ fn handle_submit(state: &mut AppState, submitted_text: String, facts: PromptFact
     }
 
     match parse_slash_command(&submitted_text) {
-        SlashParseResult::Command(agnt_core::protocol::slash::SlashCommand::Models) => {
+        SlashParseResult::Command(agnt_runtime::protocol::slash::SlashCommand::Models) => {
             state.queue_launch_request(SharedUiAction::Models);
             return true;
         }
-        SlashParseResult::Command(agnt_core::protocol::slash::SlashCommand::Agent) => {
+        SlashParseResult::Command(agnt_runtime::protocol::slash::SlashCommand::Agent) => {
             state.queue_launch_request(SharedUiAction::Agents);
             return true;
         }
-        SlashParseResult::Command(agnt_core::protocol::slash::SlashCommand::Session) => {
+        SlashParseResult::Command(agnt_runtime::protocol::slash::SlashCommand::Session) => {
             if let Some(session_id) = extract_session_id(&submitted_text) {
                 state.queue_switch_request(SwitchRequest::Session(session_id.to_string()));
             } else {
@@ -606,7 +606,7 @@ fn handle_submit(state: &mut AppState, submitted_text: String, facts: PromptFact
             }
             return true;
         }
-        SlashParseResult::Command(agnt_core::protocol::slash::SlashCommand::Theme) => {
+        SlashParseResult::Command(agnt_runtime::protocol::slash::SlashCommand::Theme) => {
             state.queue_launch_request(SharedUiAction::Themes);
             return true;
         }

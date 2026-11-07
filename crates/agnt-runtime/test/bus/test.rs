@@ -10,7 +10,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 fn tool_call(name: &str) -> ToolCall {
     ToolCall::new(
         ToolName(name.to_string()),
-        agnt_runtime::tools::handler::ToolSource::Unknown,
+        crate::tools::handler::ToolSource::Unknown,
         "{}",
     )
 }
@@ -19,7 +19,7 @@ fn tool_call(name: &str) -> ToolCall {
 #[tokio::test]
 async fn publish_reaches_subscribers() -> Result<()> {
     // -- Case 1: a cancel event reaches its subscriber
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.cancel().subscribe();
     bus.cancel()
         .send(CancelEvent::Requested)
@@ -32,7 +32,7 @@ async fn publish_reaches_subscribers() -> Result<()> {
     assert!(matches!(received, CancelEvent::Requested));
 
     // -- Case 2: a tool event reaches multiple subscribers
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx1 = bus.ui_event().subscribe();
     let mut rx2 = bus.ui_event().subscribe();
     bus.ui_event()
@@ -58,7 +58,7 @@ async fn publish_reaches_subscribers() -> Result<()> {
     }
 
     // -- Case 3: a session event reaches its subscriber
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.session().subscribe();
     bus.session()
         .send(SessionEvent::Started {
@@ -89,7 +89,7 @@ async fn publish_reaches_subscribers() -> Result<()> {
 #[tokio::test]
 async fn bus_channel_semantics() -> Result<()> {
     // -- Case 1: a subscriber only receives its own channel
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut cancel_rx = bus.cancel().subscribe();
 
     // No subscriber on the ui_event channel, so the send returns a SendError
@@ -108,7 +108,7 @@ async fn bus_channel_semantics() -> Result<()> {
     );
 
     // -- Case 2: a lagged subscriber continues after draining
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.cancel().subscribe();
     for _ in 0..65 {
         bus.cancel()
@@ -136,7 +136,7 @@ async fn bus_channel_semantics() -> Result<()> {
     assert!(matches!(next, CancelEvent::Requested));
 
     // -- Case 3: a cloned bus shares the same channels
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.cancel().subscribe();
     let clone = bus.clone();
     clone

@@ -13,7 +13,7 @@ use super::config_options::{manager_with_cache, models_cache};
 type Switch = (String, Option<String>, String);
 
 /// The switch events currently buffered on the session channel.
-fn take_switches(rx: &mut agnt_core::bus::SessionRx) -> Vec<Switch> {
+fn take_switches(rx: &mut agnt_runtime::bus::SessionRx) -> Vec<Switch> {
     let mut switches = Vec::new();
     loop {
         match rx.try_recv() {
@@ -24,7 +24,7 @@ fn take_switches(rx: &mut agnt_core::bus::SessionRx) -> Vec<Switch> {
                 switches.push(("model_switched".to_string(), Some(from), to));
             }
             Ok(_) => {}
-            Err(agnt_core::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
@@ -36,7 +36,7 @@ fn take_switches(rx: &mut agnt_core::bus::SessionRx) -> Vec<Switch> {
 fn subscribe(
     manager: &AcpSessionManager<MockRuntimeBuilder>,
     session_id: &str,
-) -> Result<agnt_core::bus::SessionRx> {
+) -> Result<agnt_runtime::bus::SessionRx> {
     Ok(manager
         .get_session(session_id)
         .ok_or("session must exist")?

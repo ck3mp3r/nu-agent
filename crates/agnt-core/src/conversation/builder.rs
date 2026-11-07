@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use nu_protocol::{LabeledError, Span};
 
-use crate::bus::Bus;
-use crate::protocol::persona::PersonaSummary;
 use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::CompactionConfig;
+use agnt_runtime::protocol::persona::PersonaSummary;
 use agnt_runtime::tools::audit::AuditLogger;
 use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_runtime::tools::executor::ToolExecutor;
@@ -477,7 +477,7 @@ pub fn assemble_tool_definitions(
     }
 
     let available_agents = {
-        use crate::protocol::persona::{FsPersonaResolver, PersonaLister};
+        use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaLister};
         let resolver = FsPersonaResolver::new(
             cwd.to_path_buf(),
             agents_dir.to_path_buf(),

@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
 
     // -- Exec
@@ -36,7 +36,7 @@ fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<
 #[test]
 fn test_mode_spawn_configured_hooks_with_empty_hooks_spawns_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
     let config = PluginConfig::default();
 

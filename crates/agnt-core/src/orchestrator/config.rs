@@ -5,10 +5,10 @@ use std::sync::Arc;
 use agnt_a2a::{A2aCompletionEvent, InMemoryTaskStore, IncomingTask};
 use tokio::sync::mpsc;
 
-use crate::bus::Bus;
 use crate::conversation::runtime::PendingPermissions;
-use crate::orchestrator::OrchestratorEvent;
-use crate::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::bus::Bus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 
 /// Configuration for the orchestrator loop.
 ///
@@ -48,7 +48,7 @@ impl Default for LoopConfig<fn(mpsc::Sender<OrchestratorEvent>), NoAgentSwitchHo
             a2a_task_rx: None,
             a2a_completion_rx: None,
             task_store: None,
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             hydration: None,
             on_agent_switch: None,
             event_sink: None,

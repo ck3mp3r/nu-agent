@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use agnt_core::protocol::contracts::ProgressUi;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::renderer::UiRenderer;
+use crate::renderer::UiRenderer;
+use agnt_runtime::protocol::contracts::ProgressUi;
+use agnt_runtime::protocol::events::SystemEvent;
 
 pub struct StderrProgressUi<R>
 where

@@ -7,7 +7,7 @@ use agnt_runtime::session::tool_status::ToolStatus;
 #[tokio::test]
 async fn test_hooks_runner_turn_started_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::TurnStarted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -39,7 +39,7 @@ async fn test_hooks_runner_turn_started_invokes_with_payload() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_turn_completed_invokes_with_tool_calls() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -78,7 +78,7 @@ async fn test_hooks_runner_turn_completed_invokes_with_tool_calls() -> Result<()
 #[tokio::test]
 async fn test_hooks_runner_tool_started_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::ToolStarted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -111,7 +111,7 @@ async fn test_hooks_runner_tool_started_invokes_with_payload() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_tool_completed_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::ToolCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -154,7 +154,7 @@ async fn test_hooks_runner_tool_completed_invokes_with_payload() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_skips_unsubscribed_events() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -196,7 +196,7 @@ async fn test_hooks_runner_skips_unsubscribed_events() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_invokes_in_arrival_order() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook(
         "audit",
@@ -238,7 +238,7 @@ async fn test_hooks_runner_invokes_in_arrival_order() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_continues_after_a_timeout() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::timing_out();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -284,7 +284,7 @@ async fn test_hooks_runner_continues_after_a_timeout() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_continues_after_a_failure() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::failing();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);

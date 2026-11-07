@@ -3,8 +3,8 @@
 use agent_client_protocol::schema::v1::{
     ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind,
 };
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
 use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::support::*;

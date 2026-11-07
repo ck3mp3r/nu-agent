@@ -70,7 +70,3 @@ impl Default for Bus {
         }
     }
 }
-
-pub fn create_bus() -> Bus {
-    Bus::default()
-}

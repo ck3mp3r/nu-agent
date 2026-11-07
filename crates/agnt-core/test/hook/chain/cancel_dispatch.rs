@@ -7,7 +7,7 @@
 
 use super::*;
 
-use crate::bus::RequestCancel;
+use agnt_runtime::bus::RequestCancel;
 use rig::tool::Tool;
 
 /// Resolver that allows every call: the wiring test drives the cancel arm, not
@@ -21,8 +21,8 @@ impl crate::hook::permission_resolver::AsyncPermissionResolver for AllowAllResol
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _ui_event: &crate::bus::UiEventTx,
-        _cancel: &crate::bus::CancelTx,
+        _ui_event: &agnt_runtime::bus::UiEventTx,
+        _cancel: &agnt_runtime::bus::CancelTx,
     ) -> crate::hook::permission_resolver::PermissionDecision {
         crate::hook::permission_resolver::PermissionDecision::Allow
     }

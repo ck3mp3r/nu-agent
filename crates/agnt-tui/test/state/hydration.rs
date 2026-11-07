@@ -8,11 +8,11 @@ use super::*;
 
 use crate::interaction::cancel::CancelController;
 use crate::interaction::reducer::reduce;
-use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::events::SystemEvent;
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::{Display, MessageRole};
 use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
+use agnt_runtime::protocol::events::SystemEvent;
 use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

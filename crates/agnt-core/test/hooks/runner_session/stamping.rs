@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_stamps_the_agent_context_on_every_envelope() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -38,7 +38,7 @@ async fn test_hooks_runner_stamps_the_agent_context_on_every_envelope() -> Resul
 #[tokio::test]
 async fn test_hooks_runner_stamps_session_id_from_started() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -80,7 +80,7 @@ async fn test_hooks_runner_stamps_session_id_from_started() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_runner_stamps_session_id_from_switched() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::TurnCompleted])];
     let handles = spawn(&bus, &hooks, &process);

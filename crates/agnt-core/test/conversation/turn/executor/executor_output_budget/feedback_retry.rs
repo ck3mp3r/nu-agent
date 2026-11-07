@@ -45,7 +45,7 @@ async fn prompt_wrapped_empty_output_length_reaches_feedback_retry() -> Result<(
         &config,
         &mut memory_state,
         shared_model,
-        default_tool_infra(crate::bus::create_bus()),
+        default_tool_infra(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

@@ -13,7 +13,7 @@ use crate::architecture::sources::Workspace;
 /// instead of the channel it uses and the assertion SHALL report the site.
 ///
 /// Every spelling of the type is one path: `&Bus`, `&crate::bus::Bus`,
-/// `&agnt_core::bus::Bus` and `&'a Bus` all end in the same segment. The match
+/// `&agnt_runtime::bus::Bus` and `&'a Bus` all end in the same segment. The match
 /// reads the parsed type, so the name inside a comment or a string literal is
 /// not a site.
 pub fn arch_8_whole_bus(ws: &Workspace) -> Vec<Violation> {

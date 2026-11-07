@@ -44,7 +44,7 @@ fn agent_picker_lifecycle_table() -> Result<()> {
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "alpha".into(),
             description: None,
             display: "alpha".into(),

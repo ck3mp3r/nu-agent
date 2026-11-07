@@ -75,11 +75,11 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
             last_total_tokens: default_last_total_tokens(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -235,11 +235,11 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
             last_total_tokens: default_last_total_tokens(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -374,11 +374,11 @@ async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<(
             last_total_tokens: default_last_total_tokens(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
-            bus: crate::bus::create_bus(),
+            bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

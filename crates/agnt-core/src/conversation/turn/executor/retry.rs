@@ -30,7 +30,7 @@ use super::error_kind::CompletionErrorKind;
 use super::response::extract_retry_after_ms;
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
-use crate::protocol::events::{SystemEvent, SystemKind};
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
 impl<'a, S> TurnExecutor<'a, S>
 where

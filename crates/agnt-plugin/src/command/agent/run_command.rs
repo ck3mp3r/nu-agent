@@ -260,7 +260,7 @@ pub(super) fn run_command(
             .await?;
 
         // Signal bus shared by tool registration and the runtime.
-        let bus = agnt_core::bus::create_bus();
+        let bus = agnt_runtime::bus::Bus::default();
 
         let agnt_core::conversation::builder::BuildArtifacts { merged_compaction } =
             super::setup::register_tools(

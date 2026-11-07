@@ -10,7 +10,7 @@ fn take_turn_events(rx: &mut TurnRx) -> Vec<TurnEvent> {
     loop {
         match rx.try_recv() {
             Ok(event) => events.push(event),
-            Err(agnt_core::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }

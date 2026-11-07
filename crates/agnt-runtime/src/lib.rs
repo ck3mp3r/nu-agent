@@ -7,10 +7,12 @@
 
 // region:    --- Modules
 
+pub mod bus;
 pub mod config;
 pub mod hook;
 pub mod llm;
 pub mod logging;
+pub mod orchestrator;
 pub mod protocol;
 pub mod session;
 pub mod theme_pref;
@@ -23,6 +25,10 @@ pub mod utils;
 /// Re-exported because [`session::RigStoreConfig`] and [`session::SessionMeta`]
 /// hand out its types.
 pub use rig_memory;
+
+#[cfg(test)]
+#[path = "../test/architecture/test.rs"]
+mod architecture_test;
 
 #[cfg(test)]
 #[path = "../test/support.rs"]

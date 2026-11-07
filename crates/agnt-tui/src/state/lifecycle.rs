@@ -1,4 +1,4 @@
-use agnt_core::protocol::slash::filter_inline_slash_suggestions;
+use agnt_runtime::protocol::slash::filter_inline_slash_suggestions;
 
 use super::*;
 
@@ -11,7 +11,7 @@ pub(crate) const CTRL_C_QUIT_CONFIRM_STATUS: &str = "Ctrl-C again to quit";
 
 impl AppState {
     pub fn new_with_sender(
-        event_tx: tokio::sync::mpsc::Sender<agnt_core::orchestrator::OrchestratorEvent>,
+        event_tx: tokio::sync::mpsc::Sender<agnt_runtime::orchestrator::events::OrchestratorEvent>,
     ) -> Self {
         Self {
             event_tx,

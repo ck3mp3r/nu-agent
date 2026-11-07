@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_permission_auto_resolved_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionAutoResolved])];
     let handles = spawn(&bus, &hooks, &process);
@@ -49,7 +49,7 @@ async fn test_hooks_runner_permission_auto_resolved_invokes_with_payload() -> Re
 #[tokio::test]
 async fn test_hooks_runner_permission_auto_resolved_carries_deny_reason() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionAutoResolved])];
     let handles = spawn(&bus, &hooks, &process);
@@ -81,7 +81,7 @@ async fn test_hooks_runner_permission_auto_resolved_carries_deny_reason() -> Res
 #[tokio::test]
 async fn test_hooks_runner_permission_auto_resolved_stamps_session_id() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionAutoResolved])];
     let handles = spawn(&bus, &hooks, &process);
@@ -123,7 +123,7 @@ async fn test_hooks_runner_permission_auto_resolved_stamps_session_id() -> Resul
 #[tokio::test]
 async fn test_hooks_runner_permission_auto_resolved_ignores_prompt_events() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::PermissionAutoResolved])];
     let handles = spawn(&bus, &hooks, &process);

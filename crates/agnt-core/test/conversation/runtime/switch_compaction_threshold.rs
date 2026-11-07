@@ -7,7 +7,7 @@
 
 use super::switch_support::*;
 use super::*;
-use crate::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 
 /// A persona whose front matter selects `ollama/small`.
 const SMALL_PERSONA: &str = r#"---

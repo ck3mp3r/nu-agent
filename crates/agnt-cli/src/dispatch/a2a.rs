@@ -250,7 +250,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         .map_err(Error::from)?;
 
     // Signal bus shared by tool registration and the runtime.
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
 
     let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
 

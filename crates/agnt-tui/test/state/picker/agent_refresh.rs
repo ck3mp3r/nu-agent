@@ -1,4 +1,4 @@
-use agnt_core::protocol::persona::PersonaSummary;
+use agnt_runtime::protocol::persona::PersonaSummary;
 
 use super::*;
 
@@ -61,7 +61,7 @@ fn test_picker_agent_refresh_sets_options_and_cycle_names() -> Result<()> {
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "stale".to_string(),
             description: None,
             display: "stale".to_string(),

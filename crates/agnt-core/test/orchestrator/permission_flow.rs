@@ -10,7 +10,7 @@ pub(super) struct PermissionGateRuntime {
     request_id: String,
     rule_identity: String,
     pub(super) pending: crate::conversation::runtime::PendingPermissions,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl PermissionGateRuntime {
@@ -23,11 +23,11 @@ impl PermissionGateRuntime {
             request_id: "ask-0000000000000abc".to_string(),
             rule_identity: "nested:nu.command:*".to_string(),
             pending: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            bus: crate::bus::Bus::default(),
+            bus: agnt_runtime::bus::Bus::default(),
         }
     }
 
-    pub(super) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(super) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         self.bus = bus;
         self
     }
@@ -57,7 +57,7 @@ impl CoreRuntime for PermissionGateRuntime {
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
             preview: None,
         };
-        let (tx, rx) = crate::bus::OneshotTx::channel("permission");
+        let (tx, rx) = agnt_runtime::bus::OneshotTx::channel("permission");
         self.pending
             .lock()
             .expect("pending lock")
@@ -205,7 +205,7 @@ impl PermissionOrderingUi {
         }
     }
 
-    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let pending_decisions = Arc::clone(&self.pending_decisions);
         let events = Arc::clone(&self.events);
         let request_seen = Arc::clone(&self.request_seen);
@@ -325,7 +325,7 @@ impl ModelPickerLaunchWhileActiveUi {
         }
     }
 
-    pub(super) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(super) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let quit = Arc::clone(&self.quit);
         let completed_count = Arc::clone(&self.completed_count);
         let shared_actions = Arc::clone(&self.shared_actions);
@@ -359,7 +359,7 @@ impl ModelPickerLaunchWhileActiveUi {
 
     pub(super) fn make_event_spawner(
         &self,
-        bus: crate::bus::Bus,
+        bus: agnt_runtime::bus::Bus,
     ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
         let submitted = self.submitted.clone();
         let quit = Arc::clone(&self.quit);
@@ -400,7 +400,7 @@ impl UserInputUi for ModelPickerLaunchWhileActiveUi {
 #[tokio::test]
 async fn permission_requested_emits_before_execution_and_waits_for_decision_before_side_effects()
 -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = PermissionGateRuntime::new().with_bus(bus.clone());
     let pending = runtime.pending.clone();
     let pumps_while_waiting = Arc::new(AtomicUsize::new(0));
@@ -450,7 +450,7 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
 #[tokio::test]
 async fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_effects()
 -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = PermissionGateRuntime::new().with_bus(bus.clone());
     let pending = runtime.pending.clone();
     let ui = PermissionOrderingUi::new(PermissionDecision::Deny, 3, Arc::new(AtomicUsize::new(0)))

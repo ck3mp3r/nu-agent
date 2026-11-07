@@ -102,7 +102,7 @@ async fn test_hooks_agent_runner_skips_hooks_without_agent_events() -> Result<()
 #[tokio::test]
 async fn test_hooks_agent_runner_ignores_bus_session_activity() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let agent_tx = AgentTx::new("agent", 16);
     let process = MockProcess::default();
     let hooks = vec![hook("notify", &[HookEvent::AgentStarted])];
@@ -174,7 +174,7 @@ async fn test_hooks_agent_runner_forwards_every_event() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_agent_runner_and_session_runner_each_invoke_a_both_class_hook() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let agent_tx = AgentTx::new("agent", 16);
     let process = MockProcess::default();
     let hooks = vec![hook(
@@ -256,7 +256,7 @@ async fn test_hooks_agent_runner_continues_after_a_failure() -> Result<()> {
 #[tokio::test]
 async fn test_hooks_agent_runner_publishes_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let agent_tx = AgentTx::new("agent", 16);
     let process = MockProcess::default();
     let hooks = vec![hook("notify", &[HookEvent::AgentStarted])];

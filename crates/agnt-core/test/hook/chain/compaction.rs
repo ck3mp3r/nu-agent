@@ -102,7 +102,7 @@ async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> 
     assert!(
         matches!(
             &requested,
-            crate::protocol::events::SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto
+            agnt_runtime::protocol::events::SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto
         ),
         "over-threshold turn must fire Requested {{ source: Auto }}, got {requested:?}"
     );
@@ -167,7 +167,7 @@ async fn decide_compaction_real_tokens_under_threshold_does_not_fire() -> Result
 
     // -- Check
     assert!(
-        matches!(rx.try_recv(), Err(crate::bus::TryRecvError::Empty)),
+        matches!(rx.try_recv(), Err(agnt_runtime::bus::TryRecvError::Empty)),
         "under-threshold turn must not publish any compaction event"
     );
     Ok(())

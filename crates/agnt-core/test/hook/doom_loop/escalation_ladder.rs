@@ -9,7 +9,7 @@ async fn first_detection_skips_with_steering_message() -> TestResult<()> {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
     let pinned = [
         "Doom loop detected: 'read_file' called 5 times with identical arguments",
         "Are you really sure you need so many tool calls?",
@@ -43,7 +43,7 @@ async fn second_detection_backoff_skips_naming_tool() -> TestResult<()> {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     // -- Exec & Check
     let actions = drive_to_first_detection(&detector, &bus).await;
@@ -86,7 +86,7 @@ async fn fourth_detection_stops_run() -> TestResult<()> {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     // -- Exec & Check
     let _ = drive_to_first_detection(&detector, &bus).await;
@@ -147,7 +147,7 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut ui_event_rx = bus.ui_event().subscribe();
 
     // -- Exec
@@ -198,7 +198,10 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         "fourth detection should stop the run"
     );
     assert!(
-        matches!(ui_event_rx.try_recv(), Err(crate::bus::TryRecvError::Empty)),
+        matches!(
+            ui_event_rx.try_recv(),
+            Err(agnt_runtime::bus::TryRecvError::Empty)
+        ),
         "stop detection must not emit a warning on the bus ui_event channel"
     );
     Ok(())
@@ -213,7 +216,7 @@ async fn reset_clears_escalation_counter() -> TestResult<()> {
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
     };
-    let bus = create_bus();
+    let bus = Bus::default();
 
     // -- Exec & Check
     let _ = drive_to_first_detection(&detector, &bus).await;

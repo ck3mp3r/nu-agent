@@ -100,12 +100,12 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_10,
         &[
-            "ARCH-10 agnt-acp/src/runtime.rs:13: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/runtime.rs:14: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/runtime.rs:186: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:133: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:153: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:160: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:25: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:21: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:794: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:805: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:90: AgentConversationRuntime",

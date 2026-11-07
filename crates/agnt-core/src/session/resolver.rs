@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use rig::conversation::{Author, EntryRef};
 
-use crate::protocol::contracts::UiMessageSnapshot;
 use crate::types::{AssistantContent, CallId, Message, UserContent};
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 use agnt_runtime::session::settle::{FactStore, SessionFacts};
 use agnt_runtime::session::tool_status::{ToolStatus, ToolStatusMap};
 use agnt_runtime::session::{RigStoreConfig, Session};

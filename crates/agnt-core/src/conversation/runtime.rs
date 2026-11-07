@@ -6,8 +6,8 @@ use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::hook::agent_hook::DoomLoopState;
-use crate::protocol::contracts::UiMessageSnapshot;
 use agnt_kernel::bus::{OneshotTx, SessionEvent};
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 use agnt_runtime::session::SessionInfo;
 use agnt_runtime::tools::closure::EngineInterfaceLike;
 use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -20,12 +20,10 @@ use agnt_runtime::protocol::event::PermissionDecision as ProtocolPermissionDecis
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
 /// that unblock the `InteractivePermissionResolver` awaiting a user decision.
 pub type PendingPermissions = Arc<Mutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>;
-use crate::protocol::{
-    contracts::{CoreRuntime, McpUsabilityState},
-    mcp_management::McpManagement,
-    model_switching::ModelSwitching,
-    session_management::{SessionPersistence, SessionState},
-};
+use crate::session::management::{SessionPersistence, SessionState};
+use agnt_runtime::protocol::McpManagement;
+use agnt_runtime::protocol::contracts::{CoreRuntime, McpUsabilityState};
+use agnt_runtime::protocol::model_switching::ModelSwitching;
 
 /// Build system preamble from components.
 /// Joins non-empty parts with separators. Returns None if all empty.
@@ -146,7 +144,7 @@ where
     /// `session_ended` event reports these totals.
     session_usage: crate::hook::TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
     /// The agent snapshot every hook envelope is stamped with.
     ///
     /// Shared with the hook runners, which read it when they build an envelope.
@@ -664,8 +662,8 @@ where
         self.persona.agent_icon()
     }
 
-    fn rescan_available_agents(&self) -> Vec<crate::protocol::persona::PersonaSummary> {
-        use crate::protocol::persona::{FsPersonaResolver, PersonaLister};
+    fn rescan_available_agents(&self) -> Vec<agnt_runtime::protocol::persona::PersonaSummary> {
+        use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaLister};
 
         let resolver = FsPersonaResolver::new(
             self.cwd.clone(),
@@ -1065,7 +1063,7 @@ where
         self.mcp_state.mcp_lifecycle_projection()
     }
 
-    pub fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary] {
+    pub fn available_agent_summaries(&self) -> &[agnt_runtime::protocol::persona::PersonaSummary] {
         self.multi_agent.available_agent_summaries()
     }
 
@@ -1144,7 +1142,7 @@ where
     /// out is the shape ARCH-8 counts; a session manager that took only the
     /// channels it uses would not need this accessor, so narrowing it belongs
     /// to the bus slice.
-    pub fn bus_handle(&self) -> crate::bus::Bus {
+    pub fn bus_handle(&self) -> agnt_runtime::bus::Bus {
         self.bus.clone()
     }
 
@@ -1273,10 +1271,12 @@ impl AgentConversationRuntime {
         // The hook envelopes stamp the model the runtime starts on. Every switch
         // refreshes it from the post-switch state.
         let hook_context = config.hook_context;
-        hook_context.set_model(crate::protocol::picker::format_active_model_identity(
-            &active_config.provider,
-            &active_config.model,
-        ));
+        hook_context.set_model(
+            agnt_runtime::protocol::picker::format_active_model_identity(
+                &active_config.provider,
+                &active_config.model,
+            ),
+        );
         // Resolve the context-window limit before the config is consumed below.
         // Used to compute the hook's compaction threshold.
         let max_context_tokens = active_config
@@ -1436,7 +1436,7 @@ impl AgentConversationRuntime {
 
 // region:    --- Seams
 
-impl crate::protocol::contracts::DecisionSource for AgentConversationRuntime {
+impl crate::conversation::contracts::DecisionSource for AgentConversationRuntime {
     /// Set the permission decision source of the composed runtime.
     ///
     /// `Some` installs the interactive surface's bridge: the gate publishes a
@@ -1463,7 +1463,7 @@ impl crate::protocol::contracts::DecisionSource for AgentConversationRuntime {
     }
 }
 
-impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
+impl crate::conversation::contracts::RuntimeAccess for AgentConversationRuntime {
     fn paths(&self) -> &agnt_runtime::config::Paths {
         Self::paths(self)
     }
@@ -1472,7 +1472,7 @@ impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
         Self::hook_context(self)
     }
 
-    fn bus_handle(&self) -> crate::bus::Bus {
+    fn bus_handle(&self) -> agnt_runtime::bus::Bus {
         Self::bus_handle(self)
     }
 
@@ -1492,7 +1492,7 @@ impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
         Self::mcp_lifecycle_projection(self)
     }
 
-    fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary] {
+    fn available_agent_summaries(&self) -> &[agnt_runtime::protocol::persona::PersonaSummary] {
         Self::available_agent_summaries(self)
     }
 

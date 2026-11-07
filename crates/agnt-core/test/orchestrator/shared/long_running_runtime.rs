@@ -8,7 +8,7 @@ pub(crate) struct LongRunningRuntime {
     pub(crate) block_first_turn: Arc<AtomicBool>,
     pub(crate) switch_model_result: Option<Result<String, String>>,
     pub(crate) active_identity: Arc<Mutex<String>>,
-    pub(crate) bus: crate::bus::Bus,
+    pub(crate) bus: agnt_runtime::bus::Bus,
     pub(crate) turn_started_tx: tokio::sync::watch::Sender<bool>,
 }
 
@@ -23,7 +23,7 @@ impl LongRunningRuntime {
             block_first_turn,
             switch_model_result: None,
             active_identity: Arc::new(Mutex::new("openai/gpt-4o-mini".to_string())),
-            bus: crate::bus::Bus::default(),
+            bus: agnt_runtime::bus::Bus::default(),
             turn_started_tx,
         }
     }
@@ -39,7 +39,7 @@ impl LongRunningRuntime {
         self
     }
 
-    pub(crate) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(crate) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         self.bus = bus;
         self
     }
@@ -70,8 +70,8 @@ impl CoreRuntime for LongRunningRuntime {
             while !self.block_first_turn.load(Ordering::SeqCst) {
                 if matches!(
                     cancel_rx.try_recv(),
-                    Ok(crate::bus::CancelEvent::Requested)
-                        | Err(crate::bus::TryRecvError::Lagged(_))
+                    Ok(agnt_runtime::bus::CancelEvent::Requested)
+                        | Err(agnt_runtime::bus::TryRecvError::Lagged(_))
                 ) {
                     self.active.store(false, Ordering::SeqCst);
                     return Err(LabeledError::new("LLM call cancelled"));

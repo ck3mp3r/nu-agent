@@ -33,7 +33,7 @@ async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
         },
     ));
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let proxy = FilteredToolProxy {
         tool_name: ToolName::new("sleeping_tool")?,
         tool_definition: ToolDefinition {
@@ -56,7 +56,10 @@ async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
     let bus2 = bus.clone();
     let cancel_handle = tokio::spawn(async move {
         started.notified().await;
-        let _ = bus2.cancel().send(crate::bus::CancelEvent::Requested).await;
+        let _ = bus2
+            .cancel()
+            .send(agnt_runtime::bus::CancelEvent::Requested)
+            .await;
     });
 
     let mut context = rig::tool::ToolContext::new();

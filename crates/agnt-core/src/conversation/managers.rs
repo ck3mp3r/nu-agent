@@ -166,7 +166,7 @@ pub trait PersonaManager {
 /// Manages multi-agent coordination: agent registry.
 pub trait MultiAgentManager {
     /// Return the available agent summaries for preamble injection.
-    fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary];
+    fn available_agent_summaries(&self) -> &[agnt_runtime::protocol::persona::PersonaSummary];
 
     /// Return the agents configuration.
     fn agents_config(&self) -> &agnt_runtime::config::AgentsConfig;

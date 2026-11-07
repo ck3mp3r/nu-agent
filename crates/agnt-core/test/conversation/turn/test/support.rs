@@ -47,7 +47,7 @@ pub(super) fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf) {
 /// Build a `CompactionConfig` (no marker store) with a deterministic streaming
 /// mock model so compaction never invokes a real LLM.
 pub(super) fn test_compaction_config(
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 ) -> crate::conversation::compaction::CompactionConfig {
     use crate::conversation::compaction::compactor::NuCompactor;
     use rig::test_utils::MockCompletionModel;
@@ -91,8 +91,8 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _ui_event: &crate::bus::UiEventTx,
-        _cancel: &crate::bus::CancelTx,
+        _ui_event: &agnt_runtime::bus::UiEventTx,
+        _cancel: &agnt_runtime::bus::CancelTx,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = self.0.clone();
         async move { decision }
@@ -106,7 +106,7 @@ impl AsyncPermissionResolver for MockResolver {
 pub(super) fn make_turn_context<'a>(
     dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     config: &'a Config,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 ) -> TurnContext<'a> {
     let (temp_dir, memory) = make_compacting_memory();
     let _keep_alive = temp_dir;

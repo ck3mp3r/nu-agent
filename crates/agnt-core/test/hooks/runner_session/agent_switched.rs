@@ -11,7 +11,7 @@ use super::*;
 #[tokio::test]
 async fn test_hooks_runner_agent_switched_invokes_with_from_and_to() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::AgentSwitched])];
     let handles = spawn(&bus, &hooks, &process);
@@ -49,7 +49,7 @@ async fn test_hooks_runner_agent_switched_invokes_with_from_and_to() -> Result<(
 #[tokio::test]
 async fn test_hooks_runner_agent_switched_carries_a_null_from_when_none_was_loaded() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::AgentSwitched])];
     let handles = spawn(&bus, &hooks, &process);
@@ -85,7 +85,7 @@ async fn test_hooks_runner_agent_switched_carries_a_null_from_when_none_was_load
 #[tokio::test]
 async fn test_hooks_runner_agent_switched_skips_a_hook_that_does_not_declare_it() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::SessionStarted])];
     let handles = spawn(&bus, &hooks, &process);
@@ -112,7 +112,7 @@ async fn test_hooks_runner_agent_switched_skips_a_hook_that_does_not_declare_it(
 #[tokio::test]
 async fn test_hooks_runner_agent_switched_leaves_the_tracked_session_id_alone() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let process = MockProcess::default();
     let hooks = vec![hook("audit", &[HookEvent::AgentSwitched])];
     let handles = spawn(&bus, &hooks, &process);

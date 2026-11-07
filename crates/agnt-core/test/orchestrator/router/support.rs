@@ -11,19 +11,21 @@ pub(super) use std::sync::{
 pub(super) use std::time::Duration;
 pub(super) use tokio::sync::mpsc;
 
-pub(super) use crate::bus::create_bus;
 pub(super) use crate::orchestrator::test_shared::drive_loop;
 pub(super) use crate::orchestrator::{
     AgentSwitchHook, CommandRouter, DispatchSources, LoopConfig, NoAgentSwitchHook,
+};
+pub(super) use crate::session::management::{SessionPersistence, SessionState};
+pub(super) use agnt_runtime::bus::Bus;
+pub(super) use agnt_runtime::orchestrator::events::{
     OrchestratorEvent, UiRequest, UiRequestResponse, WorkerCommand,
 };
-pub(super) use crate::protocol::{
-    contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},
-    events::SystemEvent,
-    mcp_management::McpManagement,
-    model_switching::ModelSwitching,
-    session_management::{SessionPersistence, SessionState},
+pub(super) use agnt_runtime::protocol::McpManagement;
+pub(super) use agnt_runtime::protocol::contracts::{
+    CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi,
 };
+pub(super) use agnt_runtime::protocol::events::SystemEvent;
+pub(super) use agnt_runtime::protocol::model_switching::ModelSwitching;
 
 // ---------------------------------------------------------------------------
 // Dispatch sources
@@ -31,7 +33,7 @@ pub(super) use crate::protocol::{
 
 /// The channels a router test hands the dispatcher, cloned from the bus the
 /// test subscribes to.
-pub(super) fn dispatch_sources(bus: &crate::bus::Bus) -> DispatchSources {
+pub(super) fn dispatch_sources(bus: &agnt_runtime::bus::Bus) -> DispatchSources {
     DispatchSources {
         turn: bus.turn().clone(),
         compaction: bus.compaction().clone(),
@@ -76,7 +78,7 @@ pub(super) struct AgentSwitchRuntime {
     pub(super) switched_agents: Vec<String>,
     pub(super) switch_agent_result: Option<Result<String, String>>,
     pub(super) active_model: String,
-    pub(super) bus: crate::bus::Bus,
+    pub(super) bus: agnt_runtime::bus::Bus,
 }
 
 impl Default for AgentSwitchRuntime {
@@ -85,7 +87,7 @@ impl Default for AgentSwitchRuntime {
             switched_agents: Vec::new(),
             switch_agent_result: None,
             active_model: "openai/gpt-4o-mini".to_string(),
-            bus: crate::bus::Bus::default(),
+            bus: agnt_runtime::bus::Bus::default(),
         }
     }
 }
@@ -195,7 +197,7 @@ impl AgentSwitchUi {
         }
     }
 
-    pub(super) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    pub(super) fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let quit = Arc::clone(&self.quit);
         let agent_switch_requests = Arc::clone(&self.agent_switch_requests);
         let warnings = Arc::clone(&self.warnings);
@@ -228,11 +230,11 @@ impl AgentSwitchUi {
                     ok = ui_state_rx.recv() => {
                         if let Ok(event) = ok {
                             match event {
-                                crate::orchestrator::UiStateEvent::SetActiveModelIdentity(identity) => {
+                                agnt_runtime::orchestrator::events::UiStateEvent::SetActiveModelIdentity(identity) => {
                                     *active_model_identity.lock().expect("active model identity lock") =
                                         Some(identity);
                                 }
-                                crate::orchestrator::UiStateEvent::SetActiveAgentIdentity(identity) => {
+                                agnt_runtime::orchestrator::events::UiStateEvent::SetActiveAgentIdentity(identity) => {
                                     *active_agent_identity.lock().expect("active agent identity lock") =
                                         Some(identity);
                                 }
@@ -291,7 +293,7 @@ impl UserInputUi for AgentSwitchUi {
 pub(super) struct SwitchSessionRuntime {
     pub(super) loaded_session_id: Arc<Mutex<Option<String>>>,
     pub(super) active_model: String,
-    pub(super) bus: crate::bus::Bus,
+    pub(super) bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for SwitchSessionRuntime {

@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn apply_persona_config_max_tokens_populates_config() {
     let mut config = Config::default();
-    let persona = agnt_core::protocol::persona::ParsedPersona {
+    let persona = agnt_runtime::protocol::persona::ParsedPersona {
         name: None,
         description: None,
         model: None,
@@ -28,7 +28,7 @@ fn apply_persona_config_max_tokens_populates_config() {
 #[test]
 fn apply_persona_config_all_fields_when_config_empty() {
     let mut config = Config::default();
-    let persona = agnt_core::protocol::persona::ParsedPersona {
+    let persona = agnt_runtime::protocol::persona::ParsedPersona {
         name: None,
         description: None,
         model: None,
@@ -63,7 +63,7 @@ fn apply_persona_config_cli_wins_over_persona() -> Result<()> {
         additional_params: Some(serde_json::json!({"from": "cli"})),
         ..Config::default()
     };
-    let persona = agnt_core::protocol::persona::ParsedPersona {
+    let persona = agnt_runtime::protocol::persona::ParsedPersona {
         name: None,
         description: None,
         model: None,
@@ -101,7 +101,7 @@ fn apply_persona_config_max_turns_cli_flag_wins() {
         max_tool_turns: Some(20),
         ..Config::default()
     };
-    let persona = agnt_core::protocol::persona::ParsedPersona {
+    let persona = agnt_runtime::protocol::persona::ParsedPersona {
         name: None,
         description: None,
         model: None,
@@ -127,7 +127,7 @@ fn apply_persona_config_max_turns_persona_overrides_default() {
         max_tool_turns: Some(20), // pipeline default
         ..Config::default()
     };
-    let persona = agnt_core::protocol::persona::ParsedPersona {
+    let persona = agnt_runtime::protocol::persona::ParsedPersona {
         name: None,
         description: None,
         model: None,
@@ -154,7 +154,7 @@ fn apply_persona_config_partial_persona_leaves_others_unchanged() {
         max_tool_result_bytes: Some(1000),
         ..Config::default()
     };
-    let persona = agnt_core::protocol::persona::ParsedPersona {
+    let persona = agnt_runtime::protocol::persona::ParsedPersona {
         name: None,
         description: None,
         model: None,

@@ -4,7 +4,7 @@ use super::*;
 
 struct StartupHydrationRuntime {
     names_by_server: Vec<(String, Vec<String>)>,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for StartupHydrationRuntime {
@@ -78,7 +78,7 @@ crate::default_session!(StartupHydrationRuntime);
 
 #[tokio::test]
 async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let active_pump_count = Arc::new(AtomicUsize::new(0));
@@ -123,7 +123,7 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResu
 
 #[tokio::test]
 async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let active_pump_count = Arc::new(AtomicUsize::new(0));
@@ -167,7 +167,7 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TR
 
 #[tokio::test]
 async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&["first"])
@@ -203,7 +203,7 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
 #[tokio::test]
 async fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_before_toggles()
 -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = StartupHydrationRuntime {
         names_by_server: vec![
             (
@@ -324,8 +324,8 @@ fn emit_batch_delivers_all_events() {
 /// published.
 async fn run_loop_session_events(
     runtime: FakeRuntime,
-    bus: crate::bus::Bus,
-) -> Result<Vec<crate::bus::SessionEvent>, String> {
+    bus: agnt_runtime::bus::Bus,
+) -> Result<Vec<agnt_runtime::bus::SessionEvent>, String> {
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     let mut session_rx = bus.session().subscribe();
     let spawner = ui.make_event_spawner();
@@ -344,9 +344,9 @@ async fn run_loop_session_events(
 }
 
 /// The `SessionEvent::Started` the loop published, if any.
-fn started_event(events: &[crate::bus::SessionEvent]) -> Option<(&str, bool)> {
+fn started_event(events: &[agnt_runtime::bus::SessionEvent]) -> Option<(&str, bool)> {
     events.iter().find_map(|event| match event {
-        crate::bus::SessionEvent::Started {
+        agnt_runtime::bus::SessionEvent::Started {
             session_id,
             hydrated,
         } => Some((session_id.as_str(), *hydrated)),
@@ -357,7 +357,7 @@ fn started_event(events: &[crate::bus::SessionEvent]) -> Option<(&str, bool)> {
 #[tokio::test]
 async fn interactive_loop_started_carries_the_runtime_session_id() -> TResult {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         session_id: Some("sess-1".to_string()),
@@ -384,7 +384,7 @@ async fn interactive_loop_started_carries_the_runtime_session_id() -> TResult {
 #[tokio::test]
 async fn hydrated_interactive_loop_started_carries_the_runtime_session_id() -> TResult {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         session_id: Some("sess-2".to_string()),
@@ -425,7 +425,7 @@ async fn hydrated_interactive_loop_started_carries_the_runtime_session_id() -> T
 #[tokio::test]
 async fn interactive_loop_started_without_a_session_publishes_an_empty_id() -> TResult {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -447,7 +447,7 @@ async fn interactive_loop_started_without_a_session_publishes_an_empty_id() -> T
 #[tokio::test]
 async fn interactive_loop_publishes_ended_on_exit() -> TResult {
     // -- Setup & Fixtures
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = FakeRuntime {
         bus: bus.clone(),
         session_id: Some("sess-3".to_string()),
@@ -461,7 +461,7 @@ async fn interactive_loop_publishes_ended_on_exit() -> TResult {
     let ended = events
         .iter()
         .find_map(|event| match event {
-            crate::bus::SessionEvent::Ended { session_id, .. } => Some(session_id.as_str()),
+            agnt_runtime::bus::SessionEvent::Ended { session_id, .. } => Some(session_id.as_str()),
             _ => None,
         })
         .ok_or("the loop must publish SessionEvent::Ended on exit")?;

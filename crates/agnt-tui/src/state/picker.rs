@@ -1,7 +1,7 @@
-use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::protocol::events::Key;
-use agnt_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
-use agnt_core::protocol::slash::SlashCommand;
+use agnt_runtime::protocol::contracts::SharedUiAction;
+use agnt_runtime::protocol::events::Key;
+use agnt_runtime::protocol::picker::{AgentPickerOption, ModelPickerOption};
+use agnt_runtime::protocol::slash::SlashCommand;
 
 use super::*;
 use crate::state::CommandPaletteAction;

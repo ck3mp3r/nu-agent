@@ -8,7 +8,7 @@ use super::*;
 fn permissions_startup_summary_does_not_emit_warning() {
     use agnt_runtime::tools::authz::{PermissionsConfig, SessionGrantCache};
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut ui_event_rx = bus.ui_event().subscribe();
     let summary =
         "permissions policy: overlay_active=false global=ask tool_rules=5 nested_command_rules=1";
@@ -27,11 +27,11 @@ fn permissions_startup_summary_does_not_emit_warning() {
     let mut count = 0usize;
     loop {
         match ui_event_rx.try_recv() {
-            Ok(crate::protocol::events::SystemEvent::SystemMessage { .. }) => count += 1,
+            Ok(agnt_runtime::protocol::events::SystemEvent::SystemMessage { .. }) => count += 1,
             Ok(_) => {}
-            Err(crate::bus::TryRecvError::Empty) => break,
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
-            Err(crate::bus::TryRecvError::Closed) => break,
+            Err(agnt_runtime::bus::TryRecvError::Empty) => break,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Closed) => break,
         }
     }
     assert_eq!(
@@ -75,7 +75,7 @@ fn set_permissions_replaces_config_and_does_not_emit_warning() -> Result<()> {
     // Config is replaced
     assert_eq!(state.permissions().summary().global, PermissionAction::Deny);
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut ui_event_rx = bus.ui_event().subscribe();
     state.emit_startup_summary_once();
     state.emit_startup_summary_once();
@@ -83,11 +83,11 @@ fn set_permissions_replaces_config_and_does_not_emit_warning() -> Result<()> {
     let mut count = 0usize;
     loop {
         match ui_event_rx.try_recv() {
-            Ok(crate::protocol::events::SystemEvent::SystemMessage { .. }) => count += 1,
+            Ok(agnt_runtime::protocol::events::SystemEvent::SystemMessage { .. }) => count += 1,
             Ok(_) => {}
-            Err(crate::bus::TryRecvError::Empty) => break,
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
-            Err(crate::bus::TryRecvError::Closed) => break,
+            Err(agnt_runtime::bus::TryRecvError::Empty) => break,
+            Err(agnt_runtime::bus::TryRecvError::Lagged(_)) => continue,
+            Err(agnt_runtime::bus::TryRecvError::Closed) => break,
         }
     }
     assert_eq!(

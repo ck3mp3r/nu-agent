@@ -5,7 +5,7 @@ use super::*;
 struct ContextWindowRuntime {
     switched_models: Vec<String>,
     max_context_tokens: Option<u64>,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl Default for ContextWindowRuntime {
@@ -13,7 +13,7 @@ impl Default for ContextWindowRuntime {
         Self {
             switched_models: Vec::new(),
             max_context_tokens: Some(128_000),
-            bus: crate::bus::Bus::default(),
+            bus: agnt_runtime::bus::Bus::default(),
         }
     }
 }
@@ -148,7 +148,7 @@ impl ContextWindowUi {
         }
     }
 
-    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+    fn with_bus(mut self, bus: agnt_runtime::bus::Bus) -> Self {
         let model_switch_requests = Arc::clone(&self.model_switch_requests);
         let quit = Arc::clone(&self.quit);
         let warnings = Arc::clone(&self.warnings);
@@ -196,7 +196,7 @@ impl UserInputUi for ContextWindowUi {
 #[derive(Default)]
 struct TokenSeedingRuntime {
     seeded_tokens: Option<Option<u64>>,
-    bus: crate::bus::Bus,
+    bus: agnt_runtime::bus::Bus,
 }
 
 impl CoreRuntime for TokenSeedingRuntime {
@@ -256,7 +256,7 @@ crate::default_mcp!(TokenSeedingRuntime);
 
 #[tokio::test]
 async fn context_window_max_tokens_set_on_ui_at_startup() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = ContextWindowRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -284,7 +284,7 @@ async fn context_window_max_tokens_set_on_ui_at_startup() -> TResult {
 
 #[tokio::test]
 async fn model_switch_updates_context_window_max_tokens_in_ui() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = ContextWindowRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -315,7 +315,7 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() -> TResult {
 
 #[tokio::test]
 async fn model_switch_updates_context_window_max_tokens_none_when_unset() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = ContextWindowRuntime {
         max_context_tokens: None,
         bus: bus.clone(),
@@ -343,7 +343,7 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() -> TRe
 
 #[tokio::test]
 async fn session_resume_seeds_last_total_tokens() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = TokenSeedingRuntime {
         bus: bus.clone(),
         ..Default::default()
@@ -372,7 +372,7 @@ async fn session_resume_seeds_last_total_tokens() -> TResult {
 
 #[tokio::test]
 async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() -> TResult {
-    let bus = create_bus();
+    let bus = Bus::default();
     let runtime = TokenSeedingRuntime {
         bus: bus.clone(),
         ..Default::default()

@@ -3,11 +3,12 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agnt_core::bus::CancelEvent;
+use agnt_core::conversation::contracts::RuntimeAccess;
 use agnt_core::orchestrator::run_single_turn;
-use agnt_core::protocol::contracts::{CoreRuntime, RuntimeAccess};
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::session_management::SessionPersistence;
+use agnt_core::session::management::SessionPersistence;
+use agnt_runtime::bus::CancelEvent;
+use agnt_runtime::protocol::contracts::CoreRuntime;
+use agnt_runtime::protocol::events::SystemEvent;
 use agnt_tty::policy::UiPolicy;
 use agnt_tty::{StderrUiFactory, UiRendererFactory};
 use nu_protocol::{Span, Value};
@@ -151,7 +152,7 @@ where
 /// `bus.cancel()`.
 async fn run_stderr_turn<
     RU: CoreRuntime + RuntimeAccess,
-    R: agnt_core::renderer::UiRenderer + Send + 'static,
+    R: agnt_tty::renderer::UiRenderer + Send + 'static,
 >(
     runtime_impl: &mut RU,
     renderer: R,

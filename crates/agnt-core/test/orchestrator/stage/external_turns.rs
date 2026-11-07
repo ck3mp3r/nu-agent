@@ -4,7 +4,7 @@ use super::*;
 // Session stage — external task outcome publication
 // ---------------------------------------------------------------------------
 
-fn take_turn_events(turn_rx: &mut crate::bus::TurnRx) -> Vec<TurnEvent> {
+fn take_turn_events(turn_rx: &mut agnt_runtime::bus::TurnRx) -> Vec<TurnEvent> {
     let mut out = Vec::new();
     while let Ok(event) = turn_rx.try_recv() {
         out.push(event);

@@ -1,4 +1,4 @@
-use crate::protocol::events::SystemEvent;
+use agnt_runtime::protocol::events::SystemEvent;
 
 /// Shared UI renderer contract boundary for agent UI output.
 ///

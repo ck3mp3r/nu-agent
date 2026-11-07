@@ -28,7 +28,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::Bus;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
 use crate::hook::agent_hook::DoomLoopState;
@@ -36,6 +35,7 @@ use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::hook::turn_usage::TurnUsage;
 use crate::types::ToolDefinition;
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::Config;
 use agnt_runtime::session::CachedMemory;
 use agnt_runtime::tools::closure::ClosureRegistry;

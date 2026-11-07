@@ -7,12 +7,12 @@
 
 use crate::interaction::{cancel::CancelController, reducer::reduce};
 use crate::state::{AppState, InputMode, UiPhase};
-use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::events::{Key, RequestId, SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::transcript::ir::{MessageRole, ToolName};
 use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::protocol::events::{Key, RequestId, SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

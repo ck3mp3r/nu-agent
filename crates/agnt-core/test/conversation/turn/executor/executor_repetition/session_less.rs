@@ -18,7 +18,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
 
     // Generous identical scripted turn supply; the exact consumption is
@@ -59,7 +59,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
                 cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
-            test_compaction_config(crate::bus::create_bus()),
+            test_compaction_config(agnt_runtime::bus::Bus::default()),
         );
         let result = executor
             .execute(

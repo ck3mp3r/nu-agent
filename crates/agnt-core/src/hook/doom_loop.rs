@@ -11,9 +11,9 @@ use serde_json::Value;
 use agnt_kernel::StopCause;
 use agnt_kernel::bus::Stream;
 
-use crate::bus::UiEventTx;
 use crate::hook::agent_hook::StopLedger;
-use crate::protocol::events::{SystemEvent, SystemKind};
+use agnt_runtime::bus::UiEventTx;
+use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
 pub const DOOM_LOOP_THRESHOLD: usize = 5;
 pub const DOOM_LOOP_BACKOFF_LIMIT: usize = 2;

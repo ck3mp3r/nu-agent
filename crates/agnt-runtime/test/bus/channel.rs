@@ -1,6 +1,6 @@
 //! The default bus: no metrics hooked, FIFO preserved per channel.
 
-use crate::bus::{UiEventRx, create_bus};
+use crate::bus::{Bus, UiEventRx};
 use crate::protocol::events::{SystemEvent, ToolCall};
 use agnt_kernel::ToolName;
 
@@ -10,13 +10,13 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
     // -- Case 1: the default bus still sends and receives
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx = bus.ui_event().subscribe();
     bus.ui_event()
         .send(SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("read".to_string()),
-                agnt_runtime::tools::handler::ToolSource::Unknown,
+                crate::tools::handler::ToolSource::Unknown,
                 "{}",
             ),
         })
@@ -28,7 +28,7 @@ async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
     );
 
     // -- Case 2: the ui_event channel preserves FIFO order
-    let bus = create_bus();
+    let bus = Bus::default();
     let mut rx: UiEventRx = bus.ui_event().subscribe();
     bus.ui_event().send(SystemEvent::Tick).await?;
     bus.ui_event().send(SystemEvent::InferenceStarted).await?;

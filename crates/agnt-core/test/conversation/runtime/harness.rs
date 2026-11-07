@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::*;
-use crate::bus::Bus;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::providers::CachedProviderClient;
@@ -23,6 +22,7 @@ use crate::conversation::state::provider::ProviderState;
 use crate::conversation::state::tool::ToolState;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
+use agnt_runtime::bus::Bus;
 use agnt_runtime::config::{AgentsConfig, Config};
 use agnt_runtime::tools::authz::{PermissionsConfig, SessionGrantCache};
 use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
@@ -110,7 +110,7 @@ fn build_fixture(
 ) -> Result<RuntimeFixture> {
     let temp_dir = tempfile::tempdir()?;
     let cwd = temp_dir.path().to_path_buf();
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let provider =
         ProviderState::with_client(runtime_config(), CachedProviderClient::Mock(model.clone()));
     let compaction = CompactionConfig {

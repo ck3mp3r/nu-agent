@@ -136,7 +136,7 @@ async fn grep_via_builtin_adapter(
             "required": ["pattern"]
         }),
     };
-    let bus = crate::bus::Bus::default();
+    let bus = agnt_runtime::bus::Bus::default();
     let handle = rig::tool::server::ToolServer::new().run();
     handle.add_dynamic_tool(make_dynamic_tool::<GrepTool>(
         tool_def,

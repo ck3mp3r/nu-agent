@@ -7,7 +7,7 @@
 //! completion), or `Cancelled` (history capture).
 
 use super::*;
-use crate::bus::CancelEvent;
+use agnt_runtime::bus::CancelEvent;
 use rig::agent::MultiTurnStreamItem;
 use rig::completion::PromptError;
 use rig::completion::request::Usage;
@@ -78,7 +78,7 @@ fn streamed_call(id: &str, name: &str) -> Result<ToolCall> {
 #[tokio::test]
 async fn test_execute_drive_stream_expires_the_grace_without_history() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let stream = ScriptedStream::new(bus.clone(), [Step::Pend]);
     let grace = Duration::from_millis(50);
 
@@ -127,7 +127,7 @@ async fn test_execute_drive_stream_expires_the_grace_without_history() -> Result
 #[tokio::test]
 async fn test_execute_drive_stream_completes_normally_during_the_grace() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let history = vec![Message::user("hi"), Message::assistant("done")];
     let response =
         rig::agent::PromptResponse::new("done", Usage::default()).with_messages(history.clone());
@@ -170,7 +170,7 @@ async fn test_execute_drive_stream_completes_normally_during_the_grace() -> Resu
 #[tokio::test]
 async fn test_execute_drive_stream_captures_the_cancelled_history() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let history = vec![Message::user("hi")];
     let stream = ScriptedStream::new(
         bus.clone(),
@@ -214,7 +214,7 @@ async fn test_execute_drive_stream_captures_the_cancelled_history() -> Result<()
 #[tokio::test]
 async fn test_execute_drive_stream_tracks_the_committed_tool_calls() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let first = streamed_call("call_1", "read")?;
     let second = streamed_call("call_2", "write")?;
     let stream = ScriptedStream::new(
@@ -259,7 +259,7 @@ async fn test_execute_drive_stream_tracks_the_committed_tool_calls() -> Result<(
 #[tokio::test]
 async fn test_execute_drive_stream_tracks_no_calls_without_the_projection() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let response = rig::agent::PromptResponse::new("done", Usage::default());
     let stream = ScriptedStream::new(
         bus.clone(),

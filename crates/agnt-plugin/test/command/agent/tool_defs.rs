@@ -60,7 +60,7 @@ fn orchestrator_tool_description_shows_no_agents_message_when_empty() -> Result<
 
 #[test]
 fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
-    use agnt_core::protocol::persona::PersonaSummary;
+    use agnt_runtime::protocol::persona::PersonaSummary;
     let agents = vec![
         PersonaSummary {
             name: "coder".to_string(),

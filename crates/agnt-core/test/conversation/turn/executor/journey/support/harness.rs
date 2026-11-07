@@ -37,7 +37,7 @@ pub(crate) fn default_tool_infra(
         last_total_tokens: default_last_total_tokens(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
-        bus: crate::bus::create_bus(),
+        bus: agnt_runtime::bus::Bus::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     }
 }
@@ -66,7 +66,7 @@ impl JourneyHarness {
         config: agnt_runtime::config::Config,
     ) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let bus = crate::bus::create_bus();
+        let bus = agnt_runtime::bus::Bus::default();
         let compaction_config = crate::conversation::compaction::CompactionConfig {
             compactor: crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
                 test_utils::shared_mock_model(),
@@ -102,7 +102,7 @@ impl JourneyHarness {
         tool_infra: ToolInfra,
     ) -> (
         std::result::Result<TurnOutcome, LabeledError>,
-        Vec<crate::protocol::events::SystemEvent>,
+        Vec<agnt_runtime::protocol::events::SystemEvent>,
     ) {
         // Swap the scripted mock model into the shared slot so the agent
         // (built from the model) routes to this model.
@@ -191,7 +191,7 @@ impl JourneyHarness {
         tool_infra: ToolInfra,
     ) -> Result<(
         std::result::Result<TurnOutcome, LabeledError>,
-        Vec<crate::protocol::events::SystemEvent>,
+        Vec<agnt_runtime::protocol::events::SystemEvent>,
     )> {
         // Swap the mock client's model into the shared slot so the agent
         // (built from the model) routes to this client's model.

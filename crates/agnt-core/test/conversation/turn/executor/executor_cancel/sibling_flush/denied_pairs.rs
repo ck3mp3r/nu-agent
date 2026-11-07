@@ -36,7 +36,7 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     // Subscribe BEFORE driving the turn: broadcast sends are not buffered for
     // later subscribers.
     let mut ui_event_rx = bus.ui_event().subscribe();
@@ -66,7 +66,7 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec
@@ -207,7 +207,7 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let bus = crate::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let mut ui_event_rx = bus.ui_event().subscribe();
 
     let handle = rig::tool::server::ToolServer::new().tool(EchoTool).run();
@@ -240,7 +240,7 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
-        test_compaction_config(crate::bus::create_bus()),
+        test_compaction_config(agnt_runtime::bus::Bus::default()),
     );
 
     // -- Exec

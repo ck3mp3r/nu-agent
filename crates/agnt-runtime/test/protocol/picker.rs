@@ -12,9 +12,9 @@ mod declared_models;
 
 use std::collections::HashMap;
 
+use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
+use crate::config::{ModelConfig, ProviderConfig};
 use crate::protocol::persona::PersonaSummary;
-use agnt_runtime::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
-use agnt_runtime::config::{ModelConfig, ProviderConfig};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

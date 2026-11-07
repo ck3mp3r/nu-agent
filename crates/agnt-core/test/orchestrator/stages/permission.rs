@@ -10,13 +10,13 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, OneshotRx, OneshotTx, UiEventRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::permission::PermissionStage;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
-use crate::orchestrator::{UiRequestResponse, WorkerCommand};
-use crate::protocol::events::SystemEvent;
+use agnt_runtime::bus::{Bus, OneshotRx, OneshotTx, UiEventRx};
+use agnt_runtime::orchestrator::events::{UiRequestResponse, WorkerCommand};
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
+use agnt_runtime::protocol::events::SystemEvent;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -44,7 +44,7 @@ impl Fixture {
         let (worker_tx, _worker_rx) = mpsc::channel::<WorkerCommand>(8);
         let (blocking_tx, _blocking_rx) = mpsc::channel::<UiRequestResponse>(8);
         let (concurrent_tx, _concurrent_rx) = mpsc::channel::<UiRequestResponse>(8);
-        let bus = create_bus();
+        let bus = Bus::default();
         let ui_event_rx = bus.ui_event().subscribe();
         Self {
             stage: PermissionStage,

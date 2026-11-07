@@ -205,7 +205,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         .map_err(Error::from)?;
 
     // Signal bus shared by tool registration and the runtime.
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
 
     let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
 

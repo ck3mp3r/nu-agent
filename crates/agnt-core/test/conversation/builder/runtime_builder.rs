@@ -6,8 +6,8 @@
 
 use super::*;
 
-use crate::bus::Bus;
 use crate::conversation::builder::{AgentRuntimeBuilder, BuildArtifacts, BuildInput};
+use agnt_runtime::bus::Bus;
 use agnt_runtime::tools::closure::{ClosureParameter, ClosureRegistry, CwdEngine, ResolvedClosure};
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
