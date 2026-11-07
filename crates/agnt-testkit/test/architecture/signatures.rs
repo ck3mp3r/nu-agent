@@ -14,7 +14,7 @@ const SOURCE: &str = "mod.rs";
 
 /// The sites that prove the parsed shape is seen before a match is trusted.
 const RETURN_SOURCE: &str = "agnt-acp/src/session.rs";
-const FIELD_SOURCE: &str = "agnt-core/src/orchestrator/stages/context.rs";
+const FIELD_SOURCE: &str = "agnt-runtime/src/orchestrator/stages/context.rs";
 
 /// The unqualified spelling.
 const PLAIN_PARAMETER: &str = "pub fn run(bus: &Bus) {}\n";

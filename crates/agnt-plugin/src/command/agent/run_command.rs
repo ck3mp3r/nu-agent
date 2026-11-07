@@ -336,7 +336,7 @@ pub(super) fn run_command(
 
         // ── Pipeline turn ──────────────────────────────────────────────────────
         let (prompt, context) = super::input::extract_prompt_and_context(input)?;
-        agnt_core::orchestrator::run_single_turn(
+        agnt_runtime::orchestrator::run_single_turn(
             &mut runtime_impl,
             bus.turn(),
             prompt,

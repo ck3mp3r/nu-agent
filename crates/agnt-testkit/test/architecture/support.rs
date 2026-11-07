@@ -64,7 +64,7 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
             "ARCH-4 agnt-runtime/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-kernel/src/builtin.rs:44: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-core/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
+            "ARCH-4 agnt-runtime/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
             "ARCH-4 agnt-runtime/src/conversation/turn/executor/core.rs:49: `TurnOutcome` is declared 3 times in the workspace",
             "ARCH-4 agnt-acp/src/session.rs:58: `TurnOutcome` is declared 3 times in the workspace",
         ],

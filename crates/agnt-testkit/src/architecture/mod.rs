@@ -79,7 +79,7 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        qualified reference — and nothing else.\n",
     "        Pending: by-value parameters and returns, `Arc`/`Box` wraps and owned\n",
     "        fields are unmeasured today. The live shapes are\n",
-    "        `agnt-core/src/orchestrator/config.rs:94` and `:30`, the private parts view's\n",
+    "        `agnt-runtime/src/orchestrator/config.rs:94` and `:30`, the private parts view's\n",
     "        own at `:186`, and the root field at\n",
     "        `agnt-runtime/src/conversation/runtime.rs:149`, which is root-legal. The\n",
     "        scoping ruling that extends the check to them rides the loop-owner slice;\n",

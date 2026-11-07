@@ -28,7 +28,7 @@ async fn test_mode_run_single_turn_publishes_exactly_one_started() -> Result<()>
     let mut runtime = SingleTurnRuntime::default();
 
     // -- Exec
-    agnt_core::orchestrator::run_single_turn(
+    agnt_runtime::orchestrator::run_single_turn(
         &mut runtime,
         bus.turn(),
         "hello".to_string(),
