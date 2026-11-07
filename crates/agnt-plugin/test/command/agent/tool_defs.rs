@@ -1,5 +1,5 @@
 use super::tool_defs::assemble_tool_definitions;
-use agnt_core::conversation::builder::{
+use agnt_runtime::conversation::builder::{
     builtin_tool_definitions, list_agents_tool_definitions, messaging_tool_definitions,
     orchestrator_tool_definitions,
 };

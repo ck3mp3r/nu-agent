@@ -10,10 +10,10 @@ pub(super) use agent_client_protocol::schema::v1::{
     ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, on_receive_request};
-pub(super) use agnt_core::conversation::builder::builtin_tool_definitions;
 pub(super) use agnt_core::types::{
     DynamicTool, ToolContext, ToolDefinition, ToolExecutionError, ToolOutput, ToolSet,
 };
+pub(super) use agnt_runtime::conversation::builder::builtin_tool_definitions;
 pub(super) use agnt_runtime::tools::fs::core::version_token;
 
 pub(super) use crate::fs_tools::{make_acp_edit_tool, make_acp_read_tool};

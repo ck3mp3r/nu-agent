@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::permission::PermissionStage;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
 use agnt_runtime::bus::{Bus, OneshotRx, OneshotTx, UiEventRx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
 use agnt_runtime::orchestrator::events::{UiRequestResponse, WorkerCommand};
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use agnt_runtime::protocol::events::SystemEvent;

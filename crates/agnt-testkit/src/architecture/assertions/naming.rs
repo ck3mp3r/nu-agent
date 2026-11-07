@@ -56,8 +56,8 @@ const AGGREGATE_NAMES: [&str; 2] = ["AgentRuntime", "AgentConversationRuntime"];
 
 /// The composition root's own files: the two that assemble the aggregate.
 const ROOT_FILES: [&str; 2] = [
-    "agnt-core/src/conversation/runtime.rs",
-    "agnt-core/src/conversation/runtime_build.rs",
+    "agnt-runtime/src/conversation/runtime.rs",
+    "agnt-runtime/src/conversation/runtime_build.rs",
 ];
 
 /// The aggregate names one file carries.

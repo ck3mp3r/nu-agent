@@ -82,9 +82,9 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
         // github-copilot uses the OAuth device-code flow.
         if name == "github-copilot" || name == "copilot" {
             crate::block_on!(plugin, async {
-                use agnt_core::conversation::providers::copilot_device_login;
                 use agnt_core::types::DeviceCodeHandler;
                 use agnt_runtime::config::copilot_tokens::verify_copilot_login_persistence;
+                use agnt_runtime::conversation::providers::copilot_device_login;
 
                 let handler = DeviceCodeHandler::new(|prompt| {
                     eprintln!(

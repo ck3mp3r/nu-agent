@@ -59,7 +59,7 @@ pub fn arch_9a_public_runtime_fields(ws: &Workspace) -> Vec<Violation> {
 const ASSERTION_RUNTIME_FIELDS: &str = "ARCH-9.a";
 
 /// The aggregate's sources, by the label prefix the loader gives them.
-const AGGREGATE_SOURCES: &str = "agnt-core/src/conversation/";
+const AGGREGATE_SOURCES: &str = "agnt-runtime/src/conversation/";
 
 /// The aggregate type's name: the struct whose fields are its surface.
 const AGGREGATE_TYPE: &str = "AgentRuntime";

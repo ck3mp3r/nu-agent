@@ -2,9 +2,9 @@
 //! accounting on completion, and streaming assistant message rendering with
 //! diff-regurgitation dedup.
 
-use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::{ContentKind, ContentLine, MessageRole};
+use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
 use agnt_runtime::protocol::events::Usage;
 
 use super::transcript_store::TranscriptStore;

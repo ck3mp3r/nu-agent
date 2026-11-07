@@ -255,8 +255,10 @@ dependencies = [
 name = "agnt-runtime"
 version = "0.1.0"
 dependencies = [
+ "agnt-a2a",
  "agnt-kernel",
  "agnt-storage",
+ "agnt-testkit",
  "async-trait",
  "bytes",
  "chrono",

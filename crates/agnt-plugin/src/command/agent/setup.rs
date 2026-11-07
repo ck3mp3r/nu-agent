@@ -1,10 +1,10 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::LabeledError;
 
-use agnt_core::conversation::builder::{
+use agnt_runtime::config;
+use agnt_runtime::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, merge_compaction_configs,
 };
-use agnt_runtime::config;
 
 /// Thin binary entry-point: extracts and merges compaction config from CLI and
 /// plugin config, then delegates all registration work to `AgentRuntimeBuilder`.

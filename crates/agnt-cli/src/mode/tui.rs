@@ -7,9 +7,9 @@ use agnt_a2a::{
     AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
     skill_from_persona,
 };
-use agnt_core::conversation::contracts::{DecisionSource, RuntimeAccess};
 use agnt_core::orchestrator::{AgentSwitchHook, LoopConfig, run};
 use agnt_runtime::bus::OneshotTx;
+use agnt_runtime::conversation::contracts::{DecisionSource, RuntimeAccess};
 use agnt_runtime::protocol::McpManagement;
 use agnt_runtime::protocol::contracts::CoreRuntime;
 use agnt_runtime::protocol::event::PermissionDecision;

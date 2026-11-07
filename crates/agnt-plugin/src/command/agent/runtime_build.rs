@@ -5,7 +5,7 @@ use nu_protocol::{LabeledError, Value};
 
 use agnt_runtime::config::{self, Config, PluginConfig};
 
-pub(crate) use agnt_core::conversation::runtime_build::{
+pub(crate) use agnt_runtime::conversation::runtime_build::{
     apply_persona_config, apply_persona_model, build_preamble_cache,
 };
 

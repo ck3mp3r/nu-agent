@@ -1,0 +1,308 @@
+//! Tests for the conversation builder helpers and `AgentRuntimeBuilder`.
+//!
+//! The suite is split into topical sub-files. Shared imports live here; each
+//! sub-file pulls them in with `use super::*;`.
+
+// region:    --- Modules
+
+#[path = "builder/runtime_builder.rs"]
+mod runtime_builder;
+
+// endregion: --- Modules
+
+use super::{
+    builtin_tool_definitions, merge_compaction_configs, messaging_tool_definitions,
+    orchestrator_tool_definitions,
+};
+use crate::config::CompactionConfig;
+use crate::protocol::persona::PersonaSummary;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+// ── merge_compaction_configs ─────────────────────────────────────────────────
+
+#[test]
+fn merge_cli_overrides_plugin_config() {
+    let plugin = CompactionConfig {
+        proactive_threshold_pct: Some(0.85),
+        ..CompactionConfig::default()
+    };
+
+    let cli = CompactionConfig {
+        proactive_threshold_pct: None,
+        ..CompactionConfig::default()
+    };
+
+    let merged = merge_compaction_configs(Some(&plugin), &cli);
+
+    assert_eq!(merged.proactive_threshold_pct, Some(0.85));
+}
+
+#[test]
+fn merge_plugin_config_overrides_default() {
+    let plugin = CompactionConfig {
+        proactive_threshold_pct: Some(0.9),
+        ..CompactionConfig::default()
+    };
+
+    let cli = CompactionConfig::default();
+
+    let merged = merge_compaction_configs(Some(&plugin), &cli);
+
+    assert_eq!(merged.proactive_threshold_pct, Some(0.9));
+}
+
+#[test]
+fn merge_default_used_when_no_config() {
+    let cli = CompactionConfig::default();
+    let merged = merge_compaction_configs(None, &cli);
+
+    assert!(merged.proactive_threshold_pct.is_none());
+}
+
+#[test]
+fn full_precedence_default_then_plugin_then_cli() {
+    let plugin = CompactionConfig {
+        proactive_threshold_pct: Some(0.70),
+        ..CompactionConfig::default()
+    };
+
+    let cli = CompactionConfig {
+        proactive_threshold_pct: Some(0.50),
+        ..CompactionConfig::default()
+    };
+
+    let merged = merge_compaction_configs(Some(&plugin), &cli);
+
+    assert_eq!(merged.proactive_threshold_pct, Some(0.50));
+}
+
+// ── builtin_tool_definitions ─────────────────────────────────────────────────
+
+#[test]
+fn builtin_tool_registration_contains_exact_unprefixed_names() -> Result<()> {
+    let names = builtin_tool_definitions()?
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec![
+            "read",
+            "edit",
+            "skill",
+            "http",
+            "grep",
+            "glob",
+            "tmux_session",
+            "tmux_window",
+            "tmux_pane",
+            "tmux_layout",
+            "nu",
+            "ast_query",
+            "ast_nodes",
+            "ast_refs",
+            "ast_tree"
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn builtin_tool_registration_explicitly_rejects_prefixed_names() -> Result<()> {
+    let names = builtin_tool_definitions()?
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert!(!names.iter().any(|name| name.starts_with("fs__")));
+    assert!(!names.iter().any(|name| name.starts_with("tool__")));
+    Ok(())
+}
+
+#[test]
+fn builtin_edit_definition_uses_mode_and_operation_contract_with_compat_fields() -> Result<()> {
+    let edit = builtin_tool_definitions()?
+        .into_iter()
+        .find(|tool| tool.name == "edit")
+        .ok_or("edit tool definition")?;
+
+    let required = edit.parameters["required"]
+        .as_array()
+        .ok_or("required array")?
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(required, vec!["path", "operation"]);
+
+    assert_eq!(edit.parameters["properties"]["mode"]["enum"][0], "preview");
+    assert_eq!(edit.parameters["properties"]["mode"]["enum"][1], "apply");
+
+    // Operation types include both search_replace and create
+    let op_types = &edit.parameters["properties"]["operation"]["properties"]["type"]["enum"];
+    assert_eq!(op_types[0], "search_replace");
+    assert_eq!(op_types[1], "create");
+
+    // Content field exists for create operations
+    assert!(
+        edit.parameters["properties"]["operation"]["properties"]["content"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("create")
+    );
+    Ok(())
+}
+
+#[test]
+fn builtin_tmux_pane_definition_has_window_property() -> Result<()> {
+    let pane = builtin_tool_definitions()?
+        .into_iter()
+        .find(|tool| tool.name == "tmux_pane")
+        .ok_or("tmux_pane tool definition")?;
+
+    assert_eq!(pane.parameters["properties"]["window"]["type"], "string");
+    assert!(
+        pane.description.contains("session:window.pane"),
+        "Expected session:window.pane targeting mention, got: {}",
+        pane.description
+    );
+    assert!(
+        pane.description.contains("target"),
+        "Expected target field mention, got: {}",
+        pane.description
+    );
+
+    Ok(())
+}
+
+#[test]
+fn builtin_path_and_directory_parameters_mention_relative_paths() -> Result<()> {
+    let tools = builtin_tool_definitions()?;
+
+    for tool in &tools {
+        let properties = tool.parameters["properties"]
+            .as_object()
+            .ok_or("properties object")?;
+
+        for key in ["path", "directory"] {
+            let Some(param) = properties.get(key) else {
+                continue;
+            };
+            let description = param["description"]
+                .as_str()
+                .ok_or("parameter description")?;
+            assert!(
+                description.contains("relative to the working directory"),
+                "{}.{key} description must mention relative paths, got: {description}",
+                tool.name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+// ── messaging_tool_definitions ───────────────────────────────────────────────
+
+#[test]
+fn messaging_tool_registration_contains_only_send_message() -> Result<()> {
+    let names = messaging_tool_definitions()?
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["send_message"]);
+    Ok(())
+}
+
+#[test]
+fn send_message_description_explains_delivery_semantics() -> Result<()> {
+    let defs = messaging_tool_definitions()?;
+    let send = defs
+        .iter()
+        .find(|d| d.name == "send_message")
+        .ok_or("send_message tool")?;
+    assert!(
+        send.description.contains("conversation turns"),
+        "Expected delivery semantics, got: {}",
+        send.description
+    );
+    assert!(
+        send.description.contains("asynchronously"),
+        "Expected async mention, got: {}",
+        send.description
+    );
+    assert!(
+        send.description.contains("task instructions"),
+        "Expected task instructions mention, got: {}",
+        send.description
+    );
+    assert!(
+        !send.description.contains("list_agents"),
+        "send_message description must not reference list_agents, got: {}",
+        send.description
+    );
+    Ok(())
+}
+
+// ── orchestrator_tool_definitions ────────────────────────────────────────────
+
+#[test]
+fn orchestrator_tool_registration_contains_exact_names() -> Result<()> {
+    let names = orchestrator_tool_definitions(&[])?
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["spawn_agent", "terminate_agent"]);
+    Ok(())
+}
+
+#[test]
+fn orchestrator_tool_description_shows_no_agents_message_when_empty() -> Result<()> {
+    let defs = orchestrator_tool_definitions(&[])?;
+    let desc = &defs[0].description;
+    assert!(
+        desc.contains("No agent personas found"),
+        "Expected no-agents message, got: {desc}"
+    );
+    Ok(())
+}
+
+#[test]
+fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
+    let agents = vec![
+        PersonaSummary {
+            name: "coder".to_string(),
+            description: Some("Writes code".to_string()),
+            builtin: false,
+        },
+        PersonaSummary {
+            name: "reviewer".to_string(),
+            description: None,
+            builtin: false,
+        },
+    ];
+    let defs = orchestrator_tool_definitions(&agents)?;
+    let desc = &defs[0].description;
+    assert!(
+        desc.contains("coder: Writes code"),
+        "Expected coder entry, got: {desc}"
+    );
+    assert!(
+        desc.contains("- reviewer"),
+        "Expected reviewer entry, got: {desc}"
+    );
+    assert!(
+        desc.contains("send_message"),
+        "Expected send_message mention, got: {desc}"
+    );
+    assert!(desc.contains("tmux"), "Expected tmux mention, got: {desc}");
+    Ok(())
+}
+
+// ── AgentRuntimeBuilder::build ───────────────────────────────────────────────
+//
+// The builder tests live in `builder/runtime_builder.rs`; the module is
+// declared at the top of this file.

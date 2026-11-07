@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1::{
     PermissionOption, RequestPermissionOutcome, SelectedPermissionOutcome, ToolCallUpdate,
 };
-use agnt_core::conversation::runtime::PendingPermissions;
 use agnt_runtime::bus::{OneshotRx, OneshotTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
 use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 use crate::permission::PermissionRequestSink;

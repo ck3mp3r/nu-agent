@@ -81,7 +81,7 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        fields are unmeasured today. The live shapes are\n",
     "        `agnt-core/src/orchestrator/config.rs:94` and `:30`, the private parts view's\n",
     "        own at `:186`, and the root field at\n",
-    "        `agnt-core/src/conversation/runtime.rs:149`, which is root-legal. The\n",
+    "        `agnt-runtime/src/conversation/runtime.rs:149`, which is root-legal. The\n",
     "        scoping ruling that extends the check to them rides the loop-owner slice;\n",
     "        the thirty-nine reference sites stay ratchet-locked meanwhile.\n",
     "ARCH-9  Only the composition root constructs infrastructure: HTTP clients, database\n",

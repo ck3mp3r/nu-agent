@@ -5,8 +5,8 @@ use std::sync::Arc;
 use agnt_a2a::{A2aCompletionEvent, InMemoryTaskStore, IncomingTask};
 use tokio::sync::mpsc;
 
-use crate::conversation::runtime::PendingPermissions;
 use agnt_runtime::bus::Bus;
+use agnt_runtime::conversation::runtime::PendingPermissions;
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 

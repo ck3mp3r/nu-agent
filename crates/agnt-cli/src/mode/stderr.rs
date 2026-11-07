@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agnt_core::conversation::contracts::RuntimeAccess;
 use agnt_core::orchestrator::run_single_turn;
 use agnt_runtime::bus::CancelEvent;
+use agnt_runtime::conversation::contracts::RuntimeAccess;
 use agnt_runtime::protocol::contracts::CoreRuntime;
 use agnt_runtime::protocol::events::SystemEvent;
 use agnt_runtime::session::management::SessionPersistence;

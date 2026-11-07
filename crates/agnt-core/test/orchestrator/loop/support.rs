@@ -9,7 +9,6 @@ use agnt_a2a::{
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::SourceChannels;
 pub(crate) use crate::orchestrator::loop_impl::WORKER_CMD_CAPACITY;
 use crate::orchestrator::stages::{
@@ -17,6 +16,7 @@ use crate::orchestrator::stages::{
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use agnt_runtime::bus::{Bus, CompactionRx, ExternalRx, UiStateRx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
 use agnt_runtime::orchestrator::events::{
     OrchestratorEvent, UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
 };

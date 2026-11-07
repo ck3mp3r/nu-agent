@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::state::StatusMessageKind;
-use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
+use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
 
 // ---------------------------------------------------------------------------
 // SystemEvent::InferenceStopped — hook-stop notice (Fix 2)

@@ -11,11 +11,11 @@ use super::{
 };
 
 use crate::plugin::AgentPlugin;
-use agnt_core::conversation::{
+use agnt_runtime::config::defaults;
+use agnt_runtime::conversation::{
     builder::BuildInput,
     runtime_build::{RuntimeBuildParams, build_runtime},
 };
-use agnt_runtime::config::defaults;
 use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
@@ -262,7 +262,7 @@ pub(super) fn run_command(
         // Signal bus shared by tool registration and the runtime.
         let bus = agnt_runtime::bus::Bus::default();
 
-        let agnt_core::conversation::builder::BuildArtifacts { merged_compaction } =
+        let agnt_runtime::conversation::builder::BuildArtifacts { merged_compaction } =
             super::setup::register_tools(
                 call,
                 BuildInput {

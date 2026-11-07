@@ -5,10 +5,10 @@ use tokio::sync::mpsc;
 use agnt_a2a::InMemoryTaskStore;
 use nu_protocol::Span;
 
-use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use agnt_kernel::bus::{CancelTx, SessionTx, TurnTx};
 use agnt_runtime::bus::{CompactionTx, UiEventTx, UiStateTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
 use agnt_runtime::orchestrator::events::{UiRequest, UiRequestResponse, WorkerCommand};
 use agnt_runtime::protocol::event::PermissionDecisionSubmission;
 

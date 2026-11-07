@@ -7,7 +7,7 @@ use super::support::{self, ARCH_9A, Result};
 // region:    --- Fixtures
 
 /// The crate the rogue fixture lives in.
-const CRATE: &str = "agnt-core";
+const CRATE: &str = "agnt-runtime";
 
 /// The source every rogue fixture writes, inside the aggregate's directory.
 const SOURCE: &str = "conversation/runtime.rs";
@@ -36,7 +36,7 @@ fn test_composition_arch_9a_public_runtime_fields_on_baseline() -> Result<()> {
     let loaded = ws
         .sources()
         .iter()
-        .any(|(label, _)| label.starts_with("agnt-core/src/conversation/"));
+        .any(|(label, _)| label.starts_with("agnt-runtime/src/conversation/"));
 
     // -- Exec
     let found = arch_9a_public_runtime_fields(&ws);
@@ -65,7 +65,7 @@ fn test_composition_arch_9a_flags_a_public_field() -> Result<()> {
     // -- Check
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].assertion, ARCH_9A);
-    assert_eq!(found[0].site, "agnt-core/src/conversation/runtime.rs:2");
+    assert_eq!(found[0].site, "agnt-runtime/src/conversation/runtime.rs:2");
     assert_eq!(found[0].detail, "pub bus");
     Ok(())
 }

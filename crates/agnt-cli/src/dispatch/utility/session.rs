@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use agnt_core::conversation::runtime_build::build_compaction_policy;
 use agnt_core::types::{AssistantContent, Message, UserContent};
 use agnt_runtime::config::CompactionConfig;
+use agnt_runtime::conversation::runtime_build::build_compaction_policy;
 use agnt_runtime::rig_memory::CompactionPolicy;
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::session::prefix::dir_prefix;

@@ -9,16 +9,16 @@ use std::io::IsTerminal;
 use std::sync::Arc;
 
 use agnt_a2a::{AgentBuilder, Skill};
-use agnt_core::conversation::builder::{
+use agnt_core::types::ToolServer;
+use agnt_runtime::config::defaults;
+use agnt_runtime::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, ToolAssembly, assemble_tool_definitions,
     merge_compaction_configs,
 };
-use agnt_core::conversation::runtime_build::{
+use agnt_runtime::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
     build_runtime,
 };
-use agnt_core::types::ToolServer;
-use agnt_runtime::config::defaults;
 use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
@@ -395,7 +395,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 /// The A2A subcommand never receives a prompt, so the input is always empty:
 /// TUI when both stdin and stderr are terminals; stderr rendering otherwise.
 fn resolve_mode() -> CliMode {
-    use agnt_core::conversation::mode_logic::{AgentMode, resolve_agent_mode};
+    use agnt_runtime::conversation::mode_logic::{AgentMode, resolve_agent_mode};
     let stdin_is_tty = std::io::stdin().is_terminal();
     let stderr_is_tty = std::io::stderr().is_terminal();
     match resolve_agent_mode(true, stdin_is_tty, stderr_is_tty) {

@@ -9,7 +9,7 @@ pub(super) struct PermissionGateRuntime {
     active: Arc<AtomicBool>,
     request_id: String,
     rule_identity: String,
-    pub(super) pending: crate::conversation::runtime::PendingPermissions,
+    pub(super) pending: agnt_runtime::conversation::runtime::PendingPermissions,
     bus: agnt_runtime::bus::Bus,
 }
 

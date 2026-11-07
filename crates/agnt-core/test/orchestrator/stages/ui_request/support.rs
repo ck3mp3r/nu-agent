@@ -7,10 +7,10 @@ pub(super) use agnt_a2a::InMemoryTaskStore;
 pub(super) use nu_protocol::Span;
 pub(super) use tokio::sync::mpsc;
 
-pub(super) use crate::conversation::runtime::PendingPermissions;
 pub(super) use crate::orchestrator::stages::ui_request::UiRequestStage;
 pub(super) use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
 pub(super) use agnt_runtime::bus::{Bus, SessionEvent, SessionRx, UiEventRx, UiStateRx};
+pub(super) use agnt_runtime::conversation::runtime::PendingPermissions;
 pub(super) use agnt_runtime::orchestrator::events::{
     UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
 };

@@ -18,7 +18,6 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigSelectOptions, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::types::{AssistantContent, Message, UserContent};
 use agnt_runtime::bus::{
     Bus, CancelTx, ChannelError, CompactionTx, RequestCancel, SessionEvent, SessionTx, TurnEvent,
@@ -26,6 +25,7 @@ use agnt_runtime::bus::{
 };
 use agnt_runtime::config::ModelsCache;
 use agnt_runtime::config::Paths;
+use agnt_runtime::conversation::runtime::AgentConversationRuntime;
 use agnt_runtime::protocol::contracts::CoreRuntime;
 use agnt_runtime::protocol::events::CompactionSource;
 use agnt_runtime::protocol::model_switching::ModelSwitching;

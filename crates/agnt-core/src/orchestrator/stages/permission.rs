@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{MutexGuard, PoisonError};
 
-use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
 use agnt_kernel::bus::OneshotTx;
+use agnt_runtime::conversation::runtime::PendingPermissions;
 use agnt_runtime::protocol::event::{
     PermissionDecision as ProtocolPermissionDecision, PermissionDecisionSubmission,
 };
