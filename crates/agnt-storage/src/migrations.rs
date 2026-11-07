@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 use crate::engine::Location;
 use crate::error::{Result, StorageError};
-use crate::schema::{M1, M2};
+use crate::schema::{M1, M2, M3};
 
 // endregion: --- Modules
 
@@ -14,7 +14,7 @@ use crate::schema::{M1, M2};
 
 /// The migrations this build knows, oldest first: index `n` migrates version
 /// `n` to version `n + 1`.
-pub(crate) const MIGRATIONS: &[&[&str]] = &[M1, M2];
+pub(crate) const MIGRATIONS: &[&[&str]] = &[M1, M2, M3];
 
 /// The `user_version` this build migrates a database to.
 pub(crate) const TARGET_VERSION: u32 = MIGRATIONS.len() as u32;

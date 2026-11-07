@@ -17,6 +17,7 @@ mod rig_adapter;
 mod schema;
 mod services;
 mod storage;
+mod transcript;
 
 pub use engine::Work;
 pub use error::{Result, StorageError};
@@ -26,6 +27,7 @@ pub use services::{
     TurnFacts, Turns,
 };
 pub use storage::Storage;
+pub use transcript::{TranscriptId, TranscriptRecord, TranscriptRow, TranscriptStamp};
 
 // endregion: --- Modules
 

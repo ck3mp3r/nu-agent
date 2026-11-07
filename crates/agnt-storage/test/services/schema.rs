@@ -1,8 +1,8 @@
 use super::*;
 
-/// M2 is the schema this build migrates a database to.
+/// M3 is the schema this build migrates a database to.
 #[tokio::test]
-async fn test_services_migration_migrates_to_m2() -> Result<()> {
+async fn test_services_migration_migrates_to_m3() -> Result<()> {
     // -- Setup & Fixtures
     let fixture = Fixture::new()?;
 
@@ -10,11 +10,11 @@ async fn test_services_migration_migrates_to_m2() -> Result<()> {
     let version = version(&fixture.storage).await?;
 
     // -- Check
-    assert_eq!(version, 2, "a fresh database migrates to M2");
+    assert_eq!(version, 3, "a fresh database migrates to M3");
     Ok(())
 }
 
-/// M1's tables survive and M2's three tables are added.
+/// M1's tables survive, M2's three tables are added, and M3 adds the transcript.
 #[tokio::test]
 async fn test_services_migration_holds_the_baseline_and_the_fact_tables() -> Result<()> {
     // -- Setup & Fixtures
@@ -32,6 +32,7 @@ async fn test_services_migration_holds_the_baseline_and_the_fact_tables() -> Res
             "logs",
             "sessions",
             "tool_calls",
+            "transcript",
             "turns"
         ],
         "the baseline and the fact tables coexist"
@@ -100,5 +101,33 @@ async fn test_services_migration_entry_edge_references_turns() -> Result<()> {
         ddl.contains("REFERENCES turns"),
         "the edge SHALL reference turns, got: {ddl}"
     );
+    Ok(())
+}
+
+/// The transcript is keyed by the identity a row derives, and one row holds one
+/// position of one session.
+#[tokio::test]
+async fn test_services_migration_transcript_is_keyed_by_its_derived_id() -> Result<()> {
+    // -- Setup & Fixtures
+    let fixture = Fixture::new()?;
+
+    // -- Exec
+    let ddl = table_sql(&fixture.storage, "transcript").await?;
+
+    // -- Check
+    assert!(
+        ddl.contains("id TEXT PRIMARY KEY"),
+        "the derived id SHALL be the key, got: {ddl}"
+    );
+    assert!(
+        ddl.contains("UNIQUE (session_id, row_seq)"),
+        "one row SHALL hold one position of one session, got: {ddl}"
+    );
+    for kind in ["user", "assistant", "system", "tool", "compaction"] {
+        assert!(
+            ddl.contains(kind),
+            "the kind constraint SHALL name {kind}, got: {ddl}"
+        );
+    }
     Ok(())
 }

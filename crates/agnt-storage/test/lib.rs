@@ -25,7 +25,10 @@ fn test_storage_open_creates_file_and_migrates() -> Result<()> {
     // -- Check
     assert!(path.exists(), "open SHALL create the database file");
     let version = storage.call_blocking(Version)??;
-    assert_eq!(version, 2, "open SHALL migrate a new database to M1");
+    assert_eq!(
+        version, 3,
+        "open SHALL migrate a new database to the target version"
+    );
     let tables = storage.call_blocking(Tables)??;
     assert_eq!(
         tables,
@@ -35,6 +38,7 @@ fn test_storage_open_creates_file_and_migrates() -> Result<()> {
             "logs",
             "sessions",
             "tool_calls",
+            "transcript",
             "turns"
         ]
     );
@@ -49,12 +53,12 @@ fn test_storage_open_migrates_nothing_at_target_version() -> Result<()> {
     drop(Storage::open(&path)?);
 
     // -- Exec
-    // The M1 statements are plain `CREATE TABLE`: a second migration run fails.
+    // Every migration's statements are plain `CREATE TABLE`: a second run fails.
     let storage = Storage::open(&path)?;
 
     // -- Check
     let version = storage.call_blocking(Version)??;
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     let tables = storage.call_blocking(Tables)??;
     assert_eq!(
         tables,
@@ -64,6 +68,7 @@ fn test_storage_open_migrates_nothing_at_target_version() -> Result<()> {
             "logs",
             "sessions",
             "tool_calls",
+            "transcript",
             "turns"
         ]
     );
@@ -89,9 +94,9 @@ fn test_storage_open_refuses_newer_schema() -> Result<()> {
     let StorageError::SchemaTooNew { stored, target } = refusal else {
         return Err(format!("expected a version refusal, got {message}").into());
     };
-    assert_eq!((stored, target), (7, 2));
+    assert_eq!((stored, target), (7, 3));
     assert!(
-        message.contains("version 7") && message.contains("the 2"),
+        message.contains("version 7") && message.contains("the 3"),
         "the refusal SHALL name both versions: {message}"
     );
     Ok(())
@@ -133,6 +138,7 @@ fn test_storage_in_memory_carries_schema() -> Result<()> {
             "logs",
             "sessions",
             "tool_calls",
+            "transcript",
             "turns"
         ]
     );
@@ -176,7 +182,7 @@ async fn test_storage_call_awaits_reply() -> Result<()> {
     let version = storage.call(Version).await??;
 
     // -- Check
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     Ok(())
 }
 
@@ -262,12 +268,12 @@ async fn test_storage_open_refuses_the_legacy_sqlx_migration_store() -> Result<(
     else {
         return Err(format!("expected a legacy-store refusal, got {message}").into());
     };
-    assert_eq!((stored, target), (0, 2));
+    assert_eq!((stored, target), (0, 3));
     assert_eq!(refused_path, path);
     assert!(
         message.contains("legacy sqlx-migration store")
             && message.contains("stored schema version 0")
-            && message.contains("migrates to 2"),
+            && message.contains("migrates to 3"),
         "the refusal SHALL name the era and both versions: {message}"
     );
     assert!(

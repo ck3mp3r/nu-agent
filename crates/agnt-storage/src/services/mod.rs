@@ -12,6 +12,7 @@ mod settle;
 mod tool_calls;
 mod turns;
 
+pub(crate) use entries::ReadTranscript;
 pub use entries::{Entries, EntryTurn, MessageKey};
 pub use settle::{Settle, SettleRecord};
 pub use tool_calls::{CallFact, ToolCallStatus, ToolCalls};

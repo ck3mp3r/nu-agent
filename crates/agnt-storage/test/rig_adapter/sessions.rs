@@ -61,7 +61,7 @@ fn test_rig_adapter_fresh_file_lists_no_sessions() -> Result<()> {
     // -- Exec
     let ids = session_ids(&storage)?;
 
-    // -- Check: nothing listed, and the six engine tables are there.
+    // -- Check: nothing listed, and the engine tables are there.
     assert!(ids.is_empty(), "a fresh store lists no session: {ids:?}");
     let tables = storage.call_blocking(Tables)??;
     assert_eq!(
@@ -72,9 +72,10 @@ fn test_rig_adapter_fresh_file_lists_no_sessions() -> Result<()> {
             "logs",
             "sessions",
             "tool_calls",
+            "transcript",
             "turns"
         ],
-        "a fresh store SHALL hold the six engine tables"
+        "a fresh store SHALL hold the engine tables"
     );
     Ok(())
 }

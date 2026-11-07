@@ -74,3 +74,36 @@ CREATE TABLE tool_calls (
 pub(crate) const M2: &[&str] = &[SCHEMA_TURNS, SCHEMA_ENTRY_TURNS, SCHEMA_TOOL_CALLS];
 
 // endregion: --- M2
+
+// region:    --- M3
+
+/// `transcript`: one row per transcript block, keyed by the identity the row
+/// derives from its own content.
+///
+/// `row_seq` is the row's position in its session's transcript, and the unique
+/// edge makes one row per position: a fold that re-reads a session lands each
+/// row once. The optional columns are the parts a row kind may not carry — a
+/// system row has no tool, a call nothing recorded has no status — so an absent
+/// part is NULL and never an invented value.
+pub(crate) const SCHEMA_TRANSCRIPT: &str = "\
+CREATE TABLE transcript (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    row_seq INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('user', 'assistant', 'system', 'tool', 'compaction')),
+    content TEXT NOT NULL,
+    tool_name TEXT,
+    tool_arguments TEXT,
+    tool_result TEXT,
+    tool_success INTEGER CHECK (tool_success IN (0, 1)),
+    tool_status TEXT CHECK (tool_status IN ('success', 'failed', 'cancelled')),
+    stamp_millis INTEGER,
+    stamp_model TEXT,
+    stamp_agent TEXT,
+    UNIQUE (session_id, row_seq)
+)";
+
+/// Migration 3: the transcript rows the store folds.
+pub(crate) const M3: &[&str] = &[SCHEMA_TRANSCRIPT];
+
+// endregion: --- M3
