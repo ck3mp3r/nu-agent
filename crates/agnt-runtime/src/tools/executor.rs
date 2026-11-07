@@ -44,7 +44,7 @@ impl ToolExecutor {
     /// * `Ok(Value)` - The result of the closure execution
     /// * `Err(ToolHandlerError)` with kind `ToolErrorKind::Timeout` - If
     ///   execution exceeds the configured timeout
-    /// * `Err(ToolHandlerError)` with kind `ToolErrorKind::Runtime` - If the
+    /// * `Err(ToolHandlerError)` with kind `ToolErrorKind::Other` - If the
     ///   closure execution fails
     ///
     /// # Example
@@ -114,7 +114,7 @@ impl ToolExecutor {
             Ok(Ok(Err(e))) => {
                 let audit = AuditResult::Err(format!("Execution error: {e}"));
                 let err = ToolHandlerError {
-                    kind: ToolErrorKind::Runtime,
+                    kind: ToolErrorKind::Other,
                     message: format!("Tool execution failed: {e}"),
                     details: None,
                 };
@@ -128,7 +128,7 @@ impl ToolExecutor {
                     GenericError::new("Closure execution panicked", join_error.to_string(), span)
                         .into();
                 let err = ToolHandlerError {
-                    kind: ToolErrorKind::Runtime,
+                    kind: ToolErrorKind::Other,
                     message: format!("Tool execution failed: {shell_error}"),
                     details: None,
                 };

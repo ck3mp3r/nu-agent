@@ -56,7 +56,7 @@ async fn validation_table() {
         let err = TmuxPaneTool::execute(&args, Path::new("/tmp"), &cancel)
             .await
             .unwrap_err();
-        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+        assert_eq!(err.kind, ToolErrorKind::InvalidArgs, "case '{name}': kind");
         if let Some(message) = expected_message {
             assert!(
                 err.message.contains(message),

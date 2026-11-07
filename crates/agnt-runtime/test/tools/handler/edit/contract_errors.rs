@@ -218,7 +218,7 @@ async fn edit_missing_required_arguments_fail_the_tool_call() -> Result<()> {
             .ok_or("a request without the required fields must fail the tool call")?;
         assert_eq!(
             error.kind,
-            crate::tools::handler::ToolErrorKind::Validation,
+            crate::tools::handler::ToolErrorKind::InvalidArgs,
             "case '{name}': kind"
         );
         assert!(

@@ -45,6 +45,6 @@ async fn skill_missing_name_arg_returns_validation_error() {
     assert!(result.is_err());
     assert_eq!(
         result.unwrap_err().kind,
-        super::super::ToolErrorKind::Validation
+        super::super::ToolErrorKind::InvalidArgs
     );
 }

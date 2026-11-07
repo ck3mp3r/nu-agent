@@ -64,7 +64,7 @@ fn parse_edit_match_mode(
         "literal" => Ok(crate::tools::fs::core::EditMatchMode::Literal),
         "regex" => Ok(crate::tools::fs::core::EditMatchMode::Regex),
         other => Err(ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: format!("Invalid edit.match_mode '{other}': expected 'literal' or 'regex'"),
             details: None,
         }),
@@ -78,7 +78,7 @@ fn parse_edit_occurrence(
         "first" => Ok(crate::tools::fs::core::EditOccurrence::First),
         "all" => Ok(crate::tools::fs::core::EditOccurrence::All),
         other => Err(ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: format!("Invalid edit.occurrence '{other}': expected 'first' or 'all'"),
             details: None,
         }),
@@ -90,7 +90,7 @@ pub fn parse_edit_mode(value: Option<&str>) -> Result<EditToolMode, ToolHandlerE
         "preview" => Ok(EditToolMode::Preview),
         "apply" => Ok(EditToolMode::Apply),
         other => Err(ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: format!("Invalid edit.mode '{other}': expected 'preview' or 'apply'"),
             details: None,
         }),
@@ -139,7 +139,7 @@ pub(super) fn resolve_edit_operation(
     match op_type {
         "create" => {
             let content = operation.content.clone().ok_or(ToolHandlerError {
-                kind: ToolErrorKind::Validation,
+                kind: ToolErrorKind::InvalidArgs,
                 message:
                     "Invalid edit arguments: missing field `operation.content` for create operation"
                         .to_string(),
@@ -149,12 +149,12 @@ pub(super) fn resolve_edit_operation(
         }
         "search_replace" => {
             let search = operation.search.clone().ok_or(ToolHandlerError {
-                kind: ToolErrorKind::Validation,
+                kind: ToolErrorKind::InvalidArgs,
                 message: "Invalid edit arguments: missing field `operation.search` for search_replace operation".to_string(),
                 details: None,
             })?;
             let replacement = operation.replacement.clone().ok_or(ToolHandlerError {
-                kind: ToolErrorKind::Validation,
+                kind: ToolErrorKind::InvalidArgs,
                 message: "Invalid edit arguments: missing field `operation.replacement` for search_replace operation".to_string(),
                 details: None,
             })?;
@@ -170,7 +170,7 @@ pub(super) fn resolve_edit_operation(
             ))
         }
         other => Err(ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: format!(
                 "Invalid edit.operation.type '{other}': expected 'search_replace' or 'create'"
             ),
@@ -196,13 +196,8 @@ fn map_edit_contract_error(error: &ToolHandlerError) -> &'static str {
     }
 
     match error.kind {
-        ToolErrorKind::Validation => "validation",
-        ToolErrorKind::Authorization => "internal",
-        ToolErrorKind::Runtime => "internal",
-        ToolErrorKind::Transport
-        | ToolErrorKind::Timeout
-        | ToolErrorKind::NotRun
-        | ToolErrorKind::Unknown => "internal",
+        ToolErrorKind::InvalidArgs => "validation",
+        _ => "internal",
     }
 }
 
@@ -337,7 +332,7 @@ fn noop_or_conflict_error(
     };
 
     ToolHandlerError {
-        kind: ToolErrorKind::Validation,
+        kind: ToolErrorKind::InvalidArgs,
         message,
         details: Some(build_edit_contract_response(path, mode, plan, false, None)),
     }
@@ -350,7 +345,7 @@ fn create_conflict_error(
     plan: crate::tools::fs::core::EditPlan,
 ) -> ToolHandlerError {
     ToolHandlerError {
-        kind: ToolErrorKind::Validation,
+        kind: ToolErrorKind::InvalidArgs,
         message: format!("edit conflict: file already exists: '{path}'"),
         details: Some(build_edit_contract_response(path, mode, plan, false, None)),
     }
@@ -361,7 +356,7 @@ pub(crate) fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> To
 
     match error {
         MutateError::Io(io_error) => ToolHandlerError {
-            kind: ToolErrorKind::Runtime,
+            kind: ToolErrorKind::Other,
             message: io_error.to_string(),
             details: Some(serde_json::json!({
                 "io_kind": format!("{:?}", io_error.kind()),
@@ -373,14 +368,14 @@ pub(crate) fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> To
             })),
         },
         MutateError::Conflict(_) => ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: error.to_string(),
             details: Some(serde_json::json!({
                 "diagnostic_class": "stale"
             })),
         },
         other => ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: other.to_string(),
             details: Some(serde_json::json!({
                 "diagnostic_class": "validation"
@@ -401,7 +396,7 @@ impl BuiltinTool for EditTool {
     ) -> Result<JsonValue, ToolHandlerError> {
         let edit_args: EditArgs =
             serde_json::from_value(args.clone()).map_err(|e| ToolHandlerError {
-                kind: ToolErrorKind::Validation,
+                kind: ToolErrorKind::InvalidArgs,
                 message: format!("Invalid edit arguments: {e}"),
                 details: None,
             })?;

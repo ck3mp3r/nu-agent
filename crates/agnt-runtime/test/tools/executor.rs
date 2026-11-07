@@ -148,8 +148,8 @@ async fn test_tools_executor_invoke_closure_propagates_execution_error() -> Resu
     let err = result.err().ok_or("an engine failure must fail the call")?;
     assert_eq!(
         err.kind,
-        ToolErrorKind::Runtime,
-        "an engine failure must surface as ToolErrorKind::Runtime, got: {err:?}"
+        ToolErrorKind::Other,
+        "an engine failure must surface as ToolErrorKind::Other, got: {err:?}"
     );
     assert!(
         err.message.starts_with("Tool execution failed: "),

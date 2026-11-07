@@ -99,8 +99,5 @@ async fn read_missing_file_returns_runtime_error() {
     let args = serde_json::json!({ "path": "/nonexistent/path/file.txt" });
     let result = ReadTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await;
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err().kind,
-        super::super::ToolErrorKind::Runtime
-    );
+    assert_eq!(result.unwrap_err().kind, super::super::ToolErrorKind::Other);
 }

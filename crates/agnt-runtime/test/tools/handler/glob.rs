@@ -155,7 +155,7 @@ async fn glob_invalid_pattern_returns_validation_error() {
     let args = serde_json::json!({"pattern": "!", "path": dir.path().to_str().unwrap()});
     let result = GlobTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await;
     match result {
-        Err(e) => assert_eq!(e.kind, ToolErrorKind::Validation),
+        Err(e) => assert_eq!(e.kind, ToolErrorKind::InvalidArgs),
         Ok(_) => { /* OverrideBuilder accepted it — acceptable */ }
     }
 }

@@ -29,7 +29,7 @@ impl BuiltinTool for GrepTool {
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: GrepArgs =
             serde_json::from_value(args.clone()).map_err(|e| ToolHandlerError {
-                kind: ToolErrorKind::Validation,
+                kind: ToolErrorKind::InvalidArgs,
                 message: format!("Invalid grep arguments: {e}"),
                 details: None,
             })?;
@@ -62,7 +62,7 @@ fn dispatch_grep(
         .case_insensitive(case_insensitive)
         .build()
         .map_err(|e| ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: format!("Invalid regex pattern: {e}"),
             details: None,
         })?;
@@ -73,12 +73,12 @@ fn dispatch_grep(
     if let Some(glob) = glob_filter {
         let mut ob = ignore::overrides::OverrideBuilder::new(search_path);
         ob.add(glob).map_err(|e| ToolHandlerError {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: format!("Invalid glob filter: {e}"),
             details: None,
         })?;
         let overrides = ob.build().map_err(|e| ToolHandlerError {
-            kind: ToolErrorKind::Runtime,
+            kind: ToolErrorKind::Other,
             message: format!("Failed to build glob filter: {e}"),
             details: None,
         })?;

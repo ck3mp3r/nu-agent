@@ -44,9 +44,8 @@ pub const ARCH_12: &str = "ARCH-12";
 /// not come from.
 ///
 /// ARCH-4's row holds every `pub enum` whose name another `pub enum` also
-/// carries: five distinctions, ten declarations. Merging any pair is a
-/// later slice's claim (`7e4f330c` drains `ToolErrorKind`), and its baseline
-/// entry is removed with it.
+/// carries: four distinctions, eight declarations. Merging any pair is a
+/// later slice's claim, and its baseline entry is removed with it.
 ///
 /// ARCH-8's row is empty: no production site outside the composition root
 /// takes or hands out the whole bus.
@@ -60,8 +59,6 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
             "ARCH-4 agnt-runtime/src/hook/permission_resolver.rs:57: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/state/app_state.rs:59: `ToolCallStatus` is declared 2 times in the workspace",
             "ARCH-4 agnt-storage/src/services/tool_calls.rs:20: `ToolCallStatus` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:223: `ToolErrorKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-runtime/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-kernel/src/builtin.rs:44: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
         ],

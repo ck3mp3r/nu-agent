@@ -1,6 +1,6 @@
 use rig::tool::ToolExecutionError;
 
-pub use agnt_kernel::ToolSource;
+pub use agnt_kernel::{ToolErrorKind, ToolSource};
 
 /// The text a surface prints for a tool source: the label table lives here,
 /// not in the kernel, because only the layer that draws the text owns it.
@@ -10,35 +10,6 @@ pub fn tool_source_text(source: ToolSource) -> &'static str {
         ToolSource::Mcp => "mcp",
         ToolSource::Builtin => "builtin",
         ToolSource::Unknown => "unknown",
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ToolErrorKind {
-    Timeout,
-    Validation,
-    Authorization,
-    Runtime,
-    Transport,
-    Unknown,
-    /// The call never produced a result: the turn's wall clock or its cancel
-    /// stopped it first. Maps to rig's `cancelled` kind, the kind name the
-    /// transcript's not-run class reads, so the live row finishes ⊘ exactly as
-    /// the rehydrated row does.
-    NotRun,
-}
-
-impl ToolErrorKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Timeout => "timeout",
-            Self::Validation => "validation",
-            Self::Authorization => "authorization",
-            Self::Runtime => "runtime",
-            Self::Transport => "transport",
-            Self::Unknown => "unknown",
-            Self::NotRun => "not_run",
-        }
     }
 }
 
@@ -52,14 +23,14 @@ pub struct ToolHandlerError {
 impl ToolHandlerError {
     pub fn validation(message: impl Into<String>) -> Self {
         Self {
-            kind: ToolErrorKind::Validation,
+            kind: ToolErrorKind::InvalidArgs,
             message: message.into(),
             details: None,
         }
     }
     pub fn runtime(message: impl Into<String>) -> Self {
         Self {
-            kind: ToolErrorKind::Runtime,
+            kind: ToolErrorKind::Other,
             message: message.into(),
             details: None,
         }
@@ -67,7 +38,7 @@ impl ToolHandlerError {
     /// A call the turn stopped before it produced a result.
     pub fn not_run(message: impl Into<String>) -> Self {
         Self {
-            kind: ToolErrorKind::NotRun,
+            kind: ToolErrorKind::Cancelled,
             message: message.into(),
             details: None,
         }
@@ -85,15 +56,19 @@ impl ToolHandlerError {
 /// classification instead of a flat provider failure.
 pub fn execution_error_for_kind(kind: ToolErrorKind, message: String) -> ToolExecutionError {
     match kind {
-        ToolErrorKind::Validation => ToolExecutionError::invalid_args(message),
+        ToolErrorKind::InvalidArgs => ToolExecutionError::invalid_args(message),
         ToolErrorKind::Timeout => ToolExecutionError::timeout(message),
-        ToolErrorKind::Authorization => ToolExecutionError::permission_denied(message),
-        ToolErrorKind::Transport => ToolExecutionError::network(message),
-        ToolErrorKind::Runtime | ToolErrorKind::Unknown => ToolExecutionError::other(message),
+        ToolErrorKind::PermissionDenied => ToolExecutionError::permission_denied(message),
+        ToolErrorKind::Network => ToolExecutionError::network(message),
+        ToolErrorKind::NotFound
+        | ToolErrorKind::RateLimited
+        | ToolErrorKind::Provider
+        | ToolErrorKind::Other
+        | ToolErrorKind::Denied => ToolExecutionError::other(message),
         // rig carries no not-run kind: `cancelled` is its kind for a run that
         // stopped before producing a result, and the one the transcript's
         // not-run class reads.
-        ToolErrorKind::NotRun => ToolExecutionError::cancelled(message),
+        ToolErrorKind::Cancelled => ToolExecutionError::cancelled(message),
     }
 }
 

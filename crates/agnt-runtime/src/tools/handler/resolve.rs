@@ -23,7 +23,7 @@ pub(crate) fn resolve_fs_path_generic<E: EngineInterfaceLike>(
     engine: &E,
 ) -> Result<std::path::PathBuf, ToolHandlerError> {
     let cwd = engine.get_current_dir().map_err(|e| ToolHandlerError {
-        kind: ToolErrorKind::Runtime,
+        kind: ToolErrorKind::Other,
         message: format!("Unable to resolve current working directory: {e}"),
         details: None,
     })?;

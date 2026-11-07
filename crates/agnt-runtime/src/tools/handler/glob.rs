@@ -23,7 +23,7 @@ impl BuiltinTool for GlobTool {
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: GlobArgs =
             serde_json::from_value(args.clone()).map_err(|e| ToolHandlerError {
-                kind: ToolErrorKind::Validation,
+                kind: ToolErrorKind::InvalidArgs,
                 message: format!("Invalid glob arguments: {e}"),
                 details: None,
             })?;
@@ -45,12 +45,12 @@ fn dispatch_glob(
 
     let mut ob = OverrideBuilder::new(search_path);
     ob.add(pattern).map_err(|e| ToolHandlerError {
-        kind: ToolErrorKind::Validation,
+        kind: ToolErrorKind::InvalidArgs,
         message: format!("Invalid glob pattern: {e}"),
         details: None,
     })?;
     let overrides = ob.build().map_err(|e| ToolHandlerError {
-        kind: ToolErrorKind::Runtime,
+        kind: ToolErrorKind::Other,
         message: format!("Failed to build glob: {e}"),
         details: None,
     })?;

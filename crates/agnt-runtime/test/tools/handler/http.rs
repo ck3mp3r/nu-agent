@@ -68,7 +68,7 @@ async fn http_execute_error_table() -> core::result::Result<(), Box<dyn std::err
         let err = result.err().ok_or("expected an error for this url")?;
         assert_eq!(
             err.kind,
-            super::ToolErrorKind::Validation,
+            super::ToolErrorKind::InvalidArgs,
             "case '{name}': kind"
         );
         assert!(

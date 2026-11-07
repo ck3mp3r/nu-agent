@@ -100,7 +100,7 @@ async fn nu_early_wrapper_exit_still_honours_the_timeout() -> Result<()> {
     let elapsed = started.elapsed();
 
     // -- Check
-    assert_eq!(err.kind, ToolErrorKind::NotRun, "timeout kind: {err:?}");
+    assert_eq!(err.kind, ToolErrorKind::Cancelled, "timeout kind: {err:?}");
     assert!(
         err.message.contains("timed out"),
         "message must carry the timeout, got: {}",

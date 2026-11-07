@@ -176,7 +176,7 @@ async fn grep_invalid_regex_returns_validation_error() {
     let err = GrepTool::execute(&args, dir.path(), &CancelTx::new("test", 8))
         .await
         .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
+    assert_eq!(err.kind, ToolErrorKind::InvalidArgs);
     assert!(err.message.contains("Invalid regex pattern"));
 }
 

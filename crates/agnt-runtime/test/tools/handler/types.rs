@@ -11,37 +11,41 @@ fn test_tools_handler_types_execution_error_for_kind_maps_every_kind() -> Result
     // -- Setup & Fixtures
     let cases: Vec<(ToolErrorKind, rig::tool::ToolErrorKind)> = vec![
         (
-            ToolErrorKind::Validation,
+            ToolErrorKind::InvalidArgs,
             rig::tool::ToolErrorKind::InvalidArgs,
         ),
         (ToolErrorKind::Timeout, rig::tool::ToolErrorKind::Timeout),
         (
-            ToolErrorKind::Authorization,
+            ToolErrorKind::PermissionDenied,
             rig::tool::ToolErrorKind::PermissionDenied,
         ),
-        (ToolErrorKind::Transport, rig::tool::ToolErrorKind::Network),
-        (ToolErrorKind::Runtime, rig::tool::ToolErrorKind::Other),
-        (ToolErrorKind::Unknown, rig::tool::ToolErrorKind::Other),
+        (ToolErrorKind::Network, rig::tool::ToolErrorKind::Network),
+        (ToolErrorKind::NotFound, rig::tool::ToolErrorKind::Other),
+        (ToolErrorKind::RateLimited, rig::tool::ToolErrorKind::Other),
+        (ToolErrorKind::Provider, rig::tool::ToolErrorKind::Other),
+        (ToolErrorKind::Other, rig::tool::ToolErrorKind::Other),
+        (ToolErrorKind::Denied, rig::tool::ToolErrorKind::Other),
         // A not-run call maps to rig's cancelled kind: the transcript's not-run
         // class (`NOT_RUN_ERROR_KINDS`) reads this kind name, so the live row
         // finishes ⊘ exactly as the replayed row does.
-        (ToolErrorKind::NotRun, rig::tool::ToolErrorKind::Cancelled),
+        (
+            ToolErrorKind::Cancelled,
+            rig::tool::ToolErrorKind::Cancelled,
+        ),
     ];
 
     // -- Exec & Check
     for (kind, expected) in cases {
-        let mapped = execution_error_for_kind(kind.clone(), "boom".to_string());
+        let mapped = execution_error_for_kind(kind, "boom".to_string());
         assert_eq!(
             mapped.kind(),
             expected,
-            "kind {} must map to the matching rig kind",
-            kind.as_str()
+            "kind {kind:?} must map to the matching rig kind"
         );
         assert_eq!(
             mapped.message(),
             "boom",
-            "kind {} must pass the message through unchanged",
-            kind.as_str()
+            "kind {kind:?} must pass the message through unchanged"
         );
     }
     Ok(())

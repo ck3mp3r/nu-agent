@@ -209,7 +209,7 @@ fn require_force_table() {
         let result = require_force(input);
         assert_eq!(result.is_ok(), expected_ok, "case '{name}': ok");
         if let Err(err) = result {
-            assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+            assert_eq!(err.kind, ToolErrorKind::InvalidArgs, "case '{name}': kind");
             assert_eq!(
                 err.message, "kill requires force: true",
                 "case '{name}': message"

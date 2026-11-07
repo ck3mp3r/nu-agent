@@ -33,7 +33,7 @@ async fn ast_tools_report_validation_errors_for_unknown_language_and_bad_query()
     .ok_or("a malformed query must fail")?;
 
     // -- Check
-    assert_eq!(unknown_language.kind, ToolErrorKind::Validation);
+    assert_eq!(unknown_language.kind, ToolErrorKind::InvalidArgs);
     assert!(
         unknown_language
             .message
@@ -41,7 +41,7 @@ async fn ast_tools_report_validation_errors_for_unknown_language_and_bad_query()
         "got: {}",
         unknown_language.message
     );
-    assert_eq!(bad_query.kind, ToolErrorKind::Validation);
+    assert_eq!(bad_query.kind, ToolErrorKind::InvalidArgs);
     assert!(
         bad_query.message.contains("Invalid tree-sitter query"),
         "got: {}",

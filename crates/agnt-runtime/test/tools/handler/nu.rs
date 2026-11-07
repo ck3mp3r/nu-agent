@@ -63,7 +63,7 @@ async fn nu_invalid_command_table() {
         let err = NuTool::execute(&args, Path::new("/tmp"), &cancel)
             .await
             .unwrap_err();
-        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+        assert_eq!(err.kind, ToolErrorKind::InvalidArgs, "case '{name}': kind");
     }
 }
 
@@ -82,7 +82,7 @@ async fn nu_nonzero_exit_preserved() -> Result<()> {
     .await
     .err()
     .ok_or("non-zero exit must map to Err")?;
-    assert_eq!(err.kind, ToolErrorKind::Runtime);
+    assert_eq!(err.kind, ToolErrorKind::Other);
     assert!(
         err.message.contains("exited with code"),
         "message must carry the exit status, got: {}",
@@ -154,7 +154,7 @@ async fn nu_timeout_kills_process_and_returns_error() -> Result<()> {
     assert!(err.message.contains("timed out"));
     // The wall clock stopped the call before it produced a result: the error
     // carries the not-run kind, so the live row finishes ⊘ like the replayed.
-    assert_eq!(err.kind, ToolErrorKind::NotRun, "timeout kind: {err:?}");
+    assert_eq!(err.kind, ToolErrorKind::Cancelled, "timeout kind: {err:?}");
     assert!(
         err.details.is_none(),
         "a timeout carries no output payload: {err:?}"
@@ -196,6 +196,6 @@ async fn nu_cancellation_kills_process_quickly() -> Result<()> {
     assert!(err.message.contains("cancelled"));
     // The turn's cancel stopped the call before it produced a result: the same
     // not-run kind the timeout arm carries, so both rehydrate and render ⊘.
-    assert_eq!(err.kind, ToolErrorKind::NotRun, "cancel kind: {err:?}");
+    assert_eq!(err.kind, ToolErrorKind::Cancelled, "cancel kind: {err:?}");
     Ok(())
 }

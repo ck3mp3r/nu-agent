@@ -173,7 +173,7 @@ failing_kind_tool!(
     FailingAuthorizationTool,
     "fail_authorization",
     super::super::super::ToolHandlerError {
-        kind: super::super::super::ToolErrorKind::Authorization,
+        kind: super::super::super::ToolErrorKind::PermissionDenied,
         message: "boom".to_string(),
         details: None,
     }
@@ -182,7 +182,7 @@ failing_kind_tool!(
     FailingTransportTool,
     "fail_transport",
     super::super::super::ToolHandlerError {
-        kind: super::super::super::ToolErrorKind::Transport,
+        kind: super::super::super::ToolErrorKind::Network,
         message: "boom".to_string(),
         details: None,
     }
@@ -196,7 +196,7 @@ failing_kind_tool!(
     FailingUnknownTool,
     "fail_unknown",
     super::super::super::ToolHandlerError {
-        kind: super::super::super::ToolErrorKind::Unknown,
+        kind: super::super::super::ToolErrorKind::Other,
         message: "boom".to_string(),
         details: None,
     }

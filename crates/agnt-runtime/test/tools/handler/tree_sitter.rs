@@ -165,7 +165,7 @@ async fn ast_tools_missing_required_arg_table() {
             Tool::Tree => AstTreeTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await,
         }
         .unwrap_err();
-        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+        assert_eq!(err.kind, ToolErrorKind::InvalidArgs, "case '{name}': kind");
     }
 }
 
@@ -194,11 +194,11 @@ async fn missing_config_returns_runtime_error() {
     // that name tree-sitter, which is what this test pins.
     let err = result.unwrap_err();
     match err.kind {
-        ToolErrorKind::Runtime => assert!(
+        ToolErrorKind::Other => assert!(
             err.message.contains("No tree-sitter config found"),
             "a cold grammar cache must report the missing config: {err:?}"
         ),
-        ToolErrorKind::Validation => assert!(
+        ToolErrorKind::InvalidArgs => assert!(
             err.message.contains("No tree-sitter grammar found"),
             "a warm grammar cache must report the unknown language: {err:?}"
         ),
@@ -222,7 +222,7 @@ async fn e2e_nonexistent_file_returns_runtime_error() {
     let err = AstQueryTool::execute(&args, dir.path(), &CancelTx::new("test", 8))
         .await
         .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Runtime);
+    assert_eq!(err.kind, ToolErrorKind::Other);
     assert!(err.message.contains("File not found"));
 }
 
