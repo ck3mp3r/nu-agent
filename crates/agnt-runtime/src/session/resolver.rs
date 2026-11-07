@@ -8,8 +8,10 @@ use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::settle::{FactStore, SessionFacts};
 use crate::session::tool_status::{ToolStatus, ToolStatusMap};
 use crate::session::{RigStoreConfig, Session};
-use crate::types::{AssistantContent, CallId, Message, UserContent};
-use agnt_storage::TurnFacts;
+use crate::types::{
+    AssistantContent, CallId, Message, Text, ToolCall, ToolResult, ToolResultContent, UserContent,
+};
+use agnt_storage::{Entries, TranscriptRecord, TranscriptRow, TranscriptStamp, TurnFacts};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +147,10 @@ async fn holds(store: &Arc<dyn rig_memory::Store>, session_id: &str) -> Result<b
 
 /// The transcript of `session_id`, read from the rig store, with the facts the
 /// settle path recorded: each entry's turn, and each call's status.
+///
+/// The fold's entries are then written as the session's transcript rows: the
+/// hydration still reads the entries, and the write is the record those entries
+/// fold to.
 async fn hydrate_transcript(
     rig: &RigStoreConfig,
     store: &Arc<dyn rig_memory::Store>,
@@ -152,6 +158,7 @@ async fn hydrate_transcript(
     cwd: &Path,
 ) -> Result<Vec<UiMessageSnapshot>, LabeledError> {
     let (entries, statuses, turns) = read_entries(rig, store, session_id).await?;
+    record_transcript(rig, session_id, &entries, &statuses, &turns).await;
     Ok(hydrate_transcript_messages(
         &entries, cwd, &statuses, &turns,
     ))
@@ -440,6 +447,185 @@ pub(crate) fn hydrate_single_message(
 }
 
 // region:    --- Support
+
+/// The result half one call's entry carries: the text it produced, and the
+/// verdict it carried.
+struct CallOutcome {
+    result: Option<String>,
+    success: Option<bool>,
+}
+
+/// Writes the fold's entries as the session's transcript rows.
+///
+/// The write is a shadow record: the hydration reads the entries, so a store
+/// that refuses the write loses the shadow and keeps the transcript it
+/// hydrates. A refusal is logged and never propagated.
+async fn record_transcript(
+    rig: &RigStoreConfig,
+    session_id: &str,
+    entries: &[StoredEntry],
+    statuses: &ToolStatusMap,
+    turns: &[TurnFacts],
+) {
+    let records = transcript_records(session_id, entries, statuses, turns);
+    let config = rig.clone();
+    let storage = match crate::session::blocking::on_pool(move || config.facts_blocking()).await {
+        Ok(Ok(storage)) => storage,
+        Ok(Err(error)) => {
+            log::warn!("failed to open the session's fact tables: {error}");
+            return;
+        }
+        Err(error) => {
+            log::warn!("failed to open the session's fact tables: {error}");
+            return;
+        }
+    };
+    if let Err(error) = Entries::new(storage).record_transcript(records).await {
+        log::warn!("failed to record the transcript of '{session_id}': {error}");
+    }
+}
+
+/// The transcript rows `entries` fold to, in fold order.
+///
+/// One row per block: a user text, an assistant text, a system text, and one
+/// per call. The row's position is that order, so a folded log renumbers its
+/// rows from the first entry it keeps.
+fn transcript_records(
+    session_id: &str,
+    entries: &[StoredEntry],
+    statuses: &ToolStatusMap,
+    turns: &[TurnFacts],
+) -> Vec<TranscriptRecord> {
+    let turns_by_seq: HashMap<i64, &TurnFacts> =
+        turns.iter().map(|turn| (turn.turn_seq, turn)).collect();
+    let outcomes = call_outcomes(entries);
+    let mut records = Vec::new();
+    for entry in entries {
+        for row in entry_rows(entry, &outcomes, statuses, &turns_by_seq) {
+            let row_seq = records.len() as i64;
+            records.push(TranscriptRecord::new(session_id, row_seq, row));
+        }
+    }
+    records
+}
+
+/// The rows one entry folds to, in the order its content carries.
+///
+/// A call's result lands in the entry that answers it, so the call's row is
+/// written where the call is and reads the result the entries after it carry.
+fn entry_rows(
+    entry: &StoredEntry,
+    outcomes: &HashMap<CallId, CallOutcome>,
+    statuses: &ToolStatusMap,
+    turns: &HashMap<i64, &TurnFacts>,
+) -> Vec<TranscriptRow> {
+    match &entry.message {
+        Message::User { content } => content
+            .iter()
+            .filter_map(|item| match item {
+                UserContent::Text(text) => Some(user_row(entry, text, turns)),
+                _ => None,
+            })
+            .collect(),
+        Message::Assistant(assistant) => assistant
+            .content
+            .iter()
+            .filter_map(|item| match item {
+                AssistantContent::Text(text) if !text.text.is_empty() => {
+                    Some(TranscriptRow::Assistant {
+                        content: text.text.clone(),
+                    })
+                }
+                AssistantContent::ToolCall(call) => Some(tool_row(call, outcomes, statuses)),
+                _ => None,
+            })
+            .collect(),
+        Message::System { content } => vec![TranscriptRow::System {
+            content: content.clone(),
+        }],
+    }
+}
+
+/// The row `text` folds to: the summary a compaction left, or the user's own
+/// text with the footer facts its settled turn recorded.
+fn user_row(entry: &StoredEntry, text: &Text, turns: &HashMap<i64, &TurnFacts>) -> TranscriptRow {
+    if let Some(summary) = compaction_summary(&text.text, entry.author.as_ref()) {
+        return TranscriptRow::Compaction { content: summary };
+    }
+    let (millis, model, agent) = entry_stamp(entry, turns);
+    let stamp = millis.map(|millis| TranscriptStamp {
+        millis,
+        model,
+        agent,
+    });
+    TranscriptRow::User {
+        content: text.text.clone(),
+        stamp,
+    }
+}
+
+/// The row one call folds to: the call as the model asked it, with the outcome
+/// the entries recorded.
+///
+/// A status exists only for a call the settle path attributed; a call no turn
+/// settled carries none rather than a derived guess.
+fn tool_row(
+    call: &ToolCall,
+    outcomes: &HashMap<CallId, CallOutcome>,
+    statuses: &ToolStatusMap,
+) -> TranscriptRow {
+    let outcome = outcomes.get(&call.id);
+    TranscriptRow::Tool {
+        name: call.function.name.to_string(),
+        arguments: Some(
+            serde_json::to_string(&call.function.arguments).unwrap_or_else(|_| "{}".to_string()),
+        ),
+        result: outcome.and_then(|outcome| outcome.result.clone()),
+        success: outcome.and_then(|outcome| outcome.success),
+        status: statuses
+            .get(&call.id.to_string())
+            .copied()
+            .map(super::settle::call_status),
+    }
+}
+
+/// The result half of each call the entries carry, by call id.
+fn call_outcomes(entries: &[StoredEntry]) -> HashMap<CallId, CallOutcome> {
+    let mut outcomes = HashMap::new();
+    for entry in entries {
+        let Message::User { content } = &entry.message else {
+            continue;
+        };
+        for item in content.iter() {
+            let UserContent::ToolResult(result) = item else {
+                continue;
+            };
+            outcomes.insert(
+                result.call.clone(),
+                CallOutcome {
+                    result: result_text(result),
+                    success: Some(!result.is_error),
+                },
+            );
+        }
+    }
+    outcomes
+}
+
+/// The text a tool result carries: its parts joined in order, a structured part
+/// as its JSON. An image part carries no text, so it contributes none.
+fn result_text(result: &ToolResult) -> Option<String> {
+    let parts: Vec<String> = result
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ToolResultContent::Text(text) => Some(text.text.clone()),
+            ToolResultContent::Json { value } => Some(value.to_string()),
+            _ => None,
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
 
 /// The footer facts one entry carries: the submit instant and the identities
 /// of the turn that persisted it, verbatim.

@@ -218,7 +218,7 @@ impl FactStore {
 // region:    --- Support
 
 /// The table's status for the turn's structural one.
-fn call_status(status: ToolStatus) -> ToolCallStatus {
+pub(super) fn call_status(status: ToolStatus) -> ToolCallStatus {
     match status {
         ToolStatus::Success => ToolCallStatus::Success,
         ToolStatus::Failed => ToolCallStatus::Failed,

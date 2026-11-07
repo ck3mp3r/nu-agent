@@ -17,6 +17,9 @@ mod rehydration;
 #[path = "resolver/resolve_attach.rs"]
 mod resolve_attach;
 
+#[path = "resolver/shadow_write.rs"]
+mod shadow_write;
+
 #[path = "resolver/support.rs"]
 mod support;
 
