@@ -44,7 +44,7 @@ impl PermissionHandler for PermissionStage {
                 let _ = ctx
                     .ui_event
                     .send(SystemEvent::PermissionDecisionIgnored {
-                        request_id: RequestId::new(submission.request_id),
+                        request_id: RequestId::from_minted(submission.request_id),
                         reason: REASON_REQUEST_NOT_PENDING.to_string(),
                     })
                     .await;

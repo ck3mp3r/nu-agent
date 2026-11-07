@@ -45,8 +45,8 @@ pub trait SessionPersistence {
     /// The cells reset when the runtime switches sessions, so the totals cover
     /// the current session only. A runtime that tracks no usage reports the
     /// empty sum.
-    fn session_usage(&self) -> crate::hook::TurnUsageTotals {
-        crate::hook::TurnUsageTotals::default()
+    fn session_usage(&self) -> agnt_runtime::hook::TurnUsageTotals {
+        agnt_runtime::hook::TurnUsageTotals::default()
     }
 
     /// Run a compaction of the current session for `source`.

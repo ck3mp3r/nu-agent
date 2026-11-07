@@ -239,7 +239,7 @@ fn permission_request_table() -> Result<()> {
     reduce_ui(
         &mut state,
         SystemEvent::PermissionRequested {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             context,
         },
     );
@@ -264,7 +264,7 @@ fn permission_request_table() -> Result<()> {
     reduce_ui(
         &mut state,
         SystemEvent::PermissionRequested {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
                 tool_key: "edit\n{\"path\":\"test.rs\"}".to_string(),

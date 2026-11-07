@@ -575,7 +575,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
     /// Returns `BuildArtifacts` containing the merged compaction config and
     /// the per-tool render registry.
     pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
-        use crate::hook::adapter::closure::adapt_closures;
+        use agnt_runtime::hook::adapter::closure::adapt_closures;
 
         let BuildInput {
             tool_server_handle,

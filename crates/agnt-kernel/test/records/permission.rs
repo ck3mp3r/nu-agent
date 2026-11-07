@@ -22,7 +22,7 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
         crate::ToolSource::Builtin,
         r#"{"command":"rm -rf /"}"#,
     );
-    let request_id = RequestId::new("req-1");
+    let request_id = RequestId::from_minted("req-1");
 
     // -- Exec
     bus.stream()

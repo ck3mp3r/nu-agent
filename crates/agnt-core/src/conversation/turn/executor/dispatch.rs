@@ -12,9 +12,9 @@
 use agnt_kernel::{SessionRecord, StopCause, TurnRecord};
 use nu_protocol::{LabeledError, Span};
 
-use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
-use crate::hook::permission_resolver::resolve_tool_source;
 use crate::types::Message;
+use agnt_runtime::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
+use agnt_runtime::hook::permission_resolver::resolve_tool_source;
 use agnt_runtime::hook::turn_tools::undispatched_streamed_calls;
 use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
@@ -28,8 +28,8 @@ use crate::conversation::turn::TurnResult;
 
 impl<'a, S> TurnExecutor<'a, S>
 where
-    S: crate::conversation::managers::SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf,
+    S: agnt_runtime::conversation::managers::SessionManager<
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
             InnerMemory = agnt_runtime::session::CachedMemory,
         >,
 {

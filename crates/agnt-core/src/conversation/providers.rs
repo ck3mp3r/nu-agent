@@ -329,16 +329,6 @@ pub(super) fn build_ollama_client(
     Ok(ollama_config.connect(ReqwestClient::from(http_client)))
 }
 
-/// Resolve which provider implementation to use.
-/// If the provider config specifies an explicit `provider` field, use it.
-/// Otherwise, the config key name itself is the provider type.
-pub(super) fn resolve_provider_type<'a>(
-    provider_key: &'a str,
-    provider_field: Option<&'a str>,
-) -> &'a str {
-    provider_field.unwrap_or(provider_key)
-}
-
 pub enum CachedProviderClient {
     /// GitHub Copilot is an OpenAI-shaped provider in rig 0.45, so it holds the
     /// same client type as [`Self::OpenAi`], connected on the Copilot dialect.

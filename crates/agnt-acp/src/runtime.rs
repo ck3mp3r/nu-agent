@@ -14,14 +14,13 @@ use agnt_core::conversation::contracts::DecisionSource;
 use agnt_core::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
 use agnt_core::conversation::runtime_build::RuntimeBuildParams;
 use agnt_core::conversation::runtime_parts::RuntimeParts;
-use agnt_core::conversation::state::{
-    MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState,
-};
-use agnt_core::hooks::HookAgentContext;
+use agnt_core::conversation::state::{MultiAgentState, PersonaState, ProviderState, ToolState};
 use agnt_core::types::{
     Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
 };
 use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
+use agnt_runtime::conversation::state::memory::MemoryState;
+use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::protocol::model_switching::ModelSwitching;
 use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaLister};
 use agnt_runtime::session::RigStoreConfig;

@@ -35,9 +35,9 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_receive_request};
-use agnt_core::hooks::HookAgentContext;
 use agnt_runtime::bus::{AgentEvent, AgentTx};
 use agnt_runtime::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
+use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
 use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
@@ -114,12 +114,12 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     // than the per-session bus. The agent-class hook runner is spawned once for
     // this process; hooks with no agent-class event spawn nothing.
     let agent_tx = AgentTx::new("agent", 16);
-    let agent_hook_handles = agnt_core::hooks::spawn_agent_hook_runner(
+    let agent_hook_handles = agnt_runtime::hooks::spawn_agent_hook_runner(
         &agent_tx,
         &hooks,
         &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
         &agent_hook_context,
-        agnt_core::hooks::NuProcess,
+        agnt_runtime::hooks::NuProcess,
     );
     let sessions: SharedSessions = Arc::new(
         AcpSessionManager::new(rig, paths, tokio::runtime::Handle::current())
@@ -320,7 +320,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
         .await;
     drop(agent_tx);
     for handle in agent_hook_handles {
-        let _ = tokio::time::timeout(agnt_core::hooks::HOOK_DRAIN_TIMEOUT, handle).await;
+        let _ = tokio::time::timeout(agnt_runtime::hooks::HOOK_DRAIN_TIMEOUT, handle).await;
     }
     result?;
 

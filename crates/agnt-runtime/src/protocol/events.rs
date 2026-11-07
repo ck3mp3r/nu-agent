@@ -11,7 +11,7 @@
 pub use agnt_kernel::CompactionSource;
 /// Re-exported so the transcript, the permission gate, and every surface share
 /// one call identity with the kernel's stream records.
-pub use agnt_kernel::{ToolCall, ToolCallId, ToolName};
+pub use agnt_kernel::{RequestId, ToolCall, ToolCallId, ToolName};
 
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::session::tool_status::ToolStatus;
@@ -164,10 +164,6 @@ pub struct ToolOutcome {
     pub message: Option<String>,
 }
 
-/// Identity of one permission request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequestId(String);
-
 /// The usage of one inference call and the totals of a completed turn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Usage {
@@ -247,16 +243,6 @@ pub fn compaction_source_text(source: CompactionSource) -> &'static str {
 // endregion: --- Fns
 
 // region:    --- Impls
-
-impl RequestId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 impl AutoResolutionAction {
     pub fn as_str(self) -> &'static str {

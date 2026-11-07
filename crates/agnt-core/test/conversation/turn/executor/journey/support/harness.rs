@@ -5,7 +5,6 @@ use nu_protocol::LabeledError;
 use rig::test_utils::MockCompletionModel;
 
 use crate::conversation::providers::CachedProviderClient;
-use crate::conversation::state::memory::MemoryState;
 use crate::conversation::turn::executor::test_utils::{
     BusEventCollector, MockResolver, test_config,
 };
@@ -15,6 +14,7 @@ use crate::conversation::turn::test::{
     default_output_repetition, default_repetition_guard,
 };
 use crate::types::Message;
+use agnt_runtime::conversation::state::memory::MemoryState;
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
 
@@ -35,8 +35,8 @@ pub(crate) fn default_tool_infra(
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
-        turn_usage: crate::hook::TurnUsage::default(),
-        session_usage: crate::hook::TurnUsage::default(),
+        turn_usage: agnt_runtime::hook::TurnUsage::default(),
+        session_usage: agnt_runtime::hook::TurnUsage::default(),
         bus: agnt_runtime::bus::Bus::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     }
@@ -50,7 +50,7 @@ pub(crate) struct JourneyHarness {
     _temp_dir: tempfile::TempDir, // leading underscore keeps TempDir alive
     pub(crate) memory_state: MemoryState,
     dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
-    compaction_config: crate::conversation::compaction::CompactionConfig,
+    compaction_config: agnt_runtime::conversation::compaction::CompactionConfig,
     pub(crate) session_id: &'static str,
     config: agnt_runtime::config::Config,
 }
@@ -67,18 +67,19 @@ impl JourneyHarness {
     ) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let bus = agnt_runtime::bus::Bus::default();
-        let compaction_config = crate::conversation::compaction::CompactionConfig {
-            compactor: crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
-                test_utils::shared_mock_model(),
-                bus.clone(),
-                rig_memory::CompactionPolicy::default(),
-                crate::conversation::compaction::compactor::resolve_model_spec(
-                    "openai",
-                    "gpt-4o",
-                    Some(8_000),
-                    Some(1_024),
+        let compaction_config = agnt_runtime::conversation::compaction::CompactionConfig {
+            compactor:
+                agnt_runtime::conversation::compaction::compactor::NuCompactor::from_shared_model(
+                    test_utils::shared_mock_model(),
+                    bus.clone(),
+                    rig_memory::CompactionPolicy::default(),
+                    agnt_runtime::conversation::compaction::compactor::resolve_model_spec(
+                        "openai",
+                        "gpt-4o",
+                        Some(8_000),
+                        Some(1_024),
+                    ),
                 ),
-            ),
             threshold_tokens: None,
             threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
         };

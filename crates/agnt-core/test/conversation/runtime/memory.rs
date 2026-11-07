@@ -8,7 +8,7 @@ use super::*;
 fn runtime_struct_has_memory_field() {
     // Compile-time check that the field exists with correct type: the runtime
     // memory is an `Arc<CachedMemory>`.
-    use crate::conversation::state::memory::MemoryOf;
+    use agnt_runtime::conversation::state::memory::MemoryOf;
 
     // Compile-time check that the field exists with correct type
     fn _assert_field_exists(_: &MemoryOf) {}
@@ -21,7 +21,7 @@ fn runtime_struct_has_memory_field() {
 #[test]
 fn runtime_struct_has_session_store() {
     // Verify MemoryState wraps a rig-store-backed CachedMemory (via inner_memory).
-    let ms = crate::conversation::state::memory::MemoryState::new(
+    let ms = agnt_runtime::conversation::state::memory::MemoryState::new(
         agnt_runtime::session::RigStoreConfig::in_memory(),
     );
     assert!(ms.last_total_tokens().is_none());

@@ -12,7 +12,7 @@ fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<
     // -- Exec
     let handles = spawn_configured_hooks(
         None,
-        agnt_core::hooks::HookSources {
+        agnt_runtime::hooks::HookSources {
             turn: bus.turn(),
             ui_event: bus.ui_event(),
             compaction_tx: bus.compaction(),
@@ -43,7 +43,7 @@ fn test_mode_spawn_configured_hooks_with_empty_hooks_spawns_nothing() -> Result<
     // -- Exec
     let handles = spawn_configured_hooks(
         Some(&config),
-        agnt_core::hooks::HookSources {
+        agnt_runtime::hooks::HookSources {
             turn: bus.turn(),
             ui_event: bus.ui_event(),
             compaction_tx: bus.compaction(),

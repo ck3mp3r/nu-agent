@@ -38,7 +38,7 @@ async fn test_runtime_build_build_runtime_stamps_the_hook_context_model() -> Res
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
     let store_type = StoreType::Memory;
-    let hook_context = crate::hooks::HookAgentContext::default();
+    let hook_context = agnt_runtime::hooks::HookAgentContext::default();
     let mut params = make_params(
         temp.path().to_path_buf(),
         offline_config(),

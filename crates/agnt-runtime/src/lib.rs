@@ -9,7 +9,9 @@
 
 pub mod bus;
 pub mod config;
+pub mod conversation;
 pub mod hook;
+pub mod hooks;
 pub mod llm;
 pub mod logging;
 pub mod orchestrator;

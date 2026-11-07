@@ -54,13 +54,13 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_4,
         &[
-            "ARCH-4 agnt-kernel/src/records.rs:367: `NoticeKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:389: `NoticeKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/ir.rs:41: `NoticeKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:333: `PermissionDecision` is declared 2 times in the workspace",
-            "ARCH-4 agnt-core/src/hook/permission_resolver.rs:58: `PermissionDecision` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:355: `PermissionDecision` is declared 2 times in the workspace",
+            "ARCH-4 agnt-runtime/src/hook/permission_resolver.rs:57: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/state/app_state.rs:59: `ToolCallStatus` is declared 2 times in the workspace",
             "ARCH-4 agnt-storage/src/services/tool_calls.rs:20: `ToolCallStatus` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:221: `ToolErrorKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:223: `ToolErrorKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-runtime/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-kernel/src/builtin.rs:44: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
@@ -73,7 +73,7 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_11A,
         &[
-            "ARCH-11.a agnt-kernel/src/records.rs:129: pub id: ToolCallId",
+            "ARCH-11.a agnt-kernel/src/records.rs:131: pub id: ToolCallId",
             "ARCH-11.a agnt-tui/src/state/app_state.rs:249: pub key: ToolCallId",
         ],
     ),
@@ -101,7 +101,7 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
         ARCH_10,
         &[
             "ARCH-10 agnt-acp/src/runtime.rs:14: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/runtime.rs:186: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/runtime.rs:185: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:133: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:153: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/session.rs:160: AgentConversationRuntime",

@@ -141,7 +141,7 @@ fn ui_event_permission_group() -> Result<()> {
     coordinator.state.status.message.set_message("idle");
     coordinator.state.scroll.following_tail = false;
     let event = SystemEvent::PermissionRequested {
-        request_id: RequestId::new("ask-0000000000000001"),
+        request_id: RequestId::from_minted("ask-0000000000000001"),
         context: PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
@@ -172,19 +172,19 @@ fn ui_event_permission_group() -> Result<()> {
     // -- Exec & Check: decision variants skip effects.
     for event in [
         SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
         },
         SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             reason: "user closed".to_string(),
         },
         SystemEvent::PermissionRequestCancelled {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
         SystemEvent::PermissionAutoResolved {
@@ -233,7 +233,7 @@ fn ui_event_permission_group() -> Result<()> {
 
     // -- Exec
     let handled = preview.reduce_system_event(SystemEvent::PermissionRequested {
-        request_id: RequestId::new("ask-0000000000000001"),
+        request_id: RequestId::from_minted("ask-0000000000000001"),
         context,
     });
 

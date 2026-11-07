@@ -3,11 +3,11 @@ use std::sync::Arc;
 use rig::test_utils::MockCompletionModel;
 
 use super::super::*;
-use crate::conversation::state::memory::MemoryOf;
-use crate::hook::agent_hook::DoomLoopState;
-use crate::hook::output_repetition::RepetitionState;
-use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use agnt_runtime::config::Config;
+use agnt_runtime::conversation::state::memory::MemoryOf;
+use agnt_runtime::hook::agent_hook::DoomLoopState;
+use agnt_runtime::hook::output_repetition::RepetitionState;
+use agnt_runtime::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -48,8 +48,8 @@ pub(super) fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf) {
 /// mock model so compaction never invokes a real LLM.
 pub(super) fn test_compaction_config(
     bus: agnt_runtime::bus::Bus,
-) -> crate::conversation::compaction::CompactionConfig {
-    use crate::conversation::compaction::compactor::NuCompactor;
+) -> agnt_runtime::conversation::compaction::CompactionConfig {
+    use agnt_runtime::conversation::compaction::compactor::NuCompactor;
     use rig::test_utils::MockCompletionModel;
 
     let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
@@ -61,12 +61,12 @@ pub(super) fn test_compaction_config(
         })
         .collect();
     let model = MockCompletionModel::from_stream_turns(turns);
-    crate::conversation::compaction::CompactionConfig {
+    agnt_runtime::conversation::compaction::CompactionConfig {
         compactor: NuCompactor::from_shared_model(
             std::sync::Arc::new(std::sync::Mutex::new(model.erase())),
             bus.clone(),
             rig_memory::CompactionPolicy::default(),
-            crate::conversation::compaction::compactor::resolve_model_spec(
+            agnt_runtime::conversation::compaction::compactor::resolve_model_spec(
                 "openai",
                 "gpt-4o",
                 Some(8_000),
@@ -134,8 +134,8 @@ pub(super) fn make_turn_context<'a>(
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
-        turn_usage: crate::hook::TurnUsage::default(),
-        session_usage: crate::hook::TurnUsage::default(),
+        turn_usage: agnt_runtime::hook::TurnUsage::default(),
+        session_usage: agnt_runtime::hook::TurnUsage::default(),
         bus,
         cwd: std::path::PathBuf::from("/tmp"),
     };

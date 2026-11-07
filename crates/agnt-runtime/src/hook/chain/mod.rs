@@ -1,0 +1,1312 @@
+//! `HookChain<P>` — composable hook implementation built from named concern structs.
+//!
+//! Each concern (cancellation, sub-turn cap, doom loop, circuit breaker, history
+//! snapshot) lives in its own module and has its own unit tests. `HookChain` owns
+//! them as named fields and delegates to them in an explicit, readable order inside
+//! the `AgentHook` impl.
+//!
+//! ## Adding a new concern
+//!
+//! 1. Create `new_concern.rs` + `new_concern_test.rs` under `hook/`.
+//! 2. Add a named field on `HookChain`.
+//! 3. Call the concern's method inside whichever event method needs it.
+//! 4. Nothing else changes.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use agnt_kernel::bus::Stream;
+use agnt_kernel::{
+    CompactionSource, InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
+    ToolErrorKind as StreamToolErrorKind, ToolOutcome as StreamToolOutcome, ToolRecord,
+    Usage as StreamUsage,
+};
+use rig::agent::{
+    AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
+    HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
+    ModelSelectionAction, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
+    OutcomeEvent, TextDelta,
+};
+use rig::message::Message;
+use rig::wasm_compat::WasmCompatSend;
+use rig_memory::CompactReason;
+
+use crate::bus::{Bus, CompactionTx, UiEventTx};
+use crate::config::defaults;
+use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::turn::token_estimate::estimate_token_count;
+use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
+use crate::protocol::events::{
+    SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
+};
+use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
+use crate::tools::closure::ClosureRegistry;
+use crate::tools::handler::McpToolRegistry;
+use crate::types::ToolName;
+use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
+
+use super::agent_hook::{HookState, StopLedger};
+use super::circuit_breaker_guard::CircuitBreakerGuard;
+use super::doom_loop::DoomLoopDetector;
+use super::history_snapshot::HistorySnapshot;
+use super::output_repetition::{
+    OUTPUT_REPETITION_STOP_PREFIX, OutputRepetitionDetector, RepetitionDetection, RepetitionState,
+};
+use super::permission_resolver::{
+    AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
+};
+use super::subturn_cap::SubTurnCap;
+use super::turn_usage::TurnUsage;
+use super::unpriced_warnings::UnpricedWarnings;
+use crate::hook::turn_tools::TurnToolLog;
+
+/// The completion message for a call the cancel arm denied before it ran.
+///
+/// The call never executes, so there is no result to report — the message says
+/// why the block is empty.
+pub const CANCELLED_DISPATCH_MESSAGE: &str = "Interrupted: the turn stopped before this call ran";
+
+/// The reason a user cancel carries.
+///
+/// One text, one place: the stop record, rig's stop reason, and the executor's
+/// notice all name the same thing.
+pub const CANCELLED_STOP_REASON: &str = "Cancelled by user";
+
+/// The error kind the cancel arm's emissions carry.
+///
+/// The kind is the event-level discriminator: a renderer classifies the pair as
+/// "did not run" without text-matching the message.
+const CANCELLED_ERROR_KIND: &str = "cancelled";
+
+/// The error kind the permission-deny branch's emission carries.
+///
+/// A denial is the same "did not run" class as a cancel: the kind is the
+/// discriminator, the message carries the reason.
+const DENIED_ERROR_KIND: &str = "denied";
+
+/// Why a call never ran.
+///
+/// The kind is the event-level discriminator: a renderer classifies the
+/// sequence as "did not run" without text-matching the message.
+pub enum NotRunOutcome<'a> {
+    /// The turn stopped before the call ran.
+    Cancelled,
+    /// The permission policy denied the call; the reason is the message.
+    Denied { reason: &'a str },
+}
+
+/// How the not-run emitter publishes `ToolStarted`.
+pub enum NotRunStart {
+    /// Publish `ToolStarted` for this call.
+    Publish,
+    /// The caller already published `ToolStarted` — the deny arm sends it
+    /// before permission resolution so the permission card anchors to the
+    /// call.
+    AlreadyPublished,
+}
+
+/// The call a not-run emission publishes.
+pub struct NotRunCall<'a> {
+    /// The tool's name.
+    pub tool_name: &'a str,
+    /// The tool's source.
+    pub source: crate::tools::handler::ToolSource,
+    /// The raw JSON arguments.
+    pub arguments: &'a str,
+    /// How `ToolStarted` reaches the bus.
+    pub start: NotRunStart,
+}
+
+/// Publish the live sequence for a call that never ran: `ToolStarted` (unless
+/// the caller already published it), then the call's argument-sourced preview
+/// when `preview` is set and the tool has one, then
+/// `ToolCompleted(success=false)` carrying the outcome's kind and message.
+///
+/// The cancel arm returns `stop` before the `ToolStarted` send, and rig fails
+/// the dispatch before `on_outcome` fires — so without this sequence the live
+/// transcript renders nothing for the denied call. The permission-deny branch
+/// publishes the same sequence; only the outcome differs.
+///
+/// The executor's cancel arm shares this shape for the batch's siblings the
+/// stop left undispatched, so both paths emit one identical sequence.
+///
+/// The TUI anchors a preview to a call in `InProgress`, so the preview must
+/// land after `ToolStarted` and before `ToolCompleted` — the same order the
+/// deny path and rehydration produce.
+pub async fn emit_not_run_dispatch(
+    ui_event: &UiEventTx,
+    stream: &Stream,
+    cwd: &Path,
+    call: NotRunCall<'_>,
+    outcome: NotRunOutcome<'_>,
+    preview: bool,
+) {
+    let NotRunCall {
+        tool_name,
+        source,
+        arguments,
+        start,
+    } = call;
+    let publish_start = matches!(start, NotRunStart::Publish);
+    let call = ToolCall::new(tool_name.to_string(), source, arguments);
+    if publish_start {
+        let _ = ui_event
+            .send(SystemEvent::ToolStarted { call: call.clone() })
+            .await;
+        let _ = stream.publish(SessionRecord::Tool(ToolRecord::Started {
+            call: StreamToolCall::new(tool_name, source, arguments),
+        }));
+    }
+    if preview && let Some(card) = gate_card_for(tool_name, arguments, cwd) {
+        // The gate has a card for this call. The event is the signal; `card`
+        // carries only the content a surface cannot derive (an edit's proposed
+        // diff). A surface derives the rest from the call's arguments.
+        let _ = ui_event
+            .send(SystemEvent::PreviewRequested {
+                call: call.clone(),
+                preview: card,
+            })
+            .await;
+    }
+    let (error_kind, message, kind) = match outcome {
+        NotRunOutcome::Cancelled => (
+            CANCELLED_ERROR_KIND,
+            CANCELLED_DISPATCH_MESSAGE,
+            StreamToolErrorKind::Cancelled,
+        ),
+        NotRunOutcome::Denied { reason } => {
+            (DENIED_ERROR_KIND, reason, StreamToolErrorKind::Denied)
+        }
+    };
+    let _ = ui_event
+        .send(SystemEvent::ToolCompleted {
+            call,
+            outcome: ToolOutcome {
+                success: false,
+                // Both arms are the one non-completed class: the call never
+                // reached a result. The kind and the message stay content.
+                status: ToolStatus::Cancelled,
+                result: String::new(),
+                error_kind: Some(error_kind.to_string()),
+                message: Some(message.to_string()),
+            },
+        })
+        .await;
+    // The same pair on the record stream: a call the turn never dispatched is
+    // still a dispatched call to every consumer folding records.
+    let _ = stream.publish(SessionRecord::Tool(ToolRecord::Completed {
+        call: StreamToolCall::new(tool_name, source, arguments),
+        outcome: StreamToolOutcome {
+            status: ToolStatus::Cancelled,
+            payload: None,
+            text: String::new(),
+            message: Some(message.to_string()),
+            kind: Some(kind),
+        },
+    }));
+}
+
+/// The environment a hook chain publishes into and resolves against.
+///
+/// Groups the bus and the session working directory so `HookChain::new` stays
+/// under clippy's `too_many_arguments` threshold.
+#[derive(Clone)]
+pub struct HookEnv {
+    /// Shared signal bus — tool/LLM/warning events are published here.
+    pub bus: Bus,
+    /// The session working directory, read to build the argument-sourced
+    /// preview for a call the turn stopped before it ran.
+    pub cwd: PathBuf,
+}
+
+/// Composable hook that delegates to named concern structs in explicit order.
+///
+/// See module-level docs for the extension pattern.
+#[derive(Clone)]
+pub struct HookChain<P: AsyncPermissionResolver> {
+    cancel_rx: Arc<Mutex<CancelRx>>,
+    subturn: SubTurnCap,
+    doom: DoomLoopDetector,
+    output_repetition: Arc<Mutex<RepetitionState>>,
+    /// Enable/disable the repetition guard (doom-loop + output-repetition
+    /// detection). When `false`, the detector call sites are skipped.
+    repetition_guard: bool,
+    circuit: CircuitBreakerGuard,
+    history: HistorySnapshot,
+    /// Every tool call this turn dispatched and the result each call settled
+    /// with. Read after the turn so a stop keeps the in-flight batch that
+    /// rig's history drops.
+    turn_tools: Arc<TurnToolLog>,
+    permission: P,
+    /// Shared signal bus — tool/LLM/warning events are published here.
+    bus: Bus,
+    /// The session working directory, read to build the argument-sourced
+    /// preview for a call the turn stopped before it ran.
+    cwd: PathBuf,
+    closure_registry: Arc<ClosureRegistry>,
+    mcp_registry: Arc<McpToolRegistry>,
+    /// Memory backing the conversation, used to read markers and (optionally) reset
+    /// the cache after compaction. Shared with the turn executor via `Arc`.
+    memory: crate::conversation::state::memory::MemoryOf,
+    /// The session/conversation id this hook compacts.
+    conversation_id: String,
+    /// Hook-driven compaction machinery: compactor, policy, threshold.
+    compaction: CompactionConfig,
+    /// The wire serving this turn's completions. The pricing fallback uses its
+    /// spec, so a completion is priced at the rates of the model that served
+    /// it — not at the compaction model's.
+    model: rig::DynModel<rig::operation::Completion>,
+    /// Real token count from the last LLM completion, shared across turns. Used by
+    /// `decide_compaction` to check the threshold against the real context size
+    /// (plus the current prompt) instead of the chars/4 heuristic. `None` before
+    /// the first completion and after a compaction reset.
+    last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The turn's LLM usage, accumulated as each call completes. The turn
+    /// executor reads the sums when it publishes the turn-completed event.
+    turn_usage: TurnUsage,
+    /// The session's cumulative LLM usage. Every call adds into it; it resets
+    /// only when the runtime switches sessions.
+    session_usage: TurnUsage,
+    /// The store-dead latch, shared with the turn's tool infrastructure: the
+    /// clean refusal text once the session store could not be opened. While it
+    /// is set, the compaction decision opens no store, so an unreadable store
+    /// costs one line, not one per turn.
+    store_latch: crate::hook::StoreLatch,
+    /// Model ids already reported as unpriced, so the warn fires once per
+    /// model rather than once per call.
+    unpriced_warnings: UnpricedWarnings,
+    /// Why this turn's run stopped, recorded when a guard or the user stops it.
+    stop: StopLedger,
+}
+
+impl<P: AsyncPermissionResolver> HookChain<P> {
+    pub fn new(
+        env: HookEnv,
+        permission_resolver: P,
+        closure_registry: Arc<ClosureRegistry>,
+        mcp_registry: Arc<McpToolRegistry>,
+        max_tool_calls_per_subturn: Option<usize>,
+        hook_state: HookState,
+    ) -> Self {
+        let cancel_rx = Arc::new(Mutex::new(env.bus.cancel().subscribe()));
+        Self {
+            cancel_rx,
+            subturn: SubTurnCap::new(
+                max_tool_calls_per_subturn.unwrap_or(defaults::MAX_TOOL_CALLS_PER_SUBTURN),
+            ),
+            doom: DoomLoopDetector {
+                state: hook_state.doom_state,
+            },
+            output_repetition: hook_state.output_repetition,
+            repetition_guard: hook_state.repetition_guard,
+            circuit: CircuitBreakerGuard {
+                breaker: hook_state.circuit_breaker,
+            },
+            history: HistorySnapshot::default(),
+            turn_tools: Arc::new(TurnToolLog::default()),
+            permission: permission_resolver,
+            bus: env.bus,
+            cwd: env.cwd,
+            closure_registry,
+            mcp_registry,
+            memory: hook_state.memory,
+            conversation_id: hook_state.conversation_id,
+            compaction: hook_state.compaction,
+            model: hook_state.model,
+            last_total_tokens: hook_state.last_total_tokens,
+            turn_usage: hook_state.turn_usage,
+            session_usage: hook_state.session_usage,
+            store_latch: hook_state.store_latch,
+            unpriced_warnings: UnpricedWarnings::default(),
+            stop: StopLedger::default(),
+        }
+    }
+
+    /// Return a clone of the `Arc` that holds the most recent history snapshot.
+    ///
+    /// Callers clone this Arc **before** passing the hook into the agent builder
+    /// (which consumes `self`), then read it back after a `ProviderError`.
+    pub fn last_known_history(&self) -> std::sync::Arc<std::sync::Mutex<Vec<Message>>> {
+        self.history.arc()
+    }
+
+    /// Return a clone of the `Arc` that holds this turn's tool records.
+    ///
+    /// Callers clone this Arc **before** passing the hook into the agent
+    /// builder (which consumes `self`), then read it back after the turn —
+    /// including after a stop, whose dropped stream leaves the in-flight batch
+    /// out of rig's history.
+    pub fn turn_tools(&self) -> Arc<TurnToolLog> {
+        Arc::clone(&self.turn_tools)
+    }
+
+    /// Return a clone of the ledger that records why the run stopped.
+    ///
+    /// Callers clone it **before** passing the hook into the agent builder
+    /// (which consumes `self`), then read it after the run: a hook stop carries
+    /// its reason text through rig, so the cause travels beside it here.
+    pub fn stop_ledger(&self) -> StopLedger {
+        self.stop.clone()
+    }
+
+    /// Returns `true` if a cancellation has been requested via the bus cancel channel.
+    ///
+    /// Consumes any pending cancel event. A `Lagged` error also counts as cancelled
+    /// because the cancel channel is capacity-bounded and an overflowed buffer means
+    /// the turn must stop.
+    fn is_cancelled(&self) -> bool {
+        let mut rx = self.lock_cancel_rx();
+        matches!(
+            rx.try_recv(),
+            Ok(CancelEvent::Requested) | Err(TryRecvError::Lagged(_))
+        )
+    }
+
+    /// The cancel receiver, recovered if a drainer panicked mid-receive.
+    fn lock_cancel_rx(&self) -> MutexGuard<'_, CancelRx> {
+        self.cancel_rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The last completion's token count, recovered if a writer panicked.
+    fn lock_last_total_tokens(&self) -> MutexGuard<'_, Option<u64>> {
+        self.last_total_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Publish the not-run sequence for a call the cancel arm denied before it
+    /// ran.
+    ///
+    /// The cancel arm returns `stop` before the `ToolStarted` send, and rig
+    /// fails the dispatch before `on_outcome` fires — so without this sequence
+    /// the live transcript renders nothing for the denied call.
+    async fn emit_cancelled_dispatch(
+        &self,
+        tool_name: &str,
+        source: crate::tools::handler::ToolSource,
+        arguments: &str,
+    ) {
+        emit_not_run_dispatch(
+            self.bus.ui_event(),
+            self.bus.stream(),
+            &self.cwd,
+            NotRunCall {
+                tool_name,
+                source,
+                arguments,
+                start: NotRunStart::Publish,
+            },
+            NotRunOutcome::Cancelled,
+            true,
+        )
+        .await;
+    }
+
+    /// The warning for a model nothing priced, or `None` when this model was
+    /// already reported.
+    ///
+    /// The model named is the wire serving this turn's completions, so the log
+    /// names the model that actually went unpriced.
+    fn unpriced_warning(&self, reason: PricingSkip) -> Option<String> {
+        let model = &self.model;
+        let model_id = model.id().unwrap_or("<no model>").to_string();
+        let vendor = model.name().to_string();
+        if !self.unpriced_warnings.first_time(&model_id) {
+            return None;
+        }
+        Some(format!(
+            "no cost for {vendor}/{model_id}: {reason} — the session cost line stays tokens-only for this model"
+        ))
+    }
+
+    /// Report an unpriced completion once per model id.
+    ///
+    /// A tokens-only session used to be unexplainable: nothing said why no
+    /// cost appeared. The reason is logged at warn level the first time a
+    /// model goes unpriced, so the log names the cause without repeating it
+    /// on every call.
+    fn warn_unpriced_once(&self, reason: PricingSkip) {
+        if let Some(message) = self.unpriced_warning(reason) {
+            log::warn!("{message}");
+        }
+    }
+}
+
+impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
+    fn on_model_select(
+        &self,
+        _ctx: &HookContext,
+        _event: ModelSelection<'_>,
+    ) -> ModelSelectionAction {
+        // The executor builds a fresh agent per turn with the current model
+        // registered as the default, so keeping the default candidate is the
+        // correct selection. Label-based switching is subtask 506682ea.
+        ModelSelectionAction::Continue
+    }
+
+    fn on_completion_call(
+        &self,
+        _ctx: &HookContext,
+        event: CompletionCallEvent<'_>,
+    ) -> impl std::future::Future<Output = CompletionCallAction> + WasmCompatSend {
+        // 1. History snapshot — store history + prompt before the LLM call
+        let history: Vec<Message> = event.history.iter().map(|m| (**m).clone()).collect();
+        self.history.update(&history, event.prompt);
+
+        // 2. Reset sub-turn cap — new LLM request, fresh counter
+        self.subturn.reset();
+
+        // Trace-level payload logging for debugging LLM request contents.
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "on_completion_call: history_len={} prompt={}",
+                event.history.len(),
+                serde_json::to_string(event.prompt).unwrap_or_else(|_| "<serialize error>".into()),
+            );
+            for (i, msg) in event.history.iter().enumerate() {
+                log::trace!(
+                    "  history[{}]: {}",
+                    i,
+                    serde_json::to_string(msg).unwrap_or_else(|_| "<serialize error>".into()),
+                );
+            }
+        } else if log::log_enabled!(log::Level::Debug) {
+            log::trace!("on_completion_call: history_len={}", event.history.len());
+        }
+
+        let cancelled = self.is_cancelled();
+        let bus = self.bus.clone();
+        let memory = Arc::clone(&self.memory);
+        let conversation_id = self.conversation_id.clone();
+        let compaction = self.compaction.clone();
+        let last_total_tokens = Arc::clone(&self.last_total_tokens);
+        let store_latch = Arc::clone(&self.store_latch);
+        let stop = self.stop.clone();
+        let prompt = event.prompt.clone();
+
+        async move {
+            if cancelled {
+                stop.narrate(
+                    bus.stream(),
+                    StopCause::UserCancelled,
+                    CANCELLED_STOP_REASON,
+                );
+                return CompletionCallAction::stop(CANCELLED_STOP_REASON);
+            }
+            let _ = bus.ui_event().send(SystemEvent::InferenceStarted).await;
+            // Zero retention: a failed publish means no subscriber is attached
+            // (nobody is listening), which is not a turn error.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Inference(InferenceRecord::Started));
+
+            // Compaction decision: schedule a compaction when the session's
+            // current conversation is over the threshold. The hook never patches
+            // the per-turn history — the splice is what the next run loads.
+            decide_compaction(
+                &prompt,
+                conversation_id.as_str(),
+                memory.as_ref(),
+                &compaction,
+                &last_total_tokens,
+                &store_latch,
+                self.bus.compaction(),
+            )
+            .await;
+
+            CompletionCallAction::continue_run()
+        }
+    }
+
+    fn on_text_delta(
+        &self,
+        _ctx: &HookContext,
+        event: TextDelta<'_>,
+    ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
+        let cancelled = self.is_cancelled();
+        let bus = self.bus.clone();
+        let stop = self.stop.clone();
+        let delta = event.delta.to_string();
+        let aggregated = event.aggregated.to_string();
+        // Intra-stream repetition detection: check the full aggregated stream
+        // text (not individual deltas — streaming servers tokenize differently
+        // each pass, so delta chunks are never reliably identical, but the
+        // repetition is fully visible in the aggregated suffix). The 100-char
+        // growth throttle inside `check_aggregated` bounds the check cost.
+        // Compute it synchronously before the `async move` so `event` is not
+        // borrowed across the await point. Skipped entirely when the repetition
+        // guard is disabled.
+        let repetition_action = if self.repetition_guard {
+            OutputRepetitionDetector::check_aggregated(&self.output_repetition, event.aggregated)
+        } else {
+            None
+        };
+
+        async move {
+            if cancelled {
+                stop.narrate(
+                    bus.stream(),
+                    StopCause::UserCancelled,
+                    CANCELLED_STOP_REASON,
+                );
+                return ObservationAction::stop(CANCELLED_STOP_REASON);
+            }
+            // Every intra-stream detection stops the stream: `check_aggregated`
+            // returns Stop on ANY detection (the stream stops on the FIRST,
+            // not after ladder escalations). NO warning here — the executor
+            // surfaces the stop reason and drives the stop-to-steering retry
+            // (append steering + reset ladder + re-run, terminal on the second
+            // stop), the same path as the Esc-Esc cancel: `ObservationAction
+            // ::stop` → Cancelled → cancel-reason matching →
+            // `LlmEvent::Stopped` + `WarningEvent`.
+            if repetition_action.is_some() {
+                let reason = format!(
+                    "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same \
+                     output after repeated steering. The run was stopped."
+                );
+                stop.narrate(bus.stream(), StopCause::OutputRepetition, &reason);
+                return ObservationAction::stop(reason);
+            }
+            let _ = bus
+                .ui_event()
+                .send(SystemEvent::InferenceChunk {
+                    delta: delta.clone(),
+                    aggregated: aggregated.clone(),
+                })
+                .await;
+            // Same deltas on the record stream: the hub event dies when the
+            // surfaces fold records instead.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+                    delta,
+                    aggregated,
+                }));
+            ObservationAction::continue_run()
+        }
+    }
+
+    fn on_dispatch(
+        &self,
+        _ctx: &HookContext,
+        event: DispatchEvent<'_>,
+    ) -> impl std::future::Future<Output = DispatchAction> + WasmCompatSend {
+        // `on_dispatch` is unified: it fires for tool calls and completions.
+        // Only tool calls are steered here; a completion dispatch proceeds
+        // without consuming any per-tool state (including the cancel signal).
+        let tool_name = event.tool_name().map(str::to_string);
+        let args = event.tool_args().map(str::to_string);
+        let tool_call_id = event.call_id.map(|id| id.to_string());
+        let stop = self.stop.clone();
+
+        // Record the call before any gate runs. A stop that lands mid-batch
+        // drops the stream, and this record is what keeps the call once rig's
+        // history loses it. The cancel check below keeps its order.
+        if let Some(name) = tool_name.as_deref()
+            && let Some(call_id) = event.call_id
+            && let Ok(name) = ToolName::new(name)
+        {
+            self.turn_tools
+                .record_call(call_id.clone(), name, args.clone().unwrap_or_default());
+        }
+
+        // Pre-compute all synchronous checks and capture values for the async
+        // block. Each is guarded on `tool_name` so a completion dispatch
+        // neither consumes the cancel event nor advances the sub-turn cap.
+        let cancelled = tool_name.is_some() && self.is_cancelled();
+        let subturn_action = tool_name
+            .as_deref()
+            .and_then(|name| self.subturn.check_and_increment(name));
+        let circuit_action = tool_name
+            .as_deref()
+            .and_then(|name| self.circuit.check_server_enabled(name, &self.mcp_registry));
+        let source = tool_name
+            .as_deref()
+            .map(|name| resolve_tool_source(name, &self.closure_registry, &self.mcp_registry))
+            .unwrap_or(crate::tools::handler::ToolSource::Unknown);
+
+        let permission = self.permission.clone();
+        let bus = self.bus.clone();
+
+        async move {
+            let Some(tool_name) = tool_name else {
+                return DispatchAction::proceed();
+            };
+            let args = args.unwrap_or_default();
+
+            log::trace!("on_dispatch: tool={tool_name}");
+
+            if cancelled {
+                // The stop lands before the `ToolStarted` send below and rig
+                // fails the dispatch before `on_outcome`, so this pair is the
+                // only host event the denied call produces.
+                self.emit_cancelled_dispatch(&tool_name, source, &args)
+                    .await;
+                stop.narrate(
+                    bus.stream(),
+                    StopCause::UserCancelled,
+                    CANCELLED_STOP_REASON,
+                );
+                return DispatchAction::stop(CANCELLED_STOP_REASON);
+            }
+            if let Some(action) = subturn_action {
+                return action;
+            }
+            let doom_action = if self.repetition_guard {
+                self.doom
+                    .check_and_record(&tool_name, &args, bus.ui_event(), bus.stream(), &stop)
+                    .await
+            } else {
+                None
+            };
+            if let Some(action) = doom_action {
+                return action;
+            }
+            if let Some(action) = circuit_action {
+                return action;
+            }
+
+            // The call line comes from the render registry. A tool without a
+            // registered render fn — a dynamic or MCP tool, or a builtin whose
+            // fn was never registered — takes the documented fallback
+            // [`call_line_render_for`](crate::tools::handler::builtin_tool::call_line_render_for):
+            // the builtin's tailored render when the name parses as a builtin
+            // kind, otherwise the generic JSON summary
+            // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
+            // of the raw arguments. The fallback is display-only: the TUI
+            // matches the pending call by `ToolCallId`, never by this text.
+            let call = ToolCall::new(tool_name.clone(), source, args.clone());
+            let _ = bus.ui_event().send(SystemEvent::ToolStarted { call }).await;
+            // The record stream opens the pair with the same call as data:
+            // identity, name, source, arguments — never the rendered line.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Tool(ToolRecord::Started {
+                    call: StreamToolCall::new(tool_name.clone(), source, args.clone()),
+                }));
+
+            let decision = permission
+                .resolve(
+                    &tool_name,
+                    &args,
+                    tool_call_id,
+                    bus.ui_event(),
+                    bus.cancel(),
+                )
+                .await;
+            match decision {
+                PermissionDecision::Allow => DispatchAction::proceed(),
+                PermissionDecision::Deny { reason } => {
+                    // The tool never runs, but rig still reports the skipped
+                    // result through on_outcome, whose tool-result arm would
+                    // consume the flag via suppress_previewed_display. The
+                    // early take keeps the discard independent of rig's
+                    // skipped-result outcome behavior.
+                    //
+                    // A `false` answer means no preview reached the user: the
+                    // policy path denies without a card, so the pair publishes
+                    // the argument-sourced preview itself — the same event the
+                    // flush path emits, and the same display rehydration
+                    // builds for the not-run row. An Ask-path denial already
+                    // anchored its preview in the permission card, so `true`
+                    // suppresses the emission and no duplicate appears.
+                    let preview = !permission.take_previewed(&tool_name, &args);
+                    emit_not_run_dispatch(
+                        bus.ui_event(),
+                        bus.stream(),
+                        &self.cwd,
+                        NotRunCall {
+                            tool_name: tool_name.as_str(),
+                            source,
+                            arguments: args.as_str(),
+                            start: NotRunStart::AlreadyPublished,
+                        },
+                        NotRunOutcome::Denied { reason: &reason },
+                        preview,
+                    )
+                    .await;
+                    DispatchAction::skip(reason)
+                }
+            }
+        }
+    }
+
+    fn on_outcome(
+        &self,
+        _ctx: &HookContext,
+        event: OutcomeEvent<'_>,
+    ) -> impl std::future::Future<Output = OutcomeAction> + WasmCompatSend {
+        // `on_outcome` is unified: it fires for tool results and completions.
+        // A tool result drives the transcript event, the circuit breaker, and
+        // the persisted success verdict; a completion drives usage reporting.
+        // Both proceed.
+        let bus = self.bus.clone();
+
+        async move {
+            // Tool branch: structural success, persisted verdict, transcript
+            // event, and circuit-breaker tracking.
+            if let Some(result) = event.tool_result() {
+                let tool_name = event.tool_name().unwrap_or_default();
+                let args = event.tool_args().unwrap_or_default();
+                let result_text = result.output().render();
+
+                // Structural success: the canonical result disposition decides. A
+                // non-zero `nu` exit arrives as an Error disposition (producers are
+                // honest), and Refused/Skipped never count as success — no result-text
+                // sniffing.
+                let success = result.is_success();
+
+                log::trace!(
+                    "on_outcome: tool={tool_name} success={success} result_len={}",
+                    result_text.len(),
+                );
+                if log::log_enabled!(log::Level::Trace) {
+                    let preview = if result_text.len() > 2000 {
+                        let boundary = result_text.floor_char_boundary(2000);
+                        format!(
+                            "{}...<truncated {} bytes>",
+                            &result_text[..boundary],
+                            result_text.len()
+                        )
+                    } else {
+                        result_text.clone()
+                    };
+                    log::trace!("  result_body: {preview}");
+                }
+
+                // 1. The result text is what the model saw; the record carries it
+                // as data. No display is derived here — the surface derives it.
+
+                // 2. Resolve source
+                let source =
+                    resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry);
+
+                // 3. Classify error kind from raw result
+                let error_kind = result.error().map(|e| e.kind().as_str().to_string());
+                // The structural status, built once from the disposition and
+                // carried by both the record and the transcript event.
+                let status = status_of_result(result);
+
+                // 4. Record the settled result on the call's record, so a stop
+                // that drops the stream still keeps the result. The status is a
+                // variant built here, from the structured disposition — never
+                // from the result text.
+                if let Some(call_id) = event.call_id
+                    && let Ok(name) = ToolName::new(tool_name)
+                {
+                    self.turn_tools.record_result(
+                        call_id.clone(),
+                        name,
+                        args,
+                        crate::hook::turn_tools::SettledToolCall::new(
+                            result_text.clone(),
+                            success,
+                            status,
+                        )
+                        .with_error_kind(error_kind.clone()),
+                    );
+                }
+
+                // 5. Emit ToolCompleted (success was computed structurally above)
+                // The pair closes on the record stream first: the disposition is
+                // the enum the settle site built, and the result text is content.
+                // The structured result, when the tool produced one, so a surface
+                // derives the display from data instead of parsing a picture.
+                let payload = serde_json::from_str::<serde_json::Value>(&result_text)
+                    .ok()
+                    .map(|value| value.to_string());
+                let _ = bus
+                    .stream()
+                    .publish(SessionRecord::Tool(ToolRecord::Completed {
+                        call: StreamToolCall::new(tool_name.to_string(), source, args.to_string()),
+                        outcome: StreamToolOutcome {
+                            status,
+                            payload,
+                            text: result_text.clone(),
+                            message: None,
+                            kind: result.error().map(|e| error_kind_of(e.kind())),
+                        },
+                    }));
+                let call = ToolCall::new(tool_name.to_string(), source, args);
+                let _ = bus
+                    .ui_event()
+                    .send(SystemEvent::ToolCompleted {
+                        call,
+                        outcome: ToolOutcome {
+                            success,
+                            status,
+                            result: result_text,
+                            error_kind,
+                            message: None,
+                        },
+                    })
+                    .await;
+
+                // 6. Circuit breaker — track transport failures per server
+                self.circuit
+                    .record_result(
+                        tool_name,
+                        result,
+                        success,
+                        &self.mcp_registry,
+                        bus.ui_event(),
+                    )
+                    .await;
+            }
+
+            // Completion branch: report usage and store the real token count for
+            // the compaction threshold check.
+            if let Some(response) = event.completion() {
+                let usage = response.usage;
+                // Any counter is enough to report the call: a wire may omit
+                // `total_tokens` (ollama-cloud's OpenAI-compatible endpoint
+                // does), and pricing needs only the input and output counts.
+                // A usage that reports no counter at all reports nothing.
+                let reports_usage = usage.input_tokens.is_some()
+                    || usage.output_tokens.is_some()
+                    || usage.total_tokens.is_some();
+                if reports_usage {
+                    let mut response_chars = 0usize;
+                    let mut tool_calls = 0usize;
+                    for item in response.choice.iter() {
+                        match item {
+                            rig::message::AssistantContent::Text(text) => {
+                                response_chars += text.text.chars().count();
+                            }
+                            rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
+                            _ => {}
+                        }
+                    }
+                    // Store the real count: the wire's total when it reports
+                    // one, else input + output — the same quantity. A wire may
+                    // omit `total_tokens` (ollama-cloud's OpenAI-compatible
+                    // endpoint does), and the switch gate and the threshold
+                    // check both need a real count.
+                    let total_tokens =
+                        match (usage.total_tokens, usage.input_tokens, usage.output_tokens) {
+                            (Some(total), _, _) => Some(total),
+                            (None, Some(input), Some(output)) => Some(input + output),
+                            _ => None,
+                        };
+                    if let Some(total_tokens) = total_tokens {
+                        *self.lock_last_total_tokens() = Some(total_tokens);
+                    }
+                    let (cost, cost_complete) = match usage.cost {
+                        Some(cost) => (Some(cost.total), cost.is_complete()),
+                        None => match computed_cost(&self.model, &usage) {
+                            PricedOutcome::Priced { total, complete } => (Some(total), complete),
+                            PricedOutcome::Skipped(reason) => {
+                                self.warn_unpriced_once(reason);
+                                (None, false)
+                            }
+                        },
+                    };
+                    // Accumulate the turn's usage here, where the call is
+                    // observed: a runner-side sum would undercount under
+                    // channel lag. The session cells take the same call, so
+                    // the session totals are the sum of every turn's calls.
+                    self.turn_usage.add_call(
+                        usage.input_tokens.unwrap_or(0),
+                        usage.output_tokens.unwrap_or(0),
+                        total_tokens,
+                        cost,
+                        cost_complete,
+                    );
+                    self.session_usage.add_call(
+                        usage.input_tokens.unwrap_or(0),
+                        usage.output_tokens.unwrap_or(0),
+                        total_tokens,
+                        cost,
+                        cost_complete,
+                    );
+                    let _ = bus
+                        .ui_event()
+                        .send(SystemEvent::InferenceCompleted {
+                            usage: Usage {
+                                response_chars,
+                                tool_calls,
+                                input_tokens: usage.input_tokens.unwrap_or(0),
+                                output_tokens: usage.output_tokens.unwrap_or(0),
+                                total_tokens: usage.total_tokens,
+                                cost,
+                                cost_complete,
+                            },
+                        })
+                        .await;
+                    let _ = bus.stream().publish(SessionRecord::Inference(
+                        InferenceRecord::Completed {
+                            usage: StreamUsage {
+                                input_tokens: usage.input_tokens.unwrap_or(0),
+                                output_tokens: usage.output_tokens.unwrap_or(0),
+                                total_tokens: usage.total_tokens,
+                                cost,
+                                cost_complete,
+                            },
+                        },
+                    ));
+                }
+            }
+
+            OutcomeAction::proceed()
+        }
+    }
+
+    fn on_model_turn_finished(
+        &self,
+        _ctx: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> impl std::future::Future<Output = ModelTurnAction> + WasmCompatSend {
+        // Detect assistant-output repetition at the turn boundary. The action
+        // must be computable before the `async move` so it is decided
+        // synchronously. `finish_turn` consumes the intra-stream detection
+        // flag (escalating the ladder when intra-stream detection fired) and
+        // otherwise falls back to the cross-turn full-text comparison.
+        // Skipped entirely when the repetition guard is disabled.
+        let repetition_detection = if self.repetition_guard {
+            OutputRepetitionDetector::finish_turn(&self.output_repetition, event.content)
+        } else {
+            None
+        };
+        let bus = self.bus.clone();
+        let stop = self.stop.clone();
+        async move {
+            if let Some(detection) = repetition_detection {
+                match detection {
+                    RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
+                        let _ = bus
+                            .ui_event()
+                            .send(SystemEvent::SystemMessage {
+                                kind: SystemKind::Warning,
+                                text: message.clone(),
+                            })
+                            .await;
+                        return ModelTurnAction::retry_with_feedback(message);
+                    }
+                    RepetitionDetection::Stop(message) => {
+                        // No hook-side warning — the executor surfaces the stop
+                        // reason, mirroring the tool doom loop. This is the
+                        // repetition ladder's terminal stop, not the doom loop:
+                        // the cause is what the steering retry keys on.
+                        stop.narrate(bus.stream(), StopCause::OutputRepetition, &message);
+                        return ModelTurnAction::stop(message);
+                    }
+                }
+            }
+            ModelTurnAction::continue_run()
+        }
+    }
+
+    fn on_invalid_tool_call(
+        &self,
+        _ctx: &HookContext,
+        event: &InvalidToolCallContext,
+    ) -> impl std::future::Future<Output = Option<InvalidToolCallAction>> + WasmCompatSend {
+        log::warn!("Invalid tool call: tool={}", event.tool_name);
+        let feedback = format!(
+            "Tool '{}' is not available. Available tools: [{}]",
+            event.tool_name,
+            event.available_tools.join(", ")
+        );
+        let bus = self.bus.clone();
+        async move {
+            let _ = bus
+                .ui_event()
+                .send(SystemEvent::SystemMessage {
+                    kind: SystemKind::Warning,
+                    text: feedback.clone(),
+                })
+                .await;
+            Some(InvalidToolCallAction::retry(feedback))
+        }
+    }
+}
+
+// region: --- Compaction
+
+/// Decide whether this turn should schedule a compaction.
+///
+/// The threshold is evaluated against the CURRENT conversation of the session's
+/// rig-memory store — the store a run loads at its start — so a turn saved after
+/// the cache was populated is counted. `rig_memory::load` re-reads and folds the
+/// log on every call, so it is always current; the first-read cache is not a
+/// compaction input.
+///
+/// The hook never patches the per-turn history: after a compaction the splice is
+/// saved and rig loads it at the next run.
+async fn decide_compaction(
+    prompt: &Message,
+    conversation_id: &str,
+    memory: &crate::session::CachedMemory,
+    compaction: &CompactionConfig,
+    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+    store_latch: &crate::hook::StoreLatch,
+    compaction_tx: &CompactionTx,
+) {
+    // A store that already refused to open makes no further attempt: the
+    // conversation cannot be read, so no decision can be made from it, and the
+    // one clean line was emitted when the latch was set.
+    if store_latch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some()
+    {
+        return;
+    }
+    let Some(threshold_tokens) = compaction.threshold_tokens else {
+        return;
+    };
+    // A session whose provider name resolved to no rig provider id has no model
+    // spec, so its compactor cannot run: scheduling one would only emit a
+    // misleading `Requested`.
+    if compaction.spec().is_none() {
+        return;
+    }
+
+    let Some(conversation) =
+        current_conversation(memory, conversation_id, store_latch, compaction_tx).await
+    else {
+        return;
+    };
+    if conversation.is_empty() {
+        return;
+    }
+
+    // Threshold check: use the real token count from the last completion when
+    // available (it reflects the actual context the model processed last turn,
+    // which already includes the prior prompt), plus a chars/4 estimate for the
+    // current prompt. When no real count exists (first turn, or after a
+    // compaction reset) fall back to the chars/4 estimate for the conversation.
+    let base_tokens = lock_last_total_tokens_arc(last_total_tokens)
+        .and_then(|n| u64::try_into(n).ok())
+        .unwrap_or_else(|| estimate_token_count(&conversation));
+    let prompt_estimate = estimate_token_count(std::slice::from_ref(prompt));
+    if base_tokens + prompt_estimate < threshold_tokens {
+        return;
+    }
+
+    // Compaction is needed. Fire a `SystemEvent::CompactionRequested` on the
+    // channel so the orchestrator schedules the compaction on the worker; the
+    // splice it makes is what the next run loads.
+    let _ = compaction_tx
+        .send(SystemEvent::CompactionRequested {
+            source: CompactionSource::Auto,
+        })
+        .await;
+}
+
+/// The conversation the session's rig-memory store holds right now.
+///
+/// Store errors are surfaced as a `SystemEvent::CompactionFailed` on the
+/// compaction channel and yield `None` so the turn proceeds without a
+/// compaction decision.
+async fn current_conversation(
+    memory: &crate::session::CachedMemory,
+    conversation_id: &str,
+    store_latch: &crate::hook::StoreLatch,
+    compaction_tx: &CompactionTx,
+) -> Option<Vec<Message>> {
+    let store = match memory.rig_store(conversation_id).await {
+        Ok(store) => store,
+        Err(e) => {
+            emit_store_dead(store_latch, &e, "auto", compaction_tx).await;
+            return None;
+        }
+    };
+    let log = conversation_id.to_owned();
+    let loaded = crate::session::blocking::on_pool(move || rig_memory::load(&*store, &log)).await;
+    match loaded {
+        Ok(Ok(conversation)) => Some(
+            conversation
+                .messages()
+                .iter()
+                .map(|message| (**message).clone())
+                .collect(),
+        ),
+        Ok(Err(e)) => {
+            let _ = compaction_tx
+                .send(SystemEvent::CompactionFailed {
+                    source: "auto".to_string(),
+                    message: format!("Failed to load the session: {e}"),
+                })
+                .await;
+            None
+        }
+        Err(e) => {
+            let _ = compaction_tx
+                .send(SystemEvent::CompactionFailed {
+                    source: "auto".to_string(),
+                    message: format!("Failed to load the session: {e}"),
+                })
+                .await;
+            None
+        }
+    }
+}
+
+/// Latch a store that cannot be opened and emit its one clean refusal line.
+///
+/// The latch makes the compaction path skip every further attempt, so an
+/// unreadable store costs one line rather than one per completion call. A
+/// second refusal finds the latch set and emits nothing.
+async fn emit_store_dead(
+    store_latch: &crate::hook::StoreLatch,
+    error: &crate::session::MemoryError,
+    source: &str,
+    compaction_tx: &CompactionTx,
+) {
+    let message = store_refusal_text(error);
+    let first = {
+        let mut latch = store_latch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if latch.is_some() {
+            false
+        } else {
+            *latch = Some(message.clone());
+            true
+        }
+    };
+    if first {
+        let _ = compaction_tx
+            .send(SystemEvent::CompactionFailed {
+                source: source.to_string(),
+                message,
+            })
+            .await;
+    }
+}
+
+/// The clean refusal line a store failure reports.
+///
+/// The storage refusal itself is the line when the error chain carries one;
+/// the wrappers above it (`Memory backend error: …`, the sqlx wording) are
+/// never part of what the user reads.
+fn store_refusal_text(error: &crate::session::MemoryError) -> String {
+    let mut current = std::error::Error::source(error);
+    while let Some(source) = current {
+        if let Some(storage) = source.downcast_ref::<agnt_storage::StorageError>() {
+            return storage.to_string();
+        }
+        current = source.source();
+    }
+    std::error::Error::source(error)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| error.to_string())
+}
+
+/// Run a compaction for `conversation_id`, returning the post-splice history
+/// when compaction ran, or `None` when there was nothing to compact.
+///
+/// Called by the router when the orchestrator dispatches a `RunCompaction`
+/// worker command. The events after the request, the hook envelopes, and the
+/// store carry the source as text, so `compaction_source_text` derives it here
+/// once. `compact()` emits all `Started`/`SummaryChunk`/`Completed`/`Failed`
+/// events; this function emits a `Completed` with an empty summary when there
+/// was nothing to summarize, so the TUI still gets feedback that the `/compact`
+/// command ran.
+///
+/// The conversation is read from the rig-memory store of the session, which is
+/// what a run loads at its start: the splice `compact()` makes IS the context
+/// from then on.
+pub async fn run_compaction(
+    conversation_id: &str,
+    memory: &crate::session::CachedMemory,
+    compaction: &CompactionConfig,
+    source: CompactionSource,
+    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+    store_latch: &crate::hook::StoreLatch,
+    compaction_tx: &CompactionTx,
+) -> Option<Vec<Message>> {
+    let source_text = compaction_source_text(source);
+    let store = match memory.rig_store(conversation_id).await {
+        Ok(store) => store,
+        Err(e) => {
+            emit_store_dead(store_latch, &e, source_text, compaction_tx).await;
+            return None;
+        }
+    };
+    // The store opened: whatever refused before is gone, so the latch clears
+    // and the automatic decision resumes on the next completion.
+    *store_latch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+
+    let reason = compact_reason(source);
+    match compaction
+        .compactor
+        .compact(store, conversation_id, &reason, source_text)
+        .await
+    {
+        Ok(Some(outcome)) => {
+            // Compaction succeeded: the real token count from the previous turn no
+            // longer reflects the (now summarized) context. Reset it so the next
+            // turn falls back to the estimate (small — just the summary), then
+            // picks up the real count after its first completion.
+            *lock_last_total_tokens_arc(last_total_tokens) = None;
+            Some(outcome.messages)
+        }
+        Ok(None) => {
+            let _ = compaction_tx
+                .send(SystemEvent::CompactionCompleted {
+                    source: source_text.to_string(),
+                    summary_preview: String::new(),
+                    summary_body: String::new(),
+                })
+                .await;
+            None
+        }
+        // `compact()` already emitted `Failed`; fall back to the full history so
+        // the turn is not lost.
+        Err(_) => None,
+    }
+}
+
+/// Why a compaction is running, from the command that asked for it.
+///
+/// `Manual` is the user asking through `/compact`; `Auto` is the threshold
+/// path.
+fn compact_reason(source: CompactionSource) -> CompactReason {
+    match source {
+        CompactionSource::Manual => CompactReason::Asked {
+            focus: String::new(),
+        },
+        CompactionSource::Auto => CompactReason::Threshold,
+    }
+}
+
+/// The gate card a call has, as its preview content: `Some(Some(diff))` for an
+/// edit (the producer plans the diff against the file on disk), `Some(None)` for
+/// a tool whose card the drawer derives from the arguments (a `nu` command), and
+/// `None` when the tool has no card at all.
+fn gate_card_for(
+    tool_name: &str,
+    arguments: &str,
+    cwd: &std::path::Path,
+) -> Option<Option<String>> {
+    let arguments: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    let kind = tool_name.parse::<agnt_kernel::BuiltinKind>().ok();
+    crate::tools::handler::pre_authorize_fs_tool(kind, arguments.as_object()?, cwd)
+        .map(|output| output.preview)
+}
+
+// endregion: --- Compaction
+
+// region:    --- Support
+
+/// The shared token count a compaction path carries by reference, recovered if
+/// a writer panicked mid-update.
+fn lock_last_total_tokens_arc(
+    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+) -> MutexGuard<'_, Option<u64>> {
+    last_total_tokens
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+// endregion: --- Support
+
+#[cfg(test)]
+#[path = "../../../test/hook/chain.rs"]
+mod chain_test;

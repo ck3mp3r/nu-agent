@@ -50,7 +50,7 @@ fn system_event_contract() {
             preview: Some("echo hi".to_string()),
         },
         SystemEvent::PermissionRequested {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             context: PermissionRequestContext {
                 tool: "nu(command=echo hi)".to_string(),
                 tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
@@ -65,15 +65,15 @@ fn system_event_contract() {
             },
         },
         SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("ask-0000000000000001"),
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000002"),
+            request_id: RequestId::from_minted("ask-0000000000000002"),
         },
         SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("ask-0000000000000003"),
+            request_id: RequestId::from_minted("ask-0000000000000003"),
             reason: "stale_or_unknown_request".to_string(),
         },
         SystemEvent::SystemMessage {

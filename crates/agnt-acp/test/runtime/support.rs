@@ -57,7 +57,7 @@ pub(super) fn make_params(
         session_id: None,
         client_fs: None,
         agent_name: None,
-        hook_context: agnt_core::hooks::HookAgentContext::default(),
+        hook_context: agnt_runtime::hooks::HookAgentContext::default(),
     }
 }
 

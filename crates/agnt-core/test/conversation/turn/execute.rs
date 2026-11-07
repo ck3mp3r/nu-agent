@@ -89,7 +89,7 @@ async fn test_execute_drive_stream_expires_the_grace_without_history() -> Result
         bus,
         grace,
         7,
-        crate::hook::agent_hook::StopLedger::default(),
+        agnt_runtime::hook::agent_hook::StopLedger::default(),
     )
     .await
     .map_err(|e| format!("drive_stream should succeed: {e}"))?;
@@ -146,7 +146,7 @@ async fn test_execute_drive_stream_completes_normally_during_the_grace() -> Resu
         bus,
         Duration::from_millis(50),
         0,
-        crate::hook::agent_hook::StopLedger::default(),
+        agnt_runtime::hook::agent_hook::StopLedger::default(),
     )
     .await
     .map_err(|e| format!("drive_stream should succeed: {e}"))?;
@@ -189,7 +189,7 @@ async fn test_execute_drive_stream_captures_the_cancelled_history() -> Result<()
         bus,
         Duration::from_millis(50),
         0,
-        crate::hook::agent_hook::StopLedger::default(),
+        agnt_runtime::hook::agent_hook::StopLedger::default(),
     )
     .await
     .map_err(|e| format!("drive_stream should succeed: {e}"))?;
@@ -240,7 +240,7 @@ async fn test_execute_drive_stream_tracks_the_committed_tool_calls() -> Result<(
         bus,
         Duration::from_millis(50),
         0,
-        crate::hook::agent_hook::StopLedger::default(),
+        agnt_runtime::hook::agent_hook::StopLedger::default(),
     )
     .await
     .map_err(|e| format!("drive_stream should succeed: {e}"))?;
@@ -276,7 +276,7 @@ async fn test_execute_drive_stream_tracks_no_calls_without_the_projection() -> R
         bus,
         Duration::from_millis(50),
         0,
-        crate::hook::agent_hook::StopLedger::default(),
+        agnt_runtime::hook::agent_hook::StopLedger::default(),
     )
     .await
     .map_err(|e| format!("drive_stream should succeed: {e}"))?;

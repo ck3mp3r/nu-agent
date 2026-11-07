@@ -565,7 +565,7 @@ async fn attach_session_stamps_the_joined_turns_facts() -> Result<()> {
     // -- Setup & Fixtures: a store on disk, so the facts one open writes are the
     // facts the next open reads.
     let mut fixture = make_runtime(text_model("unused"))?;
-    fixture.runtime.session = crate::conversation::state::memory::MemoryState::new(
+    fixture.runtime.session = agnt_runtime::conversation::state::memory::MemoryState::new(
         agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
             .with_cache_dir(fixture.root().join("attach-facts")),
     );

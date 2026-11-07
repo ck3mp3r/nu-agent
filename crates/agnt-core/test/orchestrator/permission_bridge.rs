@@ -152,14 +152,14 @@ impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
             .bus
             .ui_event()
             .send(SystemEvent::PermissionDecisionTimedOut {
-                request_id: RequestId::new(self.request_id.clone()),
+                request_id: RequestId::from_minted(self.request_id.clone()),
             })
             .await;
         let _ = self
             .bus
             .ui_event()
             .send(SystemEvent::PermissionDecisionIgnored {
-                request_id: RequestId::new(self.request_id.clone()),
+                request_id: RequestId::from_minted(self.request_id.clone()),
                 reason: "decision_channel_closed".to_string(),
             })
             .await;

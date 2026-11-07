@@ -48,8 +48,8 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
-        turn_usage: crate::hook::TurnUsage::default(),
-        session_usage: crate::hook::TurnUsage::default(),
+        turn_usage: agnt_runtime::hook::TurnUsage::default(),
+        session_usage: agnt_runtime::hook::TurnUsage::default(),
         bus: agnt_runtime::bus::Bus::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };

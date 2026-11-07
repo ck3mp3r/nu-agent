@@ -16,10 +16,10 @@ use agnt_core::{
         builder::BuildInput,
         runtime_build::{RuntimeBuildParams, build_runtime},
     },
-    hooks::HookAgentContext,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
 };
 use agnt_runtime::config::defaults;
+use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::tools::{closure::EngineInterfaceLike, handler::McpToolRegistry};
 
 /// Run the `agent` command in pipeline mode.

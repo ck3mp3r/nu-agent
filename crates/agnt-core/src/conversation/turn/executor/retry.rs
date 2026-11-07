@@ -20,9 +20,9 @@ use crate::conversation::turn::feedback::{
     FeedbackPhase, build_feedback_message, build_max_turns_feedback_message, is_model_correctable,
 };
 use crate::conversation::turn::{TurnContext, TurnConversation, TurnInput, error, execute_turn};
-use crate::hook::output_repetition::OUTPUT_REPETITION_BACKOFF_MESSAGE;
-use crate::hook::permission_resolver::AsyncPermissionResolver;
 use agnt_runtime::config::{Config, defaults};
+use agnt_runtime::hook::output_repetition::OUTPUT_REPETITION_BACKOFF_MESSAGE;
+use agnt_runtime::hook::permission_resolver::AsyncPermissionResolver;
 
 use super::TurnRecovery;
 use super::core::TurnExecutor;
@@ -34,8 +34,8 @@ use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 
 impl<'a, S> TurnExecutor<'a, S>
 where
-    S: crate::conversation::managers::SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf,
+    S: agnt_runtime::conversation::managers::SessionManager<
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
             InnerMemory = agnt_runtime::session::CachedMemory,
         >,
 {

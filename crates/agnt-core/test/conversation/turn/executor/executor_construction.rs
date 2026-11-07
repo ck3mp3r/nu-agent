@@ -11,7 +11,7 @@ use super::super::test::{
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
-use crate::conversation::state::memory::MemoryState;
+use agnt_runtime::conversation::state::memory::MemoryState;
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
@@ -183,8 +183,8 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
@@ -248,17 +248,18 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let compactor_model = MockCompletionModel::from_stream_turns(compactor_turns);
     let compactor_handle = std::sync::Arc::new(std::sync::Mutex::new(compactor_model.erase()));
     // The compactor plans against the rig-memory store of the session.
-    let compactor = crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
-        compactor_handle,
-        bus.clone(),
-        rig_memory::CompactionPolicy::default(),
-        crate::conversation::compaction::compactor::resolve_model_spec(
-            "openai",
-            "gpt-4o",
-            Some(8_000),
-            Some(1_024),
-        ),
-    );
+    let compactor =
+        agnt_runtime::conversation::compaction::compactor::NuCompactor::from_shared_model(
+            compactor_handle,
+            bus.clone(),
+            rig_memory::CompactionPolicy::default(),
+            agnt_runtime::conversation::compaction::compactor::resolve_model_spec(
+                "openai",
+                "gpt-4o",
+                Some(8_000),
+                Some(1_024),
+            ),
+        );
 
     let mut memory_state = MemoryState::new(agnt_runtime::session::RigStoreConfig::in_memory());
 
@@ -289,7 +290,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let mcp_registry = agnt_runtime::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
-    let compaction_config = crate::conversation::compaction::CompactionConfig {
+    let compaction_config = agnt_runtime::conversation::compaction::CompactionConfig {
         compactor,
         // A tiny threshold so the pre-populated conversation (20 messages) is
         // over the threshold and auto-compaction fires on the first turn.
@@ -311,8 +312,8 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus: bus.clone(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
@@ -407,8 +408,8 @@ async fn on_outcome_stores_total_tokens() -> Result<()> {
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: last_total_tokens.clone(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },

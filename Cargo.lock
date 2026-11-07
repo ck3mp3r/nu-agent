@@ -261,6 +261,7 @@ dependencies = [
  "bytes",
  "chrono",
  "fs2",
+ "futures",
  "htmd",
  "http",
  "http-body-util",

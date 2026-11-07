@@ -4,7 +4,7 @@ use super::*;
 
 use rig::tool::Tool;
 
-use crate::hook::chain::CANCELLED_DISPATCH_MESSAGE;
+use agnt_runtime::hook::chain::CANCELLED_DISPATCH_MESSAGE;
 
 /// A cancelled turn's batch holds three calls: the first runs and requests the
 /// cancel, the second's dispatch consumes it and the hook's cancel arm publishes
@@ -60,8 +60,8 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus,
             cwd: std::path::PathBuf::from("/tmp"),
         },
@@ -234,8 +234,8 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus,
             cwd: std::path::PathBuf::from("/tmp"),
         },

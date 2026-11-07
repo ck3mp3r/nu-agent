@@ -9,9 +9,9 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::harness::*;
 use super::*;
-use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use crate::session::management::SessionPersistence;
 use crate::types::Message;
+use agnt_runtime::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use agnt_runtime::protocol::contracts::CoreRuntime;
 use agnt_runtime::protocol::model_switching::ModelSwitching;
 use agnt_runtime::utils::value_ext::extract_response_text_from_value;

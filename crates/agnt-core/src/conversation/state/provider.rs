@@ -1,7 +1,7 @@
 use super::super::managers::ProviderManager;
 use super::super::providers::{
     CachedProviderClient, ClientCacheKey, build_anthropic_client, build_copilot_client,
-    build_ollama_client, build_openai_client, resolve_provider_type,
+    build_ollama_client, build_openai_client,
 };
 use agnt_runtime::config::pricing::PricingView;
 use agnt_runtime::config::{Config, ModelRoleConfig, PluginConfig};
@@ -73,8 +73,7 @@ impl ProviderState {
             return Ok(());
         }
         let provider_key = self.config.provider.as_str();
-        let provider_type =
-            resolve_provider_type(provider_key, self.config.provider_impl.as_deref());
+        let provider_type = self.config.provider_impl.as_deref().unwrap_or(provider_key);
         log::info!(
             "creating {} client (type={}) for model={}",
             provider_key,

@@ -3,8 +3,8 @@
 //! land together, and a turn that settles nothing writes nothing.
 
 use super::*;
-use crate::conversation::state::memory::MemoryState;
 use crate::conversation::turn::executor::{ExecuteInput, TurnExecutor, TurnOutcome};
+use agnt_runtime::conversation::state::memory::MemoryState;
 use agnt_runtime::session::StoreType;
 use agnt_storage::{Entries, Storage, ToolCallStatus, ToolCalls, Turns};
 
@@ -39,7 +39,7 @@ impl rig::tool::Tool for EchoTool {
 
 /// Build a turn context over `memory` for `session_id`.
 fn context<'a>(
-    memory: crate::conversation::state::memory::MemoryOf,
+    memory: agnt_runtime::conversation::state::memory::MemoryOf,
     session_id: &str,
     model: MockCompletionModel,
     config: &'a Config,
@@ -75,8 +75,8 @@ fn context<'a>(
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus: agnt_runtime::bus::Bus::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
@@ -191,8 +191,8 @@ async fn cancelled_turn_records_no_facts() -> Result<()> {
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
+            turn_usage: agnt_runtime::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             bus: bus.clone(),
             cwd: std::path::PathBuf::from("/tmp"),
         },

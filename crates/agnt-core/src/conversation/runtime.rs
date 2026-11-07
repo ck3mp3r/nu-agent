@@ -5,16 +5,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::hook::agent_hook::DoomLoopState;
 use agnt_kernel::bus::{OneshotTx, SessionEvent};
+use agnt_runtime::hook::agent_hook::DoomLoopState;
 use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 use agnt_runtime::session::SessionInfo;
 use agnt_runtime::tools::closure::EngineInterfaceLike;
 use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
-use super::managers::{
-    MultiAgentManager, PersonaManager, ProviderManager, SessionManager, ToolManager,
-};
+use super::managers::{MultiAgentManager, PersonaManager, ProviderManager, ToolManager};
+use agnt_runtime::conversation::managers::SessionManager;
 use agnt_runtime::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
@@ -126,7 +125,7 @@ where
     doom_state: Arc<Mutex<DoomLoopState>>,
     /// Assistant-output repetition state shared across turns so that consecutive
     /// text-only completions are detected even when they span multiple turns.
-    output_repetition: Arc<Mutex<crate::hook::output_repetition::RepetitionState>>,
+    output_repetition: Arc<Mutex<agnt_runtime::hook::output_repetition::RepetitionState>>,
     /// Enable/disable the repetition guard (doom-loop + output-repetition
     /// detection). Resolved from config; when `false`, the hook skips all
     /// detector calls.
@@ -138,11 +137,11 @@ where
     /// The session's store-dead latch: set when a session-store open fails, so
     /// the compaction path stops attempting a store it knows is broken. Cleared
     /// by the session switch and by a `run_compaction` that opened the store.
-    store_latch: crate::hook::StoreLatch,
+    store_latch: agnt_runtime::hook::StoreLatch,
     /// The session's cumulative LLM usage: every turn's calls accumulate here,
     /// and the cells reset only when the runtime switches sessions. The
     /// `session_ended` event reports these totals.
-    session_usage: crate::hook::TurnUsage,
+    session_usage: agnt_runtime::hook::TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
     bus: agnt_runtime::bus::Bus,
     /// The agent snapshot every hook envelope is stamped with.
@@ -150,7 +149,7 @@ where
     /// Shared with the hook runners, which read it when they build an envelope.
     /// The constructor writes the model identity; `switch_model` and
     /// `switch_agent` refresh both cells from the post-switch state.
-    hook_context: crate::hooks::HookAgentContext,
+    hook_context: agnt_runtime::hooks::HookAgentContext,
     // ── Domain managers ──────────────────────────────────────────────────────
     provider: Prov,
     tools: Tools,
@@ -163,14 +162,14 @@ where
     /// its own startup-fixed model and never reads this one.
     dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    compaction: crate::conversation::compaction::CompactionConfig,
+    compaction: agnt_runtime::conversation::compaction::CompactionConfig,
 }
 
 /// Concrete production runtime: all managers use their default state types.
 pub type AgentConversationRuntime = AgentRuntime<
     super::state::provider::ProviderState,
     super::state::tool::ToolState,
-    super::state::memory::MemoryState,
+    agnt_runtime::conversation::state::memory::MemoryState,
     super::state::persona::PersonaState,
     super::state::multi_agent::MultiAgentState,
 >;
@@ -207,7 +206,7 @@ where
     Tools: ToolManager + Send,
     Sess: SessionManager<
             InnerMemory = agnt_runtime::session::CachedMemory,
-            Memory = super::state::memory::MemoryOf,
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
         > + Send,
     Persona: PersonaManager + Send,
     Multi: MultiAgentManager + Send,
@@ -221,7 +220,7 @@ where
         use super::turn::executor::{
             ExecuteInput, ToolInfra, TurnExecutor, TurnOutcome, build_response,
         };
-        use crate::hook::{InteractivePermissionResolver, PolicyPermissionResolver};
+        use agnt_runtime::hook::{InteractivePermissionResolver, PolicyPermissionResolver};
 
         self.permission_state.emit_startup_summary_once();
 
@@ -272,7 +271,7 @@ where
                     repetition_guard: self.repetition_guard,
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
                     store_latch: Arc::clone(&self.store_latch),
-                    turn_usage: crate::hook::TurnUsage::default(),
+                    turn_usage: agnt_runtime::hook::TurnUsage::default(),
                     session_usage: self.session_usage.clone(),
                     bus: self.bus.clone(),
                     cwd: self.cwd.clone(),
@@ -711,7 +710,7 @@ where
     Tools: ToolManager + Send + Sync,
     Sess: SessionManager<
             InnerMemory = agnt_runtime::session::CachedMemory,
-            Memory = super::state::memory::MemoryOf,
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
         > + Send
         + Sync,
     Persona: PersonaManager + Send + Sync,
@@ -725,7 +724,7 @@ where
         self.final_session_id.as_deref()
     }
 
-    fn session_usage(&self) -> crate::hook::TurnUsageTotals {
+    fn session_usage(&self) -> agnt_runtime::hook::TurnUsageTotals {
         self.session_usage.totals()
     }
 
@@ -737,7 +736,7 @@ where
         // Run compaction against the rig-memory store of the session: the splice
         // `compact()` makes IS what the next run loads. `run_compaction` emits
         // `Started`/`SummaryChunk`/`Completed`/`Failed` (via `compact()`).
-        let _ = crate::hook::chain::run_compaction(
+        let _ = agnt_runtime::hook::chain::run_compaction(
             &session_id,
             self.session.inner_memory(),
             &self.compaction,
@@ -905,7 +904,7 @@ where
 /// `attach_session`) goes through here: a store-dead latch and a last real token
 /// count belong to one conversation, so neither survives a switch to another.
 fn reset_session_scoped_inputs(
-    store_latch: &crate::hook::StoreLatch,
+    store_latch: &agnt_runtime::hook::StoreLatch,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
 ) {
     *store_latch
@@ -991,7 +990,7 @@ where
     Tools: ToolManager,
     Sess: SessionManager<
             InnerMemory = agnt_runtime::session::CachedMemory,
-            Memory = super::state::memory::MemoryOf,
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
         >,
     Persona: PersonaManager,
     Multi: MultiAgentManager,
@@ -1129,7 +1128,7 @@ where
     }
 
     /// The agent snapshot every hook envelope is stamped with.
-    pub fn hook_context(&self) -> &crate::hooks::HookAgentContext {
+    pub fn hook_context(&self) -> &agnt_runtime::hooks::HookAgentContext {
         &self.hook_context
     }
 
@@ -1150,7 +1149,7 @@ where
     ///
     /// A clone of the handle reads the same cells; unlike
     /// [`SessionPersistence::session_usage`] it needs no runtime lock.
-    pub fn session_usage_handle(&self) -> crate::hook::TurnUsage {
+    pub fn session_usage_handle(&self) -> agnt_runtime::hook::TurnUsage {
         self.session_usage.clone()
     }
 
@@ -1207,7 +1206,7 @@ where
     // ── Compaction and persona ───────────────────────────────────────
 
     /// The hook-driven compaction machinery: compactor, policy and threshold.
-    pub fn compaction(&self) -> &crate::conversation::compaction::CompactionConfig {
+    pub fn compaction(&self) -> &agnt_runtime::conversation::compaction::CompactionConfig {
         &self.compaction
     }
 
@@ -1242,12 +1241,12 @@ impl AgentConversationRuntime {
         parts: RuntimeParts,
         config: RuntimeBuildParams,
     ) -> Result<Self, LabeledError> {
-        use super::compaction::compactor::NuCompactor;
         use super::runtime_build::{build_compaction_policy, resolve_light_config};
         use super::state::mcp::McpState;
         use super::state::permission::PermissionState;
         use super::state::provider::ProviderState;
         use agnt_runtime::config::defaults;
+        use agnt_runtime::conversation::compaction::compactor::NuCompactor;
         use rig::DynModel;
         use rig::operation::Completion;
 
@@ -1313,7 +1312,9 @@ impl AgentConversationRuntime {
             compaction_config.model
         );
         let compaction_spec =
-            crate::conversation::compaction::compactor::resolve_model_spec_for(compaction_config);
+            agnt_runtime::conversation::compaction::compactor::resolve_model_spec_for(
+                compaction_config,
+            );
         // The compactor's provider needs the plugin config after the agent
         // provider takes ownership of it.
         let compactor_plugin_config = config.plugin_config.clone();
@@ -1379,7 +1380,7 @@ impl AgentConversationRuntime {
             .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
         let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
 
-        let compaction = crate::conversation::compaction::CompactionConfig {
+        let compaction = agnt_runtime::conversation::compaction::CompactionConfig {
             compactor,
             threshold_tokens,
             threshold_pct,
@@ -1416,15 +1417,15 @@ impl AgentConversationRuntime {
             interactive_pending: None,
             renders_tool_previews: false,
             circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
-            doom_state: Arc::new(Mutex::new(crate::hook::DoomLoopState::default())),
+            doom_state: Arc::new(Mutex::new(agnt_runtime::hook::DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(
-                crate::hook::output_repetition::RepetitionState::default(),
+                agnt_runtime::hook::output_repetition::RepetitionState::default(),
             )),
             repetition_guard,
             last_total_tokens: Arc::new(Mutex::new(None)),
             bus,
             hook_context,
-            session_usage: crate::hook::TurnUsage::default(),
+            session_usage: agnt_runtime::hook::TurnUsage::default(),
             store_latch: Default::default(),
             dyn_model,
             compaction,
@@ -1468,7 +1469,7 @@ impl crate::conversation::contracts::RuntimeAccess for AgentConversationRuntime 
         Self::paths(self)
     }
 
-    fn hook_context(&self) -> &crate::hooks::HookAgentContext {
+    fn hook_context(&self) -> &agnt_runtime::hooks::HookAgentContext {
         Self::hook_context(self)
     }
 

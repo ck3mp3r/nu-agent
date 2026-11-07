@@ -11,29 +11,8 @@ use rig::wire::{Mode, Wire};
 use agnt_runtime::config::Config;
 use agnt_runtime::utils::env_map::EnvMap;
 
-#[test]
-fn resolve_provider_type_uses_explicit_field() {
-    assert_eq!(
-        super::resolve_provider_type("ollama-remote", Some("ollama")),
-        "ollama"
-    );
-}
-
-#[test]
-fn resolve_provider_type_falls_back_to_key() {
-    assert_eq!(super::resolve_provider_type("ollama", None), "ollama");
-}
-
-#[test]
-fn resolve_provider_type_custom_key_with_known_impl() {
-    assert_eq!(
-        super::resolve_provider_type("my-openai", Some("openai")),
-        "openai"
-    );
-}
-
 // ========================================================================
-// Phase 1b: CachedProviderClient, resolve_provider_type, ClientCacheKey
+// Phase 1b: CachedProviderClient, ClientCacheKey
 // ========================================================================
 
 #[test]
@@ -43,22 +22,6 @@ fn client_cache_key_type_is_four_tuple() {
     assert_eq!(key.1, None);
     assert_eq!(key.2, None);
     assert_eq!(key.3, None);
-}
-
-#[test]
-fn resolve_provider_type_uses_field_when_set() {
-    assert_eq!(
-        super::resolve_provider_type("my-provider", Some("copilot")),
-        "copilot"
-    );
-}
-
-#[test]
-fn resolve_provider_type_falls_back_to_key_when_field_none() {
-    assert_eq!(
-        super::resolve_provider_type("github-copilot", None),
-        "github-copilot"
-    );
 }
 
 // ========================================================================

@@ -51,7 +51,7 @@ fn test_protocol_events_vocabulary_covers_completeness_trace() -> Result<()> {
     // -- Setup & Fixtures
     let call = tool_call();
     let preview = "--- a/src/main.rs\n+++ b/src/main.rs\n".to_string();
-    let request_id = RequestId::new("req-1");
+    let request_id = RequestId::from_minted("req-1");
 
     let events = vec![
         SystemEvent::KeyPressed {

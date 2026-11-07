@@ -92,7 +92,7 @@ pub struct AcpSession {
     ///
     /// Held here so the close/delete paths can report it without taking the
     /// runtime lock an in-flight turn holds.
-    usage: agnt_core::hook::TurnUsage,
+    usage: agnt_runtime::hook::TurnUsage,
 }
 
 /// The channel hands of one live ACP session.
@@ -135,7 +135,7 @@ impl AcpSession {
     }
 
     /// The session's cumulative LLM usage, readable without the runtime lock.
-    pub fn usage(&self) -> agnt_core::hook::TurnUsageTotals {
+    pub fn usage(&self) -> agnt_runtime::hook::TurnUsageTotals {
         self.usage.totals()
     }
 }
@@ -692,7 +692,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         // One agent snapshot per session: the runtime writes it on construction
         // and on every persona or model switch; the session's hook runner reads
         // it when it builds an envelope.
-        let hook_context = agnt_core::hooks::HookAgentContext::default();
+        let hook_context = agnt_runtime::hooks::HookAgentContext::default();
         let runtime = self
             .runtime_builder
             .build(AcpRuntimeParams {
@@ -724,8 +724,8 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         // Each session owns its bus, so each session starts its own hook
         // runner. Zero hooks spawns nothing.
         if !self.hooks.is_empty() {
-            let _handles = agnt_core::hooks::spawn_hook_runner(
-                agnt_core::hooks::HookSources {
+            let _handles = agnt_runtime::hooks::spawn_hook_runner(
+                agnt_runtime::hooks::HookSources {
                     turn: bus.turn(),
                     ui_event: bus.ui_event(),
                     compaction_tx: bus.compaction(),
@@ -734,7 +734,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 &self.hooks,
                 &cwd,
                 &hook_context,
-                agnt_core::hooks::NuProcess,
+                agnt_runtime::hooks::NuProcess,
             );
         }
         // `hydrated` reports whether the store already holds this session's

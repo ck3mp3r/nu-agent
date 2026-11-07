@@ -28,15 +28,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::conversation::compaction::CompactionConfig;
-use crate::conversation::managers::SessionManager;
-use crate::hook::agent_hook::DoomLoopState;
-use crate::hook::output_repetition::RepetitionState;
-use crate::hook::permission_resolver::AsyncPermissionResolver;
-use crate::hook::turn_usage::TurnUsage;
 use crate::types::ToolDefinition;
 use agnt_runtime::bus::Bus;
 use agnt_runtime::config::Config;
+use agnt_runtime::conversation::compaction::CompactionConfig;
+use agnt_runtime::conversation::managers::SessionManager;
+use agnt_runtime::hook::agent_hook::DoomLoopState;
+use agnt_runtime::hook::output_repetition::RepetitionState;
+use agnt_runtime::hook::permission_resolver::AsyncPermissionResolver;
+use agnt_runtime::hook::turn_usage::TurnUsage;
 use agnt_runtime::session::CachedMemory;
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
@@ -106,7 +106,7 @@ pub struct ToolInfra {
     /// The store-dead latch, shared with the hook chain: the clean refusal text
     /// once the session store could not be opened, `None` while it opens. The
     /// runtime clears it when the session changes.
-    pub store_latch: crate::hook::StoreLatch,
+    pub store_latch: agnt_runtime::hook::StoreLatch,
 }
 
 impl ToolInfra {
@@ -145,7 +145,7 @@ pub struct TurnExecutor<'a, S: SessionManager> {
 impl<'a, S> TurnExecutor<'a, S>
 where
     S: SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf,
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
             InnerMemory = CachedMemory,
         >,
 {

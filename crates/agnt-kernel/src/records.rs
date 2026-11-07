@@ -4,6 +4,8 @@
 //! current-truth publications. Records are never commands and never render
 //! instructions: surfaces project whichever records they care about.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::builtin::ToolKind;
 use crate::vocabulary::ToolName;
 
@@ -261,14 +263,34 @@ pub struct ToolOutcome {
     pub kind: Option<ToolErrorKind>,
 }
 
-/// Identity of one permission request. Assigned by the producing gate; opaque
-/// to the kernel and to consumers alike.
+/// Identity of one permission request.
+///
+/// The kernel mints every request id: one mint point per key space, never a
+/// caller-supplied identifier. The counter is process-wide, so ids minted by the
+/// permission gate and by the domain method share one sequence and cannot
+/// collide within a process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestId(String);
 
 impl RequestId {
-    /// The request id the gate assigned.
-    pub fn new(id: impl Into<String>) -> Self {
+    /// Mint the next request id for this process.
+    ///
+    /// The text is `perm-` plus the counter in 16 lowercase hex digits — the
+    /// format every consumer and every log line carries.
+    pub fn mint() -> Self {
+        static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+        Self(format!(
+            "perm-{:016x}",
+            NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
+        ))
+    }
+
+    /// Rebuild the id a surface echoed back.
+    ///
+    /// A decision submission carries the id the gate minted, as text. This is
+    /// the only construction path besides [`Self::mint`]: the value is not
+    /// invented here, it is the minted id returning from the surface.
+    pub fn from_minted(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 

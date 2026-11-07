@@ -4,12 +4,12 @@ use nu_protocol::LabeledError;
 
 use crate::conversation::runtime::AgentConversationRuntime;
 use crate::conversation::runtime_parts::RuntimeParts;
-use crate::hooks::HookAgentContext;
 use crate::types::ToolDefinition;
 use agnt_runtime::bus::Bus;
 use agnt_runtime::config::{
     AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
 };
+use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::protocol::persona::PersonaSummary;
 use agnt_runtime::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
@@ -77,9 +77,10 @@ pub async fn build_runtime(
     params: RuntimeBuildParams,
 ) -> Result<AgentConversationRuntime, LabeledError> {
     use crate::conversation::state::{
-        memory::MemoryState, multi_agent::MultiAgentState, persona::PersonaState,
-        provider::ProviderState, tool::ToolState,
+        multi_agent::MultiAgentState, persona::PersonaState, provider::ProviderState,
+        tool::ToolState,
     };
+    use agnt_runtime::conversation::state::memory::MemoryState;
 
     // The parts own their state; the record below keeps the values `compose`
     // derives from. Every copy is taken once, at startup.
@@ -306,6 +307,10 @@ pub fn build_preamble_cache(
 }
 
 // region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/conversation/compaction/policy.rs"]
+mod policy_test;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/conversation/runtime_build_integration/test.rs"]

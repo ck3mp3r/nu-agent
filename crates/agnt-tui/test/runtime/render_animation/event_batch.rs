@@ -61,7 +61,7 @@ fn read_call() -> ToolCall {
 /// A permission request for the coalescing-bypass test.
 fn permission_requested(request_id: &str) -> SystemEvent {
     SystemEvent::PermissionRequested {
-        request_id: RequestId::new(request_id),
+        request_id: RequestId::from_minted(request_id),
         context: PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),

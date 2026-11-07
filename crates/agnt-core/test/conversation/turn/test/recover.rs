@@ -30,12 +30,12 @@ use support::*;
 
 use super::*;
 
-use crate::conversation::state::memory::MemoryState;
 use crate::conversation::turn::executor::{ExecuteInput, TurnExecutor, TurnOutcome};
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolResult,
     ToolResultContent, UserContent,
 };
+use agnt_runtime::conversation::state::memory::MemoryState;
 use agnt_runtime::session::RigStoreConfig;
 
 /// The placeholder reply an interrupted turn persists when it recovered nothing.

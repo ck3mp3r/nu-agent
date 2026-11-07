@@ -16,7 +16,7 @@ use agnt_runtime::session::settle::SettleInput;
 fn sqlite_runtime() -> Result<RuntimeFixture> {
     let mut fixture = make_runtime(text_model("unused"))?;
     let cache = fixture.root().join("listing-facts");
-    fixture.runtime.session = crate::conversation::state::memory::MemoryState::new(
+    fixture.runtime.session = agnt_runtime::conversation::state::memory::MemoryState::new(
         agnt_runtime::session::RigStoreConfig::new(agnt_runtime::session::StoreType::Sqlite)
             .with_cache_dir(cache),
     );

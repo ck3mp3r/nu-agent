@@ -66,7 +66,7 @@ impl CoreRuntime for PermissionGateRuntime {
             .bus
             .ui_event()
             .send(SystemEvent::PermissionRequested {
-                request_id: RequestId::new(request_id.clone()),
+                request_id: RequestId::from_minted(request_id.clone()),
                 context,
             })
             .await;

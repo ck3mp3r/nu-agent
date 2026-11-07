@@ -37,11 +37,11 @@ use super::REPETITION_STEERING_NOTICE;
 use super::executor_test_support::request_prompt;
 use super::test_utils::{MockResolver, test_config};
 use super::*;
-use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
-use crate::hook::output_repetition::{
+use crate::types::Message;
+use agnt_runtime::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
+use agnt_runtime::hook::output_repetition::{
     OUTPUT_REPETITION_BACKOFF_MESSAGE, OUTPUT_REPETITION_MESSAGE, OUTPUT_REPETITION_STOP_PREFIX,
     OUTPUT_REPETITION_THRESHOLD,
 };
-use crate::types::Message;
 use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use agnt_runtime::utils::value_ext::extract_response_text_from_value;

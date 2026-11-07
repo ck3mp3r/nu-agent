@@ -7,7 +7,8 @@ use std::sync::Arc;
 use agnt_runtime::bus::Bus;
 use agnt_runtime::tools::closure::EngineInterfaceLike;
 
-use super::state::{MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState};
+use super::state::{MultiAgentState, PersonaState, ProviderState, ToolState};
+use agnt_runtime::conversation::state::memory::MemoryState;
 
 /// The seven parts [`AgentRuntime::compose`](super::runtime::AgentRuntime::compose)
 /// takes, one named field each.

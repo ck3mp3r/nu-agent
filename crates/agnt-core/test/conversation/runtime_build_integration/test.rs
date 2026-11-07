@@ -84,7 +84,7 @@ fn make_params(
         paths: crate::test_support::paths_in(&cwd),
         cwd,
         bus: Bus::default(),
-        hook_context: crate::hooks::HookAgentContext::default(),
+        hook_context: agnt_runtime::hooks::HookAgentContext::default(),
         compactor_model: None,
     }
 }

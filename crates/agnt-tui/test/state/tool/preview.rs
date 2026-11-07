@@ -80,7 +80,7 @@ fn tool_preview_between_started_and_cancelled_completed_keeps_one_entry() -> Res
                 status: ToolStatus::Cancelled,
                 result: String::new(),
                 error_kind: Some("cancelled".to_string()),
-                message: Some(agnt_core::hook::chain::CANCELLED_DISPATCH_MESSAGE.to_string()),
+                message: Some(agnt_runtime::hook::chain::CANCELLED_DISPATCH_MESSAGE.to_string()),
             },
         },
     );

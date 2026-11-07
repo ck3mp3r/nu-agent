@@ -7,8 +7,8 @@
 
 use super::*;
 
-use agnt_core::hooks::HookProcessError;
 use agnt_runtime::bus::TurnEvent;
+use agnt_runtime::hooks::HookProcessError;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -29,7 +29,7 @@ impl RecordingProcess {
     }
 }
 
-impl agnt_core::hooks::HookProcess for RecordingProcess {
+impl agnt_runtime::hooks::HookProcess for RecordingProcess {
     async fn run(
         &self,
         _script: &std::path::Path,
@@ -89,7 +89,7 @@ async fn test_integration_hooks_zero_hooks_spawns_no_runner() -> Result<()> {
     // -- Exec
     let handles = crate::mode::spawn_configured_hooks(
         Some(&config),
-        agnt_core::hooks::HookSources {
+        agnt_runtime::hooks::HookSources {
             turn: bus.turn(),
             ui_event: bus.ui_event(),
             compaction_tx: bus.compaction(),
@@ -101,7 +101,7 @@ async fn test_integration_hooks_zero_hooks_spawns_no_runner() -> Result<()> {
         env.config_path()
             .parent()
             .ok_or("config path has no parent")?,
-        &agnt_core::hooks::HookAgentContext::default(),
+        &agnt_runtime::hooks::HookAgentContext::default(),
         process.clone(),
     );
 
@@ -135,7 +135,7 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
     // -- Exec
     let handles = crate::mode::spawn_configured_hooks(
         Some(&config),
-        agnt_core::hooks::HookSources {
+        agnt_runtime::hooks::HookSources {
             turn: bus.turn(),
             ui_event: bus.ui_event(),
             compaction_tx: bus.compaction(),
@@ -143,7 +143,7 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
         },
         &config_dir,
         &config_dir,
-        &agnt_core::hooks::HookAgentContext::default(),
+        &agnt_runtime::hooks::HookAgentContext::default(),
         process.clone(),
     );
     let _ = bus

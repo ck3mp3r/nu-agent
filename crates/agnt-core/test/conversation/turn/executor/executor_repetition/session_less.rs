@@ -11,7 +11,9 @@ use super::*;
 /// EarlyReturn carrying the stop reason.
 #[tokio::test]
 async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() -> Result<()> {
-    use crate::hook::output_repetition::{OUTPUT_REPETITION_BACKOFF_MESSAGE, RepetitionState};
+    use agnt_runtime::hook::output_repetition::{
+        OUTPUT_REPETITION_BACKOFF_MESSAGE, RepetitionState,
+    };
 
     // -- Setup & Fixtures
     let config = test_config();
@@ -53,8 +55,8 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
                 output_repetition: output_repetition.clone(),
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
-                turn_usage: crate::hook::TurnUsage::default(),
-                session_usage: crate::hook::TurnUsage::default(),
+                turn_usage: agnt_runtime::hook::TurnUsage::default(),
+                session_usage: agnt_runtime::hook::TurnUsage::default(),
                 bus: bus.clone(),
                 cwd: std::path::PathBuf::from("/tmp"),
             },
@@ -82,7 +84,8 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
     let value = outcome_value.ok_or("the repetition ladder must reach Stop and EarlyReturn")?;
     let response_text = extract_response_text_from_value(&value);
     assert!(
-        response_text.starts_with(crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX),
+        response_text
+            .starts_with(agnt_runtime::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX),
         "the session-less stop response must carry the stop prefix, got: {response_text}"
     );
     // Twenty model calls: 4 below-threshold + 8 (first stop sequence) + 3 x 4

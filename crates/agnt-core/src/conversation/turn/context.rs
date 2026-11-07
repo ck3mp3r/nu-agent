@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use crate::conversation::compaction::CompactionConfig;
-use crate::conversation::state::memory::MemoryOf;
 use agnt_runtime::config::Config;
+use agnt_runtime::conversation::compaction::CompactionConfig;
+use agnt_runtime::conversation::state::memory::MemoryOf;
 
 use super::execute::CANCEL_GRACE;
 use super::executor::ToolInfra;

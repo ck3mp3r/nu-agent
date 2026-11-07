@@ -10,20 +10,20 @@ use std::sync::{Arc, Mutex};
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::*;
-use crate::conversation::compaction::CompactionConfig;
-use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::mcp::McpState;
-use crate::conversation::state::memory::MemoryState;
 use crate::conversation::state::multi_agent::MultiAgentState;
 use crate::conversation::state::permission::PermissionState;
 use crate::conversation::state::persona::PersonaState;
 use crate::conversation::state::provider::ProviderState;
 use crate::conversation::state::tool::ToolState;
-use crate::hook::agent_hook::DoomLoopState;
-use crate::hook::output_repetition::RepetitionState;
 use agnt_runtime::bus::Bus;
 use agnt_runtime::config::{AgentsConfig, Config};
+use agnt_runtime::conversation::compaction::CompactionConfig;
+use agnt_runtime::conversation::compaction::compactor::NuCompactor;
+use agnt_runtime::conversation::state::memory::MemoryState;
+use agnt_runtime::hook::agent_hook::DoomLoopState;
+use agnt_runtime::hook::output_repetition::RepetitionState;
 use agnt_runtime::tools::authz::{PermissionsConfig, SessionGrantCache};
 use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
 use agnt_runtime::tools::handler::McpToolRegistry;
@@ -118,7 +118,7 @@ fn build_fixture(
             Arc::new(Mutex::new(summary_model().erase())),
             bus.clone(),
             rig_memory::CompactionPolicy::default(),
-            crate::conversation::compaction::compactor::resolve_model_spec(
+            agnt_runtime::conversation::compaction::compactor::resolve_model_spec(
                 "openai",
                 "gpt-4o",
                 Some(200_000),
@@ -160,7 +160,7 @@ fn build_fixture(
         output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
         repetition_guard: true,
         last_total_tokens: Arc::new(Mutex::new(None)),
-        session_usage: crate::hook::TurnUsage::default(),
+        session_usage: agnt_runtime::hook::TurnUsage::default(),
         bus: bus.clone(),
         provider,
         tools: ToolState::new(
@@ -180,7 +180,7 @@ fn build_fixture(
         multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
         dyn_model: Arc::new(Mutex::new(model.erase())),
         compaction,
-        hook_context: crate::hooks::HookAgentContext::default(),
+        hook_context: agnt_runtime::hooks::HookAgentContext::default(),
     };
 
     Ok(RuntimeFixture {

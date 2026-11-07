@@ -158,7 +158,7 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             // earlier `permission_requested` event by `request_id`.
             let _ = ui_events
                 .send(SystemEvent::PermissionDecisionIgnored {
-                    request_id: RequestId::new(request_id),
+                    request_id: RequestId::from_minted(request_id),
                     reason: REASON_REQUEST_NOT_PENDING.to_string(),
                 })
                 .await;

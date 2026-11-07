@@ -22,7 +22,7 @@ pub trait RuntimeAccess {
     fn paths(&self) -> &agnt_runtime::config::Paths;
 
     /// The agent snapshot every hook envelope is stamped with.
-    fn hook_context(&self) -> &crate::hooks::HookAgentContext;
+    fn hook_context(&self) -> &agnt_runtime::hooks::HookAgentContext;
 
     /// The shared cancellation bus, cloned for a turn or a surface.
     fn bus_handle(&self) -> agnt_runtime::bus::Bus;

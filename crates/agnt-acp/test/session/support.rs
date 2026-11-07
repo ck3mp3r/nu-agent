@@ -20,11 +20,12 @@ pub(super) use agnt_core::conversation::providers::CachedProviderClient;
 pub(super) use agnt_core::conversation::runtime_build::RuntimeBuildParams;
 pub(super) use agnt_core::conversation::runtime_parts::RuntimeParts;
 pub(super) use agnt_core::conversation::state::{
-    MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState,
+    MultiAgentState, PersonaState, ProviderState, ToolState,
 };
 pub(super) use agnt_core::types::{Message, MockCompletionModel};
 pub(super) use agnt_runtime::bus::{Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx};
 pub(super) use agnt_runtime::config::{AgentsConfig, Config, ModelsCache};
+pub(super) use agnt_runtime::conversation::state::memory::MemoryState;
 pub(super) use agnt_runtime::protocol::event::PermissionDecision;
 pub(super) use agnt_runtime::protocol::events::SystemEvent;
 pub(super) use agnt_runtime::session::{RigStoreConfig, StoreType};

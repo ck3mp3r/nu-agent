@@ -11,7 +11,7 @@ use rig_memory::{Repair, Session, Store as _};
 
 /// Build a turn context over `memory` for `session_id`.
 fn context<'a>(
-    memory: crate::conversation::state::memory::MemoryOf,
+    memory: agnt_runtime::conversation::state::memory::MemoryOf,
     session_id: &str,
     model: MockCompletionModel,
     config: &'a Config,
@@ -56,8 +56,8 @@ fn tool_infra(
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
-        turn_usage: crate::hook::TurnUsage::default(),
-        session_usage: crate::hook::TurnUsage::default(),
+        turn_usage: agnt_runtime::hook::TurnUsage::default(),
+        session_usage: agnt_runtime::hook::TurnUsage::default(),
         bus,
         cwd: std::path::PathBuf::from("/tmp"),
     }
@@ -232,7 +232,7 @@ async fn turn_round_trips_on_a_file_store() -> Result<()> {
 #[tokio::test]
 async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
     // -- Setup & Fixtures: a history with a dangling ToolCall
-    let mut memory_state = crate::conversation::state::memory::MemoryState::new(
+    let mut memory_state = agnt_runtime::conversation::state::memory::MemoryState::new(
         agnt_runtime::session::RigStoreConfig::in_memory(),
     );
     let session_id = "test-cancel-seeded";

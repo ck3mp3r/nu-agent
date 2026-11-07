@@ -17,12 +17,12 @@ use agnt_core::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
     build_runtime,
 };
-use agnt_core::hooks::HookAgentContext;
 use agnt_core::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
 use agnt_core::types::ToolServer;
 use agnt_runtime::config::defaults;
+use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::config::McpConfig;

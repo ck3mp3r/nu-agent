@@ -445,7 +445,7 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
 fn permission_request_cancelled_renders_line_and_quiet_suppresses() {
     // -- Setup & Fixtures
     let event = SystemEvent::PermissionRequestCancelled {
-        request_id: RequestId::new("perm-0000000000000001"),
+        request_id: RequestId::from_minted("perm-0000000000000001"),
         matched_rule_identity: "global:*".to_string(),
     };
 

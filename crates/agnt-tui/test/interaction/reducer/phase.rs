@@ -197,13 +197,13 @@ fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Resul
     // -- Setup & Fixtures: a busy turn with a permission card up.
     let mut state = busy_state_with_clean_transcript();
     open_permission_card(&mut state);
-    let open_request_id = RequestId::new("ask-0000000000000001");
+    let open_request_id = RequestId::from_minted("ask-0000000000000001");
 
     // -- Exec: a timeout for a different request.
     reduce_ui(
         &mut state,
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000002"),
+            request_id: RequestId::from_minted("ask-0000000000000002"),
         },
     );
 

@@ -50,7 +50,7 @@ where
     let hook_bus = runtime_impl.bus_handle();
     let hook_handles = spawn_configured_hooks_with_nu(
         config,
-        agnt_core::hooks::HookSources {
+        agnt_runtime::hooks::HookSources {
             turn: hook_bus.turn(),
             ui_event: hook_bus.ui_event(),
             compaction_tx: hook_bus.compaction(),

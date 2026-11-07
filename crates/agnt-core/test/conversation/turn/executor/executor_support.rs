@@ -8,10 +8,10 @@ use super::super::test::{
 };
 use super::test_utils::{message_text, test_compaction_config};
 use super::*;
-use crate::conversation::managers::SessionManager;
-use crate::conversation::state::memory::MemoryState;
 use agnt_runtime::bus::Bus;
 use agnt_runtime::config::Config;
+use agnt_runtime::conversation::managers::SessionManager;
+use agnt_runtime::conversation::state::memory::MemoryState;
 use agnt_runtime::session::{CachedMemory, RigStoreConfig};
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
@@ -46,8 +46,8 @@ pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
-        turn_usage: crate::hook::TurnUsage::default(),
-        session_usage: crate::hook::TurnUsage::default(),
+        turn_usage: agnt_runtime::hook::TurnUsage::default(),
+        session_usage: agnt_runtime::hook::TurnUsage::default(),
         bus,
         cwd: std::path::PathBuf::from("/tmp"),
     }
@@ -63,7 +63,7 @@ pub(super) fn make_executor<'a, S>(
 ) -> TurnExecutor<'a, S>
 where
     S: SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf,
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
             InnerMemory = CachedMemory,
         >,
 {
@@ -80,9 +80,9 @@ where
 /// across every `execute()` so the escalation ladder accumulates (the
 /// executor resets it per RETRY attempt only, not per turn).
 pub(super) fn shared_repetition_state()
--> Arc<std::sync::Mutex<crate::hook::output_repetition::RepetitionState>> {
+-> Arc<std::sync::Mutex<agnt_runtime::hook::output_repetition::RepetitionState>> {
     Arc::new(std::sync::Mutex::new(
-        crate::hook::output_repetition::RepetitionState::default(),
+        agnt_runtime::hook::output_repetition::RepetitionState::default(),
     ))
 }
 

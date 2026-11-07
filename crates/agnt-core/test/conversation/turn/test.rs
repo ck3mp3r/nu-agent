@@ -43,9 +43,9 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::proxy::FilteredToolProxy;
 use super::*;
-use crate::hook::permission_resolver::PermissionDecision;
 use crate::types::{ToolDefinition, ToolName};
 use agnt_runtime::config::Config;
+use agnt_runtime::hook::permission_resolver::PermissionDecision;
 use agnt_runtime::tools::closure::ClosureRegistry;
 use agnt_runtime::tools::handler::McpToolRegistry;
 

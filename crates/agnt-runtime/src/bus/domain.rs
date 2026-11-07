@@ -9,27 +9,12 @@
 //! vocabulary out of the kernel.
 
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use agnt_kernel::bus::{CancelEvent, CancelTx, ChannelResult};
 
 use super::channel::UiEventTx;
 use crate::protocol::event::PermissionRequestContext;
 use crate::protocol::events::{RequestId, SystemEvent};
-
-// region:    --- Support
-
-static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Generate a unique permission request ID (atomic counter, no uuid dep).
-fn next_request_id() -> String {
-    format!(
-        "perm-{:016x}",
-        NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
-    )
-}
-
-// endregion: --- Support
 
 // region:    --- Domain Methods
 
@@ -52,7 +37,7 @@ impl RequestPermission for UiEventTx {
         &self,
         context: PermissionRequestContext,
     ) -> ChannelResult<RequestId> {
-        let request_id = RequestId::new(next_request_id());
+        let request_id = RequestId::mint();
         self.send(SystemEvent::PermissionRequested {
             request_id: request_id.clone(),
             context,

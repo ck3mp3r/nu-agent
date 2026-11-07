@@ -7,9 +7,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use agnt_runtime::bus::{BroadcastRx, Bus, CompactionRx, UiEventRx};
 use agnt_runtime::config::Config;
+use agnt_runtime::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use agnt_runtime::protocol::events::SystemEvent;
 use rig::DynModel;
 use rig::operation::Completion;
@@ -119,8 +119,10 @@ impl rig::tool::Tool for CancellingTool {
 
 /// A `NuCompactor` (no marker store) with a deterministic streaming mock model
 /// so compaction never invokes a real LLM.
-pub(super) fn test_compactor(bus: Bus) -> crate::conversation::compaction::compactor::NuCompactor {
-    use crate::conversation::compaction::compactor::NuCompactor;
+pub(super) fn test_compactor(
+    bus: Bus,
+) -> agnt_runtime::conversation::compaction::compactor::NuCompactor {
+    use agnt_runtime::conversation::compaction::compactor::NuCompactor;
     let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
         .map(|_| {
             vec![
@@ -140,7 +142,7 @@ pub(super) fn test_compactor(bus: Bus) -> crate::conversation::compaction::compa
 
 /// The model spec the test compactors plan against.
 pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
-    crate::conversation::compaction::compactor::resolve_model_spec(
+    agnt_runtime::conversation::compaction::compactor::resolve_model_spec(
         "openai",
         "gpt-4o",
         Some(200_000),
@@ -152,8 +154,8 @@ pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
 /// tests that are not exercising compaction.
 pub(super) fn test_compaction_config(
     bus: Bus,
-) -> crate::conversation::compaction::CompactionConfig {
-    crate::conversation::compaction::CompactionConfig {
+) -> agnt_runtime::conversation::compaction::CompactionConfig {
+    agnt_runtime::conversation::compaction::CompactionConfig {
         compactor: test_compactor(bus.clone()),
         threshold_tokens: None,
         threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,

@@ -21,8 +21,6 @@ pub mod feedback;
 pub(crate) mod error;
 pub use error::TurnError;
 
-pub(crate) mod token_estimate;
-
 // endregion: --- Modules
 
 #[cfg(test)]

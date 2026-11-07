@@ -17,7 +17,7 @@ impl RecordingProcess {
     }
 }
 
-impl agnt_core::hooks::HookProcess for RecordingProcess {
+impl agnt_runtime::hooks::HookProcess for RecordingProcess {
     async fn run(
         &self,
         _script: &std::path::Path,
@@ -25,7 +25,7 @@ impl agnt_core::hooks::HookProcess for RecordingProcess {
         envelope: &str,
         _cwd: &std::path::Path,
         _timeout: std::time::Duration,
-    ) -> core::result::Result<(), agnt_core::hooks::HookProcessError> {
+    ) -> core::result::Result<(), agnt_runtime::hooks::HookProcessError> {
         if let Ok(mut calls) = self.calls.lock() {
             calls.push((event.to_string(), envelope.to_string()));
         }
@@ -44,8 +44,8 @@ pub(super) fn resolved_hook(name: &str, events: &[HookEvent]) -> ResolvedHook {
 }
 
 /// The agent snapshot every hook envelope is stamped with.
-pub(super) fn agent_context() -> agnt_core::hooks::HookAgentContext {
-    agnt_core::hooks::HookAgentContext::default()
+pub(super) fn agent_context() -> agnt_runtime::hooks::HookAgentContext {
+    agnt_runtime::hooks::HookAgentContext::default()
         .with_persona(Some("reviewer".to_string()))
         .with_model("openai/gpt-4o".to_string())
 }

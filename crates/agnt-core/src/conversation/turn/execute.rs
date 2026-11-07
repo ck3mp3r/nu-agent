@@ -11,12 +11,12 @@ use std::time::Duration;
 
 use agnt_kernel::StopCause;
 
-use crate::hook::agent_hook::{HookState, StopLedger};
-use crate::hook::chain::{HookChain, HookEnv};
-use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::types::{Message, Text, ToolCall, ToolDefinition, UserContent};
 use agnt_runtime::bus::Bus;
 use agnt_runtime::config::defaults;
+use agnt_runtime::hook::agent_hook::{HookState, StopLedger};
+use agnt_runtime::hook::chain::{HookChain, HookEnv};
+use agnt_runtime::hook::permission_resolver::AsyncPermissionResolver;
 use agnt_runtime::hook::turn_tools::TurnToolRecord;
 use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use rig::tool::DynamicTool;
@@ -26,7 +26,7 @@ use super::error;
 use super::error::TurnError;
 use super::executor;
 use super::proxy::FilteredToolProxy;
-use super::token_estimate;
+use agnt_runtime::conversation::turn::token_estimate;
 
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.

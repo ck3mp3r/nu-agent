@@ -363,7 +363,7 @@ fn test_translator_compaction_summary_chunk_produces_none() -> Result<()> {
 fn test_translator_permission_requested_produces_none() -> Result<()> {
     // -- Setup & Fixtures
     let event = SystemEvent::PermissionRequested {
-        request_id: RequestId::new("perm-1"),
+        request_id: RequestId::from_minted("perm-1"),
         context: permission_context(),
     };
 
@@ -377,15 +377,15 @@ fn test_translator_permission_decision_events_produce_none() -> Result<()> {
     // -- Setup & Fixtures
     let events = [
         SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "rule".to_string(),
         },
         SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
         },
         SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("perm-1"),
+            request_id: RequestId::from_minted("perm-1"),
             reason: "superseded".to_string(),
         },
     ];

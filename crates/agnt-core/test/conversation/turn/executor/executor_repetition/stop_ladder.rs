@@ -21,7 +21,7 @@ use super::*;
 /// keeps driving until the EarlyReturn appears.
 #[tokio::test]
 async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Result<()> {
-    use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
+    use agnt_runtime::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 
     // -- Setup & Fixtures
     let config = test_config();
@@ -66,8 +66,8 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
                 output_repetition: output_repetition.clone(),
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
-                turn_usage: crate::hook::TurnUsage::default(),
-                session_usage: crate::hook::TurnUsage::default(),
+                turn_usage: agnt_runtime::hook::TurnUsage::default(),
+                session_usage: agnt_runtime::hook::TurnUsage::default(),
                 bus: bus.clone(),
                 cwd: std::path::PathBuf::from("/tmp"),
             },
@@ -170,7 +170,9 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
 /// terminal EarlyReturn carrying the stop reason.
 #[tokio::test]
 async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result<()> {
-    use crate::hook::output_repetition::{OUTPUT_REPETITION_BACKOFF_MESSAGE, RepetitionState};
+    use agnt_runtime::hook::output_repetition::{
+        OUTPUT_REPETITION_BACKOFF_MESSAGE, RepetitionState,
+    };
 
     // -- Setup & Fixtures
     let config = test_config();
@@ -216,8 +218,8 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
                 output_repetition: output_repetition.clone(),
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
-                turn_usage: crate::hook::TurnUsage::default(),
-                session_usage: crate::hook::TurnUsage::default(),
+                turn_usage: agnt_runtime::hook::TurnUsage::default(),
+                session_usage: agnt_runtime::hook::TurnUsage::default(),
                 bus: bus.clone(),
                 cwd: std::path::PathBuf::from("/tmp"),
             },
@@ -245,7 +247,8 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
     let value = outcome_value.ok_or("the repetition ladder must reach Stop and EarlyReturn")?;
     let response_text = extract_response_text_from_value(&value);
     assert!(
-        response_text.starts_with(crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX),
+        response_text
+            .starts_with(agnt_runtime::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX),
         "the terminal stop response must carry the stop prefix, got: {response_text}"
     );
     // Twenty model calls: 4 below-threshold + 8 (first stop sequence: the
@@ -398,8 +401,8 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
                 output_repetition: output_repetition.clone(),
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
-                turn_usage: crate::hook::TurnUsage::default(),
-                session_usage: crate::hook::TurnUsage::default(),
+                turn_usage: agnt_runtime::hook::TurnUsage::default(),
+                session_usage: agnt_runtime::hook::TurnUsage::default(),
                 bus: agnt_runtime::bus::Bus::default(),
                 cwd: std::path::PathBuf::from("/tmp"),
             },

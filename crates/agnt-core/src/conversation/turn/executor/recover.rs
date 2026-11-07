@@ -9,10 +9,10 @@
 
 use std::sync::Arc;
 
-use crate::conversation::managers::SessionManager;
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, UserContent,
 };
+use agnt_runtime::conversation::managers::SessionManager;
 use agnt_runtime::hook::turn_tools::TurnToolRecord;
 use agnt_runtime::protocol::events::{SystemEvent, SystemKind};
 use agnt_runtime::session::CachedMemory;
@@ -35,7 +35,7 @@ pub(crate) struct TurnRecovery<'a> {
 impl<S> TurnExecutor<'_, S>
 where
     S: SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf,
+            Memory = agnt_runtime::conversation::state::memory::MemoryOf,
             InnerMemory = CachedMemory,
         >,
 {
