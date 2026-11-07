@@ -18,7 +18,7 @@ impl crate::tools::authz::AskApprovalHook for AlwaysDenyHook {
         &mut self,
         _decision: &PermissionDecision,
         _tool_name: &str,
-        _source: &str,
+        _source: ToolSource,
         _args: &serde_json::Value,
         _ask_context: &AskContext,
     ) -> AskChoice {
@@ -175,7 +175,7 @@ async fn session_grant_override_returns_allow_with_grant_rule() -> Result<()> {
         .insert_allow_always(
             &ask_decision,
             "nu",
-            tool_source_text(ToolSource::Builtin),
+            ToolSource::Builtin,
             &tool_call.function.arguments,
         );
 

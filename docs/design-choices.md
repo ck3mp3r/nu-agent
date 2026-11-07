@@ -84,14 +84,14 @@ A display payload built by the producer is the defect. Relocating it to a third 
 
 ## 4. Text is parsed once, at the boundary
 
-**Status:** enforced, with one named exception (`tool_source_text`).
+**Status:** enforced.
 
 - ✅ `impl FromStr for BuiltinKind` is the single place a name becomes a variant; everything downstream carries the variant.
 - ✅ A consumer that acts on a distinction matches an enum, so adding a variant fails to compile until its arm exists.
 - ✅ User-visible strings are frozen: whoever owns the text reproduces it byte-for-byte.
 - ❌ Branching behaviour on a name string, a message prefix, or a serialized token.
 
-**Known exception:** `tool_source_text` sits in `tools/handler` and its output is used as the session-grant cache key. It is scheduled for deletion, not relocation: the grant cache keys on `ToolSource`, the permission signatures take `ToolSource`, and each layer that needs text implements its own trait for it.
+**A layer that needs text declares its own trait on the kernel type.** The session-grant cache keys on the `ToolSource` variant, not on its label. `ToolSourceText` in `agnt-runtime` writes the hook envelope's `source`; `ToolSourceLabel` in `agnt-tty` writes the tool lines. Neither trait crosses to the other layer, and the kernel supplies no mapping.
 
 ---
 

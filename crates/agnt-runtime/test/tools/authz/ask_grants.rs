@@ -14,23 +14,27 @@ fn ask_choices_apply_once_always_and_deny() {
         AskChoice::AllowOnce,
         &mut cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &args,
     );
     assert_eq!(once.action, PermissionAction::Allow);
-    assert!(cache.get(&base, "shell", "closure", &args).is_none());
+    assert!(
+        cache
+            .get(&base, "shell", ToolSource::Closure, &args)
+            .is_none()
+    );
 
     let always = apply_ask_choice(
         base.clone(),
         AskChoice::AllowAlways,
         &mut cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &args,
     );
     assert_eq!(always.action, PermissionAction::Allow);
     assert_eq!(
-        cache.get(&base, "shell", "closure", &args),
+        cache.get(&base, "shell", ToolSource::Closure, &args),
         Some(PermissionAction::Allow)
     );
 
@@ -39,7 +43,7 @@ fn ask_choices_apply_once_always_and_deny() {
         AskChoice::Deny,
         &mut cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &args,
     );
     assert_eq!(denied.action, PermissionAction::Deny);
@@ -61,11 +65,12 @@ fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
         AskChoice::AllowAlways,
         &mut cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &first_args,
     );
 
-    let overridden = apply_session_grant_override(second, &cache, "shell", "closure", &second_args);
+    let overridden =
+        apply_session_grant_override(second, &cache, "shell", ToolSource::Closure, &second_args);
     assert_eq!(overridden.action, PermissionAction::Allow);
 }
 
@@ -79,11 +84,11 @@ fn session_grant_scope_isolation_table() {
         name: &'static str,
         toml: &'static str,
         granted_tool: &'static str,
-        granted_source: &'static str,
+        granted_source: ToolSource,
         granted_args: serde_json::Map<String, serde_json::Value>,
         granted_identity: &'static str,
         checked_tool: &'static str,
-        checked_source: &'static str,
+        checked_source: ToolSource,
         checked_args: serde_json::Map<String, serde_json::Value>,
         checked_identity: &'static str,
     }
@@ -95,11 +100,11 @@ fn session_grant_scope_isolation_table() {
 "*" = "ask"
 "#,
             granted_tool: "shell",
-            granted_source: "closure",
+            granted_source: ToolSource::Closure,
             granted_args: args_map!({"command": "echo one"}),
             granted_identity: "global:*",
             checked_tool: "read",
-            checked_source: "closure",
+            checked_source: ToolSource::Closure,
             checked_args: args_map!({"filePath": "README.md"}),
             checked_identity: "global:*",
         },
@@ -109,11 +114,11 @@ fn session_grant_scope_isolation_table() {
 "*" = "ask"
 "#,
             granted_tool: "glob",
-            granted_source: "closure",
+            granted_source: ToolSource::Closure,
             granted_args: args_map!({"pattern": "**/*.rs"}),
             granted_identity: "global:*",
             checked_tool: "read",
-            checked_source: "closure",
+            checked_source: ToolSource::Closure,
             checked_args: args_map!({"filePath": "README.md"}),
             checked_identity: "global:*",
         },
@@ -124,11 +129,11 @@ fn session_grant_scope_isolation_table() {
 "edit" = "ask"
 "#,
             granted_tool: "edit",
-            granted_source: "closure",
+            granted_source: ToolSource::Closure,
             granted_args: args_map!({"path": "file.txt", "mode": "apply"}),
             granted_identity: "tool:edit",
             checked_tool: "edit",
-            checked_source: "mcp",
+            checked_source: ToolSource::Mcp,
             checked_args: args_map!({"path": "file.txt", "mode": "apply"}),
             checked_identity: "tool:edit",
         },
@@ -141,11 +146,11 @@ fn session_grant_scope_isolation_table() {
 "ls *" = "ask"
 "#,
             granted_tool: "shell",
-            granted_source: "closure",
+            granted_source: ToolSource::Closure,
             granted_args: args_map!({"command": "echo one"}),
             granted_identity: "nested:shell.command:echo *",
             checked_tool: "shell",
-            checked_source: "closure",
+            checked_source: ToolSource::Closure,
             checked_args: args_map!({"command": "ls -la"}),
             checked_identity: "nested:shell.command:ls *",
         },

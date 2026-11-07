@@ -113,7 +113,7 @@ pub enum ToolRecord {
 /// Where a tool call comes from. The variant is the whole classification: a
 /// consumer that acts on the difference matches it, and the layer that prints
 /// the label owns the text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolSource {
     Closure,
     Builtin,

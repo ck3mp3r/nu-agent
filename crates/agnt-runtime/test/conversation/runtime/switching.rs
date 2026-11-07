@@ -7,7 +7,7 @@ use crate::protocol::McpManagement;
 use crate::protocol::contracts::McpUsabilityState;
 use crate::protocol::model_switching::ModelSwitching;
 use crate::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
-use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::{McpToolRegistry, ToolSource};
 use crate::tools::mcp::client::McpToolDefinition;
 
 /// A persona file that exercises every front-matter field `switch_agent`
@@ -182,15 +182,17 @@ async fn switch_agent_resets_session_grants_and_tool_definitions() -> Result<()>
     let decision = allow_decision();
     let args = serde_json::Map::new();
     let grants = fixture.runtime.permission_state.session_grants_arc();
-    grants
-        .lock()
-        .expect("grants lock")
-        .insert_allow_always(&decision, "read", "test", &args);
+    grants.lock().expect("grants lock").insert_allow_always(
+        &decision,
+        "read",
+        ToolSource::Builtin,
+        &args,
+    );
     assert!(
         grants
             .lock()
             .expect("grants lock")
-            .get(&decision, "read", "test", &args)
+            .get(&decision, "read", ToolSource::Builtin, &args)
             .is_some(),
         "the fixture must start with a live session grant"
     );
@@ -207,7 +209,7 @@ async fn switch_agent_resets_session_grants_and_tool_definitions() -> Result<()>
         grants
             .lock()
             .expect("grants lock")
-            .get(&decision, "read", "test", &args)
+            .get(&decision, "read", ToolSource::Builtin, &args)
             .is_none(),
         "an agent switch must drop the previous agent's session grants"
     );

@@ -9,7 +9,7 @@ use crate::tools::authz::{
     SessionGrantCache, apply_ask_choice, apply_session_grant_override,
 };
 
-use super::types::{ToolSource, tool_source_text};
+use super::types::ToolSource;
 
 #[derive(Debug, Clone)]
 pub struct AuthorizationFlowContext {
@@ -52,7 +52,7 @@ pub async fn enforce_authorization_for_tool_call(
             auth_decision,
             &grants,
             &tool_call.function.name,
-            tool_source_text(source),
+            source,
             &tool_call.function.arguments,
         );
     }
@@ -71,7 +71,7 @@ pub async fn enforce_authorization_for_tool_call(
             .choose(
                 &auth_decision,
                 &tool_call.function.name,
-                tool_source_text(source),
+                source,
                 &args_value,
                 &flow_context.ask_context,
             )
@@ -85,7 +85,7 @@ pub async fn enforce_authorization_for_tool_call(
                 choice,
                 &mut grants,
                 &tool_call.function.name,
-                tool_source_text(source),
+                source,
                 &tool_call.function.arguments,
             );
         }

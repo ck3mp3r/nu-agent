@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+use crate::tools::handler::ToolSource;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::tools::handler::glob::GlobTool;
 use crate::tools::handler::grep::GrepTool;
@@ -76,7 +77,7 @@ pub trait AskApprovalHook: Send + Sync {
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
-        source: &str,
+        source: ToolSource,
         args: &JsonValue,
         ask_context: &AskContext,
     ) -> impl Future<Output = AskChoice> + Send;
@@ -627,7 +628,7 @@ pub struct SessionGrantCache {
 struct SessionGrantScopedKey {
     matched_rule_identity: String,
     tool_name: String,
-    source: String,
+    source: ToolSource,
     target_field: Option<String>,
 }
 
@@ -641,13 +642,13 @@ impl SessionGrantScopedKey {
     fn from_request(
         decision: &PermissionDecision,
         tool_name: &str,
-        source: &str,
+        source: ToolSource,
         _args: &JsonMap<String, JsonValue>,
     ) -> Self {
         Self {
             matched_rule_identity: decision.matched_rule.identity.clone(),
             tool_name: tool_name.to_string(),
-            source: source.to_string(),
+            source,
             target_field: decision.matched_rule.target_field.clone(),
         }
     }
@@ -658,7 +659,7 @@ impl SessionGrantCache {
         &self,
         decision: &PermissionDecision,
         tool_name: &str,
-        source: &str,
+        source: ToolSource,
         args: &JsonMap<String, JsonValue>,
     ) -> Option<PermissionAction> {
         let key = SessionGrantScopedKey::from_request(decision, tool_name, source, args);
@@ -669,7 +670,7 @@ impl SessionGrantCache {
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
-        source: &str,
+        source: ToolSource,
         args: &JsonMap<String, JsonValue>,
     ) {
         let key = SessionGrantScopedKey::from_request(decision, tool_name, source, args);
@@ -697,7 +698,7 @@ pub fn apply_ask_choice(
     choice: AskChoice,
     grant_cache: &mut SessionGrantCache,
     tool_name: &str,
-    source: &str,
+    source: ToolSource,
     args: &JsonMap<String, JsonValue>,
 ) -> PermissionDecision {
     match choice {
@@ -723,7 +724,7 @@ pub fn apply_session_grant_override(
     decision: PermissionDecision,
     grant_cache: &SessionGrantCache,
     tool_name: &str,
-    source: &str,
+    source: ToolSource,
     args: &JsonMap<String, JsonValue>,
 ) -> PermissionDecision {
     if let Some(action) = grant_cache.get(&decision, tool_name, source, args) {

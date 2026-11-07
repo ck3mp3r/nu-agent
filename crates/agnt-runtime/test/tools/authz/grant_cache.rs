@@ -15,7 +15,7 @@ fn clear_empties_all_grants() {
         AskChoice::AllowAlways,
         &mut cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &shell_args,
     );
 
@@ -26,7 +26,7 @@ fn clear_empties_all_grants() {
         AskChoice::AllowAlways,
         &mut cache,
         "read",
-        "closure",
+        ToolSource::Closure,
         &read_args,
     );
 
@@ -37,20 +37,28 @@ fn clear_empties_all_grants() {
         AskChoice::AllowAlways,
         &mut cache,
         "glob",
-        "closure",
+        ToolSource::Closure,
         &glob_args,
     );
 
     // Verify grants exist before clear
     let shell_check = parsed.evaluate("shell", &shell_args);
     assert_eq!(
-        apply_session_grant_override(shell_check, &cache, "shell", "closure", &shell_args).action,
+        apply_session_grant_override(
+            shell_check,
+            &cache,
+            "shell",
+            ToolSource::Closure,
+            &shell_args
+        )
+        .action,
         PermissionAction::Allow
     );
 
     let glob_check = parsed.evaluate("glob", &glob_args);
     assert_eq!(
-        apply_session_grant_override(glob_check, &cache, "glob", "closure", &glob_args).action,
+        apply_session_grant_override(glob_check, &cache, "glob", ToolSource::Closure, &glob_args)
+            .action,
         PermissionAction::Allow
     );
 
@@ -62,13 +70,21 @@ fn clear_empties_all_grants() {
     // after cache clear — that's correct behavior, not a cache leak)
     let shell_after = parsed.evaluate("shell", &shell_args);
     assert_eq!(
-        apply_session_grant_override(shell_after, &cache, "shell", "closure", &shell_args).action,
+        apply_session_grant_override(
+            shell_after,
+            &cache,
+            "shell",
+            ToolSource::Closure,
+            &shell_args
+        )
+        .action,
         PermissionAction::Ask
     );
 
     let glob_after = parsed.evaluate("glob", &glob_args);
     assert_eq!(
-        apply_session_grant_override(glob_after, &cache, "glob", "closure", &glob_args).action,
+        apply_session_grant_override(glob_after, &cache, "glob", ToolSource::Closure, &glob_args)
+            .action,
         PermissionAction::Ask
     );
 }
@@ -85,7 +101,7 @@ fn clear_on_empty_cache() {
     let args = args_map!({"command": "echo test"});
     let decision = parsed.evaluate("shell", &args);
     assert_eq!(
-        apply_session_grant_override(decision, &cache, "shell", "closure", &args).action,
+        apply_session_grant_override(decision, &cache, "shell", ToolSource::Closure, &args).action,
         PermissionAction::Ask
     );
 }
@@ -99,7 +115,7 @@ fn clear_for_server_table() {
     // -- Setup & Fixtures
     struct Grant {
         tool: &'static str,
-        source: &'static str,
+        source: ToolSource,
         args: serde_json::Map<String, serde_json::Value>,
     }
 
@@ -107,7 +123,7 @@ fn clear_for_server_table() {
         name: &'static str,
         grants: Vec<Grant>,
         cleared_server: &'static str,
-        expected: Vec<(&'static str, &'static str, PermissionAction)>,
+        expected: Vec<(&'static str, ToolSource, PermissionAction)>,
     }
 
     let cases = vec![
@@ -116,31 +132,31 @@ fn clear_for_server_table() {
             grants: vec![
                 Grant {
                     tool: "context7__search",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({"query": "test"}),
                 },
                 Grant {
                     tool: "context7__fetch",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({"url": "https://example.com"}),
                 },
                 Grant {
                     tool: "gh__list_prs",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({}),
                 },
                 Grant {
                     tool: "shell",
-                    source: "closure",
+                    source: ToolSource::Closure,
                     args: args_map!({"command": "echo test"}),
                 },
             ],
             cleared_server: "context7",
             expected: vec![
-                ("context7__search", "mcp", PermissionAction::Ask),
-                ("context7__fetch", "mcp", PermissionAction::Ask),
-                ("gh__list_prs", "mcp", PermissionAction::Allow),
-                ("shell", "closure", PermissionAction::Allow),
+                ("context7__search", ToolSource::Mcp, PermissionAction::Ask),
+                ("context7__fetch", ToolSource::Mcp, PermissionAction::Ask),
+                ("gh__list_prs", ToolSource::Mcp, PermissionAction::Allow),
+                ("shell", ToolSource::Closure, PermissionAction::Allow),
             ],
         },
         Case {
@@ -148,45 +164,49 @@ fn clear_for_server_table() {
             grants: vec![
                 Grant {
                     tool: "gh__list_prs",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({}),
                 },
                 Grant {
                     tool: "gh__get_pr",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({"number": 1}),
                 },
             ],
             cleared_server: "context7",
             expected: vec![
-                ("gh__list_prs", "mcp", PermissionAction::Allow),
-                ("gh__get_pr", "mcp", PermissionAction::Allow),
+                ("gh__list_prs", ToolSource::Mcp, PermissionAction::Allow),
+                ("gh__get_pr", ToolSource::Mcp, PermissionAction::Allow),
             ],
         },
         Case {
             name: "empty cache is a no-op",
             grants: vec![],
             cleared_server: "context7",
-            expected: vec![("shell", "closure", PermissionAction::Ask)],
+            expected: vec![("shell", ToolSource::Closure, PermissionAction::Ask)],
         },
         Case {
             name: "exact prefix match only",
             grants: vec![
                 Grant {
                     tool: "context7__search",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({"query": "test"}),
                 },
                 Grant {
                     tool: "context7x__search",
-                    source: "mcp",
+                    source: ToolSource::Mcp,
                     args: args_map!({"query": "other"}),
                 },
             ],
             cleared_server: "context7",
             expected: vec![
-                ("context7__search", "mcp", PermissionAction::Ask),
-                ("context7x__search", "mcp", PermissionAction::Allow),
+                ("context7__search", ToolSource::Mcp, PermissionAction::Ask),
+                (
+                    "context7x__search",
+                    ToolSource::Mcp,
+                    PermissionAction::Allow,
+                ),
             ],
         },
     ];
@@ -237,7 +257,7 @@ fn clear_for_server_table() {
                 .unwrap_or_else(|| args_map!({"command": "echo test"}));
             let decision = parsed.evaluate(tool, &args);
             assert_eq!(
-                apply_session_grant_override(decision, &cache, tool, source, &args).action,
+                apply_session_grant_override(decision, &cache, tool, *source, &args).action,
                 *expected,
                 "case '{}': {tool} must be {expected:?} after clear_for_server",
                 case.name
@@ -305,13 +325,18 @@ fn grant_covers_call_with_different_mode() {
             AskChoice::AllowAlways,
             &mut cache,
             case.tool,
-            "closure",
+            ToolSource::Closure,
             &case.granted_args,
         );
 
         let checked = parsed.evaluate(case.tool, &case.checked_args);
-        let overridden =
-            apply_session_grant_override(checked, &cache, case.tool, "closure", &case.checked_args);
+        let overridden = apply_session_grant_override(
+            checked,
+            &cache,
+            case.tool,
+            ToolSource::Closure,
+            &case.checked_args,
+        );
         assert_eq!(
             overridden.action,
             PermissionAction::Allow,

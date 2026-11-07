@@ -2,17 +2,6 @@ use rig::tool::ToolExecutionError;
 
 pub use agnt_kernel::{ToolErrorKind, ToolSource};
 
-/// The text a surface prints for a tool source: the label table lives here,
-/// not in the kernel, because only the layer that draws the text owns it.
-pub fn tool_source_text(source: ToolSource) -> &'static str {
-    match source {
-        ToolSource::Closure => "closure",
-        ToolSource::Mcp => "mcp",
-        ToolSource::Builtin => "builtin",
-        ToolSource::Unknown => "unknown",
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ToolHandlerError {
     pub kind: ToolErrorKind,

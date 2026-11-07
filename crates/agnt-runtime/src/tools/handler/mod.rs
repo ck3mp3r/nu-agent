@@ -11,6 +11,7 @@ pub mod pre_authorize;
 pub mod read;
 mod resolve;
 pub mod skill;
+mod source_text;
 pub mod tmux_common;
 pub mod tmux_layout;
 pub mod tmux_pane;
@@ -26,8 +27,9 @@ mod http_test;
 pub use conversion::{json_to_nu_value, nu_value_to_json};
 pub use dispatch::llm_visible_tool_definitions;
 pub use pre_authorize::{PreAuthorizeOutput, pre_authorize_fs_tool};
+pub(crate) use source_text::ToolSourceText;
 pub use types::execution_error_for_kind;
-pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource, tool_source_text};
+pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource};
 
 // Export authz_gate types for permission resolvers
 pub use authz_gate::{AuthorizationFlowContext, AuthzOutcome, enforce_authorization_for_tool_call};

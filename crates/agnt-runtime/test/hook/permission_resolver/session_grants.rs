@@ -141,7 +141,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
         cache.insert_allow_always(
             &synthetic_decision,
             ASK_TOOL,
-            "unknown",
+            ToolSource::Unknown,
             &serde_json::Map::new(),
         );
     }

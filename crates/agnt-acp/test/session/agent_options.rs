@@ -2,6 +2,7 @@ use super::*;
 
 use super::config_options::{current_value, select_values};
 use agnt_runtime::tools::authz::PermissionAction;
+use agnt_runtime::tools::handler::ToolSource;
 
 // ---------------------------------------------------------------------------
 // Agent config options
@@ -185,7 +186,7 @@ async fn test_session_manager_set_agent_clears_session_grants() -> Result<()> {
             .session_grants()
             .lock()
             .unwrap()
-            .insert_allow_always(&decision, "http", "closure", &args);
+            .insert_allow_always(&decision, "http", ToolSource::Closure, &args);
     }
 
     // -- Exec
@@ -195,11 +196,12 @@ async fn test_session_manager_set_agent_clears_session_grants() -> Result<()> {
     let runtime = session.runtime().lock().await;
     let args = serde_json::Map::new();
     let decision = runtime.permissions().evaluate("http", &args);
-    let held = runtime
-        .session_grants()
-        .lock()
-        .unwrap()
-        .get(&decision, "http", "closure", &args);
+    let held =
+        runtime
+            .session_grants()
+            .lock()
+            .unwrap()
+            .get(&decision, "http", ToolSource::Closure, &args);
     assert!(
         held.is_none(),
         "the switch must clear the session grant cache; got: {held:?}"

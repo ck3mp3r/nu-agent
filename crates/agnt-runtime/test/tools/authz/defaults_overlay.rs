@@ -56,14 +56,14 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
         AskChoice::AllowAlways,
         &mut first_session_cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &first_args,
     );
     let first_overridden = apply_session_grant_override(
         first.clone(),
         &first_session_cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &first_args,
     );
     assert_eq!(first_overridden.action, PermissionAction::Allow);
@@ -75,7 +75,7 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
         second,
         &fresh_session_cache,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &second_args,
     );
     assert_eq!(second_overridden.action, PermissionAction::Ask);

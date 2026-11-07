@@ -34,6 +34,22 @@ fn call_line_for(call: &agnt_runtime::protocol::events::ToolCall) -> String {
     plain_call_text(&line).to_string()
 }
 
+/// The label this renderer prints for a tool source.
+trait ToolSourceLabel {
+    fn label(self) -> &'static str;
+}
+
+impl ToolSourceLabel for agnt_runtime::tools::handler::ToolSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Closure => "closure",
+            Self::Mcp => "mcp",
+            Self::Builtin => "builtin",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 pub struct StderrUiRenderer<W: Write> {
     writer: W,
     policy: UiPolicy,
@@ -192,7 +208,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     Some(format_tool_start(
                         self.policy.verbosity,
                         &call.name.0,
-                        agnt_runtime::tools::handler::tool_source_text(call.source),
+                        call.source.label(),
                         &call_line_for(call),
                     ))
                 }
@@ -205,7 +221,7 @@ impl<W: Write> StderrUiRenderer<W> {
                         ToolEndView {
                             verbosity: self.policy.verbosity,
                             name: &call.name.0,
-                            source: agnt_runtime::tools::handler::tool_source_text(call.source),
+                            source: call.source.label(),
                             arguments: &call.arguments,
                             success: outcome.success,
                             result: &outcome.result,

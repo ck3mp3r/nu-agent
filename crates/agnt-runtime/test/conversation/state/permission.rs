@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
+use crate::tools::handler::ToolSource;
 
 /// Tool-call arguments as rig 0.44 carries them: a JSON object map.
 macro_rules! args_map {
@@ -35,7 +36,7 @@ fn permission_state_with_grants() -> PermissionState {
     cache.insert_allow_always(
         &decision,
         "shell",
-        "closure",
+        ToolSource::Closure,
         &args_map!({"command": "echo test"}),
     );
 
@@ -60,7 +61,7 @@ fn clear_session_grants_empties_cache() {
             cache.get(
                 &decision,
                 "shell",
-                "closure",
+                ToolSource::Closure,
                 &args_map!({"command": "echo test"})
             ),
             Some(PermissionAction::Allow)
@@ -78,7 +79,7 @@ fn clear_session_grants_empties_cache() {
             cache.get(
                 &decision,
                 "shell",
-                "closure",
+                ToolSource::Closure,
                 &args_map!({"command": "echo test"})
             ),
             None
@@ -107,7 +108,7 @@ fn clear_session_grants_on_empty_state() {
         cache.get(
             &decision,
             "shell",
-            "closure",
+            ToolSource::Closure,
             &args_map!({"command": "echo test"})
         ),
         None
@@ -124,12 +125,17 @@ fn clear_session_grants_for_server_removes_only_matching() {
     cache.insert_allow_always(
         &context7_decision,
         "context7__search",
-        "mcp",
+        ToolSource::Mcp,
         &args_map!({"query": "test"}),
     );
 
     let gh_decision = global_ask_decision();
-    cache.insert_allow_always(&gh_decision, "gh__list_prs", "mcp", &args_map!({}));
+    cache.insert_allow_always(
+        &gh_decision,
+        "gh__list_prs",
+        ToolSource::Mcp,
+        &args_map!({}),
+    );
 
     let state = PermissionState::new(
         config.clone(),
@@ -147,13 +153,13 @@ fn clear_session_grants_for_server_removes_only_matching() {
             cache.get(
                 &decision,
                 "context7__search",
-                "mcp",
+                ToolSource::Mcp,
                 &args_map!({"query": "test"})
             ),
             Some(PermissionAction::Allow)
         );
         assert_eq!(
-            cache.get(&decision, "gh__list_prs", "mcp", &args_map!({})),
+            cache.get(&decision, "gh__list_prs", ToolSource::Mcp, &args_map!({})),
             Some(PermissionAction::Allow)
         );
     }
@@ -169,13 +175,13 @@ fn clear_session_grants_for_server_removes_only_matching() {
             cache.get(
                 &decision,
                 "context7__search",
-                "mcp",
+                ToolSource::Mcp,
                 &args_map!({"query": "test"})
             ),
             None
         );
         assert_eq!(
-            cache.get(&decision, "gh__list_prs", "mcp", &args_map!({})),
+            cache.get(&decision, "gh__list_prs", ToolSource::Mcp, &args_map!({})),
             Some(PermissionAction::Allow)
         );
     }
@@ -202,7 +208,7 @@ fn clear_session_grants_for_server_on_empty_state() {
         cache.get(
             &decision,
             "shell",
-            "closure",
+            ToolSource::Closure,
             &args_map!({"command": "echo test"})
         ),
         None

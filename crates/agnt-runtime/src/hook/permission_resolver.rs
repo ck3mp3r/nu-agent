@@ -25,7 +25,7 @@ use crate::tools::authz::{
 };
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
-    AuthorizationFlowContext, AuthzOutcome, McpToolRegistry, ToolSource,
+    AuthorizationFlowContext, AuthzOutcome, McpToolRegistry, ToolSource, ToolSourceText,
     enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
 use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
@@ -83,7 +83,7 @@ impl AskApprovalHook for NoOpAskHook {
         &mut self,
         _decision: &crate::tools::authz::PermissionDecision,
         _tool_name: &str,
-        _source: &str,
+        _source: ToolSource,
         _args: &JsonValue,
         _ask_context: &AskContext,
     ) -> AskChoice {
@@ -279,7 +279,7 @@ impl AskApprovalHook for AskContextCapture {
         &mut self,
         decision: &crate::tools::authz::PermissionDecision,
         tool_name: &str,
-        source: &str,
+        source: ToolSource,
         args: &JsonValue,
         ask_context: &AskContext,
     ) -> AskChoice {
@@ -288,7 +288,7 @@ impl AskApprovalHook for AskContextCapture {
         self.captured_context = Some(PermissionRequestContext {
             tool: display_tool_name(tool_name, args),
             tool_key: call_id.as_str().to_string(),
-            source: source.to_string(),
+            source: source.text().to_string(),
             mode: args
                 .get("mode")
                 .and_then(JsonValue::as_str)
@@ -625,7 +625,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         ask_choice,
                         &mut grants,
                         &tool_name,
-                        crate::tools::handler::tool_source_text(source),
+                        source,
                         &tool_call.function.arguments,
                     );
                 }

@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 use crate::bus::{CompactionRx, CompactionTx, UiEventRx, UiEventTx};
 use crate::config::{HookEvent, HookEventClass, ResolvedHook};
 use crate::protocol::events::SystemEvent;
+use crate::tools::handler::ToolSourceText;
 use agnt_kernel::bus::{
     AgentEvent, AgentRx, AgentTx, BroadcastRx, ChannelError, SessionEvent, SessionRx, SessionTx,
     TurnEvent, TurnRx, TurnTx,
@@ -291,7 +292,7 @@ async fn run_hook<P>(
                             "tool_started",
                             serde_json::json!({
                                 "name": call.name.0,
-                                "source": crate::tools::handler::tool_source_text(call.source),
+                                "source": call.source.text(),
                                 "arguments": call.arguments,
                             }),
                         ));
@@ -303,7 +304,7 @@ async fn run_hook<P>(
                             "tool_completed",
                             serde_json::json!({
                                 "name": call.name.0,
-                                "source": crate::tools::handler::tool_source_text(call.source),
+                                "source": call.source.text(),
                                 "arguments": call.arguments,
                                 "success": outcome.success,
                                 "error_kind": outcome.error_kind,
