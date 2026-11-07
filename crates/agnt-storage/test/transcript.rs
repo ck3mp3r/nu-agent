@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::ToolCallStatus;
+
 // region:    --- Tests
 
 /// Two records built from the same field set carry one id.
@@ -34,7 +36,9 @@ fn test_transcript_id_is_pinned() -> Result<()> {
         "session-a",
         2,
         TranscriptRow::Tool {
+            call_id: "call-a".to_owned(),
             name: "read".to_owned(),
+            executed_name: None,
             arguments: Some("{\"path\":\"a.txt\"}".to_owned()),
             result: Some("the file's text".to_owned()),
             success: Some(true),
@@ -46,7 +50,7 @@ fn test_transcript_id_is_pinned() -> Result<()> {
     let id = record.id();
 
     // -- Check
-    assert_eq!(id.as_str(), "transcript-f5efc47e7d460082");
+    assert_eq!(id.as_str(), "transcript-0bfae7cf18c7334e");
     Ok(())
 }
 
@@ -101,6 +105,7 @@ fn test_transcript_id_follows_the_row_field_set() -> Result<()> {
                 content: "hello".to_owned(),
             },
         ),
+        base.clone().with_turn_seq(Some(1)),
     ];
 
     // -- Exec & Check
@@ -124,6 +129,58 @@ fn test_transcript_id_separates_absent_from_empty() -> Result<()> {
 
     // -- Exec & Check
     assert_ne!(absent.id(), empty.id());
+    Ok(())
+}
+
+/// The post-repair name is a carrier of its own: a row that names the executed
+/// tool is not the row that names none.
+#[test]
+fn test_transcript_id_separates_an_executed_name_from_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let unnamed = tool_row(None, None, None, None);
+    let named = TranscriptRecord::new(
+        "session-a",
+        3,
+        TranscriptRow::Tool {
+            call_id: "call-a".to_owned(),
+            name: "read".to_owned(),
+            executed_name: Some("read_file".to_owned()),
+            arguments: None,
+            result: None,
+            success: None,
+            status: None,
+        },
+    );
+
+    // -- Exec & Check
+    assert_ne!(unnamed.id(), named.id());
+    Ok(())
+}
+
+/// A media block's bytes are part of the row: two images of one kind with
+/// different bytes are two rows.
+#[test]
+fn test_transcript_id_carries_the_media_source() -> Result<()> {
+    // -- Setup & Fixtures
+    let row = |bytes: Vec<u8>| {
+        TranscriptRecord::new(
+            "session-a",
+            4,
+            TranscriptRow::Media {
+                owner: MediaOwner::Assistant,
+                kind: MediaKind::Image,
+                source: MediaSource::Raw(bytes),
+                text: None,
+                media_type: Some("png".to_owned()),
+                detail: None,
+            },
+        )
+    };
+    let left = row(vec![1, 2, 3]);
+    let right = row(vec![1, 2, 3, 4]);
+
+    // -- Exec & Check
+    assert_ne!(left.id(), right.id());
     Ok(())
 }
 
@@ -161,7 +218,9 @@ fn tool_row(
         "session-a",
         3,
         TranscriptRow::Tool {
+            call_id: "call-a".to_owned(),
             name: "read".to_owned(),
+            executed_name: None,
             arguments,
             result,
             success,
@@ -188,7 +247,9 @@ fn every_row() -> Vec<TranscriptRow> {
             content: "the system's words".to_owned(),
         },
         TranscriptRow::Tool {
+            call_id: "call-b".to_owned(),
             name: "read".to_owned(),
+            executed_name: Some("read_file".to_owned()),
             arguments: Some("{}".to_owned()),
             result: None,
             success: Some(false),
@@ -196,6 +257,30 @@ fn every_row() -> Vec<TranscriptRow> {
         },
         TranscriptRow::Compaction {
             content: "the summary".to_owned(),
+        },
+        TranscriptRow::Media {
+            owner: MediaOwner::User,
+            kind: MediaKind::Document,
+            source: MediaSource::Url("file:///tmp/a.pdf".to_owned()),
+            text: Some("the document's own text".to_owned()),
+            media_type: Some("pdf".to_owned()),
+            detail: None,
+        },
+        TranscriptRow::Media {
+            owner: MediaOwner::ToolResult,
+            kind: MediaKind::Image,
+            source: MediaSource::Raw(vec![0x89, b'P', b'N', b'G']),
+            text: None,
+            media_type: Some("png".to_owned()),
+            detail: Some("high".to_owned()),
+        },
+        TranscriptRow::Reasoning {
+            text: "the model's reasoning".to_owned(),
+            redacted: false,
+        },
+        TranscriptRow::Opaque {
+            item: "{\"type\":\"server_tool_use\"}".to_owned(),
+            replay: true,
         },
     ]
 }

@@ -13,8 +13,9 @@
 pub use rig::completion::Message;
 pub use rig::completion::message::ToolResult;
 pub use rig::completion::message::{
-    AssistantContent, AssistantMessage, CallId, EmptyToolName, Opaque, ProviderCallId, Text,
-    ToolCall, ToolFunction, ToolName, ToolResultContent, UserContent,
+    AssistantContent, AssistantMessage, CallId, Document, DocumentData, DocumentSourceKind,
+    EmptyToolName, Image, ImageDetail, MimeType, Opaque, ProviderCallId, Text, ToolCall,
+    ToolFunction, ToolName, ToolResultContent, UserContent,
 };
 
 // Tool definitions (used in runtime and turn execution)

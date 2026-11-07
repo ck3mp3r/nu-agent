@@ -27,9 +27,6 @@ impl RigAdapter {
     /// with the id the row stores, so a row whose id disagrees with its content is
     /// refused rather than handed out.
     ///
-    /// No producer fills the table yet: the live fold's write side is the slice
-    /// that follows this one.
-    ///
     /// # Errors
     ///
     /// [`StorageError`] when the engine is gone, SQLite refuses the read, or a

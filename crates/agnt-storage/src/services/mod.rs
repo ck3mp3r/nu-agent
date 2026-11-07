@@ -10,12 +10,13 @@
 mod entries;
 mod settle;
 mod tool_calls;
+mod transcript;
 mod turns;
 
-pub(crate) use entries::ReadTranscript;
 pub use entries::{Entries, EntryTurn, MessageKey};
 pub use settle::{Settle, SettleRecord};
 pub use tool_calls::{CallFact, ToolCallStatus, ToolCalls};
+pub(crate) use transcript::ReadTranscript;
 pub use turns::{TurnFacts, Turns};
 
 // endregion: --- Modules

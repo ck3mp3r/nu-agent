@@ -1,6 +1,9 @@
 use super::*;
 
-use crate::{Entries, ToolCallStatus, TranscriptRecord, TranscriptRow, TranscriptStamp, Work};
+use crate::{
+    Entries, MediaKind, MediaOwner, MediaSource, ToolCallStatus, TranscriptRecord, TranscriptRow,
+    TranscriptStamp, Work,
+};
 
 /// The store hands out the rows it folded, in the order the fold gave them.
 #[tokio::test]
@@ -150,6 +153,42 @@ async fn test_rig_adapter_transcript_is_scoped_to_its_session() -> Result<()> {
     Ok(())
 }
 
+/// A fold that keeps fewer blocks than the transcript holds renumbers from the
+/// first block it keeps: no position past the new end survives.
+#[tokio::test]
+async fn test_rig_adapter_transcript_removes_the_positions_a_shrunk_fold_no_longer_reaches()
+-> Result<()> {
+    // -- Setup & Fixtures
+    let (db, store) = memory_database("session-transcript")?;
+    let entries = Entries::new(db);
+    entries.record_transcript(the_transcript()).await?;
+    let shrunk = vec![
+        record(
+            0,
+            TranscriptRow::Compaction {
+                content: "the summary of what was swept".to_owned(),
+            },
+        ),
+        record(
+            1,
+            TranscriptRow::Assistant {
+                content: "what the model answered after the fold".to_owned(),
+            },
+        ),
+    ];
+
+    // -- Exec
+    entries.record_transcript(shrunk.clone()).await?;
+    let read = store.transcript()?;
+
+    // -- Check
+    assert_eq!(
+        read, shrunk,
+        "the folded transcript SHALL hold the blocks the fold kept, and no more"
+    );
+    Ok(())
+}
+
 // region:    --- Support
 
 /// The row at `row_seq` of the fixture session.
@@ -170,33 +209,41 @@ fn the_transcript() -> Vec<TranscriptRecord> {
                     agent: Some("architect".to_owned()),
                 }),
             },
-        ),
+        )
+        .with_turn_seq(Some(1)),
         record(
             1,
             TranscriptRow::Assistant {
                 content: "what the model answered".to_owned(),
             },
-        ),
+        )
+        .with_turn_seq(Some(1)),
         record(
             2,
             TranscriptRow::Tool {
+                call_id: "call-read".to_owned(),
                 name: "read".to_owned(),
+                executed_name: Some("read_file".to_owned()),
                 arguments: Some("{\"path\":\"a.txt\"}".to_owned()),
                 result: Some("the file's text".to_owned()),
                 success: Some(true),
                 status: Some(ToolCallStatus::Success),
             },
-        ),
+        )
+        .with_turn_seq(Some(1)),
         record(
             3,
             TranscriptRow::Tool {
+                call_id: "call-write".to_owned(),
                 name: "write".to_owned(),
+                executed_name: None,
                 arguments: Some("{\"path\":\"b.txt\"}".to_owned()),
                 result: None,
                 success: None,
                 status: Some(ToolCallStatus::Cancelled),
             },
-        ),
+        )
+        .with_turn_seq(Some(2)),
         record(
             4,
             TranscriptRow::Compaction {
@@ -208,7 +255,47 @@ fn the_transcript() -> Vec<TranscriptRecord> {
             TranscriptRow::System {
                 content: "a system message".to_owned(),
             },
+        )
+        .with_turn_seq(Some(2)),
+        record(
+            6,
+            TranscriptRow::Media {
+                owner: MediaOwner::User,
+                kind: MediaKind::Document,
+                source: MediaSource::Base64("JVBERi0xLjQ=".to_owned()),
+                text: None,
+                media_type: Some("pdf".to_owned()),
+                detail: None,
+            },
         ),
+        record(
+            7,
+            TranscriptRow::Media {
+                owner: MediaOwner::ToolResult,
+                kind: MediaKind::Image,
+                source: MediaSource::Raw(vec![0x89, b'P', b'N', b'G']),
+                text: None,
+                media_type: Some("png".to_owned()),
+                detail: Some("high".to_owned()),
+            },
+        )
+        .with_turn_seq(Some(2)),
+        record(
+            8,
+            TranscriptRow::Reasoning {
+                text: "the model's reasoning".to_owned(),
+                redacted: false,
+            },
+        )
+        .with_turn_seq(Some(2)),
+        record(
+            9,
+            TranscriptRow::Opaque {
+                item: "{\"type\":\"server_tool_use\"}".to_owned(),
+                replay: true,
+            },
+        )
+        .with_turn_seq(Some(2)),
     ]
 }
 

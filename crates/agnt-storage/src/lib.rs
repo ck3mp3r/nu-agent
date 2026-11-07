@@ -27,7 +27,10 @@ pub use services::{
     TurnFacts, Turns,
 };
 pub use storage::Storage;
-pub use transcript::{TranscriptId, TranscriptRecord, TranscriptRow, TranscriptStamp};
+pub use transcript::{
+    MediaKind, MediaOwner, MediaSource, TranscriptId, TranscriptRecord, TranscriptRow,
+    TranscriptStamp,
+};
 
 // endregion: --- Modules
 

@@ -1,81 +1,15 @@
-//! The transcript record: one persisted row of a session's transcript, and the
-//! identity it derives from its own content.
-//!
-//! The store owns the transcript fold (D19). The kernel's stream records are the
-//! fold's input; this record is its output, so the persisted shape does not move
-//! when the kernel's record vocabulary does: no field here names an `agnt-kernel`
-//! symbol.
-//!
-//! The record carries data only. How a row is drawn — the call line, the
-//! sections, the mark of a call that produced no result — is the drawer's
-//! derivation from these fields, never a field here.
+//! The identity a transcript row derives from its own field set.
 
 // region:    --- Modules
 
+use super::record::{
+    BASE64, FILE_ID, MediaSource, RAW, TranscriptRecord, TranscriptRow, UNKNOWN, URL,
+};
 use crate::services::ToolCallStatus;
 
 // endregion: --- Modules
 
 // region:    --- Types
-
-/// One transcript row: the data the store keeps for one block of a session's
-/// transcript, and the identity it derives from that data.
-///
-/// The id is a function of the fields, so it can never disagree with them: there
-/// is no constructor that takes one, and no field holds one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TranscriptRecord {
-    session: String,
-    row_seq: i64,
-    row: TranscriptRow,
-}
-
-/// The kind of a transcript row, with the payload that kind carries.
-///
-/// The variant is the classification; a consumer that acts on the difference
-/// matches it, and the layer that prints a block owns the text it prints.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TranscriptRow {
-    /// The user's own text, with the footer facts its settled turn recorded.
-    User {
-        content: String,
-        stamp: Option<TranscriptStamp>,
-    },
-    /// The model's answer.
-    Assistant { content: String },
-    /// A system message the session recorded.
-    System { content: String },
-    /// One tool call, and the outcome it settled with.
-    ///
-    /// `arguments`, `result`, `success` and `status` are each absent when the
-    /// store never recorded them: a call the turn stopped carries its arguments
-    /// and no result, and a call no attribution reached carries no status.
-    Tool {
-        name: String,
-        arguments: Option<String>,
-        result: Option<String>,
-        success: Option<bool>,
-        status: Option<ToolCallStatus>,
-    },
-    /// The summary a compaction left in place of the region it swept.
-    Compaction { content: String },
-}
-
-/// The footer facts one user row carries: the instant its turn was submitted,
-/// and the identities the turn ran under.
-///
-/// A stamp exists only for a turn that recorded an instant which can stand
-/// behind a footer, so `millis` is not optional. The identities are: a turn
-/// without a persona records none.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TranscriptStamp {
-    /// When the turn was submitted, in milliseconds since the Unix epoch.
-    pub millis: i64,
-    /// The model identity the turn ran under, `vendor/model`.
-    pub model: Option<String>,
-    /// The persona identity that answered the turn.
-    pub agent: Option<String>,
-}
 
 /// Identity of one transcript row, derived from the row's own field set.
 ///
@@ -90,41 +24,11 @@ pub struct TranscriptStamp {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TranscriptId(String);
 
-// endregion: --- Types
-
-// region:    --- Constructors
-
-impl TranscriptRecord {
-    /// The row at position `row_seq` of `session`.
-    pub fn new(session: impl Into<String>, row_seq: i64, row: TranscriptRow) -> Self {
-        Self {
-            session: session.into(),
-            row_seq,
-            row,
-        }
-    }
-}
-
-// endregion: --- Constructors
+// endregion:    --- Types
 
 // region:    --- Accessors
 
 impl TranscriptRecord {
-    /// The session the row belongs to.
-    pub fn session(&self) -> &str {
-        &self.session
-    }
-
-    /// The row's position within its session's transcript.
-    pub fn row_seq(&self) -> i64 {
-        self.row_seq
-    }
-
-    /// The kind of row this is, with its payload.
-    pub fn row(&self) -> &TranscriptRow {
-        &self.row
-    }
-
     /// The row's identity, derived from its content.
     ///
     /// The field set is encoded in one order, every string length-prefixed and
@@ -136,6 +40,7 @@ impl TranscriptRecord {
         let mut fold = Fold::new();
         fold.text(&self.session);
         fold.int(self.row_seq);
+        fold.opt_int(self.turn_seq);
         match &self.row {
             TranscriptRow::User { content, stamp } => {
                 fold.byte(TAG_USER).text(content);
@@ -158,14 +63,18 @@ impl TranscriptRecord {
                 fold.byte(TAG_SYSTEM).text(content);
             }
             TranscriptRow::Tool {
+                call_id,
                 name,
+                executed_name,
                 arguments,
                 result,
                 success,
                 status,
             } => {
                 fold.byte(TAG_TOOL)
+                    .text(call_id)
                     .text(name)
+                    .opt_text(executed_name.as_deref())
                     .opt_text(arguments.as_deref())
                     .opt_text(result.as_deref())
                     .opt_flag(*success)
@@ -173,6 +82,36 @@ impl TranscriptRecord {
             }
             TranscriptRow::Compaction { content } => {
                 fold.byte(TAG_COMPACTION).text(content);
+            }
+            TranscriptRow::Media {
+                owner,
+                kind,
+                source,
+                text,
+                media_type,
+                detail,
+            } => {
+                fold.byte(TAG_MEDIA)
+                    .text(owner.as_str())
+                    .text(kind.as_str());
+                match source {
+                    MediaSource::Url(url) => fold.text(URL).text(url),
+                    MediaSource::Base64(encoded) => fold.text(BASE64).text(encoded),
+                    MediaSource::FileId(id) => fold.text(FILE_ID).text(id),
+                    MediaSource::Raw(bytes) => fold.text(RAW).blob(bytes),
+                    MediaSource::Unknown => fold.text(UNKNOWN),
+                };
+                fold.opt_text(text.as_deref())
+                    .opt_text(media_type.as_deref())
+                    .opt_text(detail.as_deref());
+            }
+            TranscriptRow::Reasoning { text, redacted } => {
+                fold.byte(TAG_REASONING)
+                    .text(text)
+                    .byte(u8::from(*redacted));
+            }
+            TranscriptRow::Opaque { item, replay } => {
+                fold.byte(TAG_OPAQUE).text(item).byte(u8::from(*replay));
             }
         }
         TranscriptId(format!("transcript-{:016x}", fold.digest()))
@@ -217,6 +156,15 @@ const TAG_TOOL: u8 = 4;
 /// The tag that opens a compaction row's encoding.
 const TAG_COMPACTION: u8 = 5;
 
+/// The tag that opens a media row's encoding.
+const TAG_MEDIA: u8 = 6;
+
+/// The tag that opens a reasoning row's encoding.
+const TAG_REASONING: u8 = 7;
+
+/// The tag that opens an opaque row's encoding.
+const TAG_OPAQUE: u8 = 8;
+
 /// The canonical byte stream a row's identity hashes.
 ///
 /// Every write is self-delimiting: a string carries its length in front of its
@@ -248,8 +196,19 @@ impl Fold {
             .bytes(text.as_bytes())
     }
 
+    fn blob(&mut self, bytes: &[u8]) -> &mut Self {
+        self.bytes(&(bytes.len() as u64).to_le_bytes()).bytes(bytes)
+    }
+
     fn int(&mut self, value: i64) -> &mut Self {
         self.bytes(&value.to_le_bytes())
+    }
+
+    fn opt_int(&mut self, value: Option<i64>) -> &mut Self {
+        match value {
+            Some(value) => self.byte(PRESENT).int(value),
+            None => self.byte(ABSENT),
+        }
     }
 
     fn opt_text(&mut self, text: Option<&str>) -> &mut Self {
@@ -279,11 +238,3 @@ impl Fold {
 }
 
 // endregion: --- Support
-
-// region:    --- Tests
-
-#[cfg(test)]
-#[path = "../test/transcript.rs"]
-mod transcript_test;
-
-// endregion: --- Tests

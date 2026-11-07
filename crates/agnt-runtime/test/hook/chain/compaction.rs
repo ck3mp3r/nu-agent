@@ -447,7 +447,7 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
     assert!(
         message.contains("legacy sqlx-migration store")
             && message.contains("stored schema version 0")
-            && message.contains("migrates to 3"),
+            && message.contains("migrates to 4"),
         "the line SHALL name the era and both versions: {message}"
     );
     assert!(

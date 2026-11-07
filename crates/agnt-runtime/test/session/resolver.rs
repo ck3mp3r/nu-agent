@@ -26,6 +26,9 @@ mod support;
 #[path = "resolver/tool_result.rs"]
 mod tool_result;
 
+#[path = "resolver/truthfulness.rs"]
+mod truthfulness;
+
 #[path = "resolver/turn_facts.rs"]
 mod turn_facts;
 

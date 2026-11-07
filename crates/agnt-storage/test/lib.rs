@@ -26,7 +26,7 @@ fn test_storage_open_creates_file_and_migrates() -> Result<()> {
     assert!(path.exists(), "open SHALL create the database file");
     let version = storage.call_blocking(Version)??;
     assert_eq!(
-        version, 3,
+        version, 4,
         "open SHALL migrate a new database to the target version"
     );
     let tables = storage.call_blocking(Tables)??;
@@ -53,12 +53,13 @@ fn test_storage_open_migrates_nothing_at_target_version() -> Result<()> {
     drop(Storage::open(&path)?);
 
     // -- Exec
-    // Every migration's statements are plain `CREATE TABLE`: a second run fails.
+    // Every migration's statements run once: a second run fails, and the stored
+    // version is what keeps it from running.
     let storage = Storage::open(&path)?;
 
     // -- Check
     let version = storage.call_blocking(Version)??;
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     let tables = storage.call_blocking(Tables)??;
     assert_eq!(
         tables,
@@ -94,9 +95,9 @@ fn test_storage_open_refuses_newer_schema() -> Result<()> {
     let StorageError::SchemaTooNew { stored, target } = refusal else {
         return Err(format!("expected a version refusal, got {message}").into());
     };
-    assert_eq!((stored, target), (7, 3));
+    assert_eq!((stored, target), (7, 4));
     assert!(
-        message.contains("version 7") && message.contains("the 3"),
+        message.contains("version 7") && message.contains("the 4"),
         "the refusal SHALL name both versions: {message}"
     );
     Ok(())
@@ -182,7 +183,7 @@ async fn test_storage_call_awaits_reply() -> Result<()> {
     let version = storage.call(Version).await??;
 
     // -- Check
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     Ok(())
 }
 
@@ -268,12 +269,12 @@ async fn test_storage_open_refuses_the_legacy_sqlx_migration_store() -> Result<(
     else {
         return Err(format!("expected a legacy-store refusal, got {message}").into());
     };
-    assert_eq!((stored, target), (0, 3));
+    assert_eq!((stored, target), (0, 4));
     assert_eq!(refused_path, path);
     assert!(
         message.contains("legacy sqlx-migration store")
             && message.contains("stored schema version 0")
-            && message.contains("migrates to 3"),
+            && message.contains("migrates to 4"),
         "the refusal SHALL name the era and both versions: {message}"
     );
     assert!(

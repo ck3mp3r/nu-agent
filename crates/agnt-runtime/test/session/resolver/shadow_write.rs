@@ -71,25 +71,30 @@ async fn attach_records_the_fold_as_the_session_transcript() -> Result<()> {
                     agent: Some("tester".to_string()),
                 }),
             },
-        ),
+        )
+        .with_turn_seq(Some(1)),
         TranscriptRecord::new(
             &session_id,
             1,
             TranscriptRow::Assistant {
                 content: "a1".to_string(),
             },
-        ),
+        )
+        .with_turn_seq(Some(1)),
         TranscriptRecord::new(
             &session_id,
             2,
             TranscriptRow::Tool {
+                call_id: "call-1".to_string(),
                 name: "read_file".to_string(),
+                executed_name: Some("read_file".to_string()),
                 arguments: Some("{\"path\":\"/tmp/test.txt\"}".to_string()),
                 result: Some("the file's text".to_string()),
                 success: Some(true),
                 status: Some(ToolCallStatus::Success),
             },
-        ),
+        )
+        .with_turn_seq(Some(1)),
     ];
     assert_eq!(
         read, expected,

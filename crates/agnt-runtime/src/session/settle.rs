@@ -227,7 +227,7 @@ pub(super) fn call_status(status: ToolStatus) -> ToolCallStatus {
 }
 
 /// The turn's structural status for the one the table stored.
-fn tool_status(status: ToolCallStatus) -> ToolStatus {
+pub(super) fn tool_status(status: ToolCallStatus) -> ToolStatus {
     match status {
         ToolCallStatus::Success => ToolStatus::Success,
         ToolCallStatus::Failed => ToolStatus::Failed,

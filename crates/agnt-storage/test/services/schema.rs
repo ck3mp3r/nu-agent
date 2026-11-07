@@ -1,8 +1,8 @@
 use super::*;
 
-/// M3 is the schema this build migrates a database to.
+/// M4 is the schema this build migrates a database to.
 #[tokio::test]
-async fn test_services_migration_migrates_to_m3() -> Result<()> {
+async fn test_services_migration_migrates_to_m4() -> Result<()> {
     // -- Setup & Fixtures
     let fixture = Fixture::new()?;
 
@@ -10,11 +10,12 @@ async fn test_services_migration_migrates_to_m3() -> Result<()> {
     let version = version(&fixture.storage).await?;
 
     // -- Check
-    assert_eq!(version, 3, "a fresh database migrates to M3");
+    assert_eq!(version, 4, "a fresh database migrates to M4");
     Ok(())
 }
 
-/// M1's tables survive, M2's three tables are added, and M3 adds the transcript.
+/// M1's tables survive, M2's three tables are added, and M3-M4 add the
+/// transcript.
 #[tokio::test]
 async fn test_services_migration_holds_the_baseline_and_the_fact_tables() -> Result<()> {
     // -- Setup & Fixtures
@@ -123,7 +124,16 @@ async fn test_services_migration_transcript_is_keyed_by_its_derived_id() -> Resu
         ddl.contains("UNIQUE (session_id, row_seq)"),
         "one row SHALL hold one position of one session, got: {ddl}"
     );
-    for kind in ["user", "assistant", "system", "tool", "compaction"] {
+    for kind in [
+        "user",
+        "assistant",
+        "system",
+        "tool",
+        "compaction",
+        "media",
+        "reasoning",
+        "opaque",
+    ] {
         assert!(
             ddl.contains(kind),
             "the kind constraint SHALL name {kind}, got: {ddl}"
