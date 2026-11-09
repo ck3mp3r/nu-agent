@@ -7,7 +7,7 @@ version.workspace = true
 integration = []
 
 [dependencies]
-agent-client-protocol = { version = "3", features = ["stdio"] }
+agent-client-protocol = { version = "5", features = ["stdio"] }
 chrono = { workspace = true }
 log = { workspace = true }
 agnt-core = { workspace = true }
