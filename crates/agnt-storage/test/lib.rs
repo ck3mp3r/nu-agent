@@ -1,15 +1,35 @@
-//! Tests of the storage engine, its transport faces, and the migration runner.
+//! Tests of the storage engine, its transport faces, and its migrations.
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Modules
 
+use std::path::Path;
+
 use sqlx::SqlitePool;
+use sqlx::migrate::MigrateError;
 use tempfile::TempDir;
 
 use crate::{Storage, StorageError, Work};
 
 // endregion: --- Modules
+
+// region:    --- Fixtures
+
+/// The tables a migrated database holds: the engine's, and the framework's
+/// migration bookkeeping.
+const ENGINE_TABLES: [&str; 8] = [
+    "_sqlx_migrations",
+    "entry_turns",
+    "files",
+    "logs",
+    "sessions",
+    "tool_calls",
+    "transcript",
+    "turns",
+];
+
+// endregion: --- Fixtures
 
 // region:    --- Tests
 
@@ -24,24 +44,14 @@ fn test_storage_open_creates_file_and_migrates() -> Result<()> {
 
     // -- Check
     assert!(path.exists(), "open SHALL create the database file");
-    let version = storage.call_blocking(Version)??;
+    let versions = storage.call_blocking(AppliedVersions)??;
     assert_eq!(
-        version, 4,
-        "open SHALL migrate a new database to the target version"
+        versions,
+        [1, 2, 3, 4],
+        "open SHALL apply every migration of a new database"
     );
     let tables = storage.call_blocking(Tables)??;
-    assert_eq!(
-        tables,
-        [
-            "entry_turns",
-            "files",
-            "logs",
-            "sessions",
-            "tool_calls",
-            "transcript",
-            "turns"
-        ]
-    );
+    assert_eq!(tables, ENGINE_TABLES);
     Ok(())
 }
 
@@ -53,37 +63,32 @@ fn test_storage_open_migrates_nothing_at_target_version() -> Result<()> {
     drop(Storage::open(&path)?);
 
     // -- Exec
-    // Every migration's statements run once: a second run fails, and the stored
-    // version is what keeps it from running.
+    // Every migration's statements run once: a second run would fail, and the
+    // framework's applied rows are what keep them from running.
     let storage = Storage::open(&path)?;
 
     // -- Check
-    let version = storage.call_blocking(Version)??;
-    assert_eq!(version, 4);
+    let versions = storage.call_blocking(AppliedVersions)??;
+    assert_eq!(versions, [1, 2, 3, 4]);
     let tables = storage.call_blocking(Tables)??;
-    assert_eq!(
-        tables,
-        [
-            "entry_turns",
-            "files",
-            "logs",
-            "sessions",
-            "tool_calls",
-            "transcript",
-            "turns"
-        ]
-    );
+    assert_eq!(tables, ENGINE_TABLES);
     Ok(())
 }
 
-#[test]
-fn test_storage_open_refuses_newer_schema() -> Result<()> {
-    // -- Setup & Fixtures
+#[tokio::test]
+async fn test_storage_open_refuses_a_version_the_build_does_not_know() -> Result<()> {
+    // -- Setup & Fixtures: a database a newer build has migrated.
     let dir = TempDir::new()?;
     let path = dir.path().join("sessions.db");
-    let storage = Storage::open(&path)?;
-    storage.call_blocking(SetVersion(7))??;
-    drop(storage);
+    drop(Storage::open(&path)?);
+    let pool = open_pool(&path).await?;
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+         VALUES (7, 'a migration of a newer build', TRUE, X'00', 0)",
+    )
+    .execute(&pool)
+    .await?;
+    pool.close().await;
 
     // -- Exec
     let refusal = Storage::open(&path)
@@ -92,14 +97,59 @@ fn test_storage_open_refuses_newer_schema() -> Result<()> {
 
     // -- Check
     let message = refusal.to_string();
-    let StorageError::SchemaTooNew { stored, target } = refusal else {
-        return Err(format!("expected a version refusal, got {message}").into());
+    let StorageError::Migrate(MigrateError::VersionMissing(version)) = refusal else {
+        return Err(
+            format!("expected the framework's missing-version refusal, got {message}").into(),
+        );
     };
-    assert_eq!((stored, target), (7, 4));
+    assert_eq!(version, 7, "the refusal SHALL name the unknown version");
     assert!(
-        message.contains("version 7") && message.contains("the 4"),
-        "the refusal SHALL name both versions: {message}"
+        message.contains("migration 7 was previously applied"),
+        "the refusal SHALL carry the framework's text: {message}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_storage_open_refuses_a_foreign_database() -> Result<()> {
+    // -- Setup & Fixtures: a foreign database, holding no migration bookkeeping.
+    let dir = TempDir::new()?;
+    let path = dir.path().join("sessions.db");
+    let pool = open_pool(&path).await?;
+    sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, made INTEGER)")
+        .execute(&pool)
+        .await?;
+    sqlx::query("CREATE TABLE entries (id INTEGER PRIMARY KEY, session_id TEXT)")
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+
+    // -- Exec
+    let refusal = Storage::open(&path)
+        .err()
+        .ok_or("opening a foreign database SHALL fail")?;
+
+    // -- Check: the first migration collides with the foreign `sessions` table.
+    let message = refusal.to_string();
+    let StorageError::Migrate(MigrateError::ExecuteMigration(_, version)) = refusal else {
+        return Err(format!("expected the framework's migration failure, got {message}").into());
+    };
+    assert_eq!(version, 1, "the failure SHALL name the colliding migration");
+    assert!(
+        message.contains("table sessions already exists"),
+        "the refusal SHALL carry the collision: {message}"
+    );
+
+    // -- Check: the failed migration rolled back whole, leaving the foreign
+    // tables beside the framework's empty bookkeeping table.
+    let pool = open_pool(&path).await?;
+    let tables = tables(&pool).await?;
+    let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await?;
+    pool.close().await;
+    assert_eq!(tables, ["_sqlx_migrations", "entries", "sessions"]);
+    assert_eq!(applied, 0, "the failed migration SHALL record nothing");
     Ok(())
 }
 
@@ -131,18 +181,7 @@ fn test_storage_in_memory_carries_schema() -> Result<()> {
 
     // -- Exec & Check
     let tables = storage.call_blocking(Tables)??;
-    assert_eq!(
-        tables,
-        [
-            "entry_turns",
-            "files",
-            "logs",
-            "sessions",
-            "tool_calls",
-            "transcript",
-            "turns"
-        ]
-    );
+    assert_eq!(tables, ENGINE_TABLES);
 
     storage.call_blocking(InsertSession {
         id: "a91f3c2d".to_owned(),
@@ -180,10 +219,10 @@ async fn test_storage_call_awaits_reply() -> Result<()> {
     let storage = Storage::in_memory()?;
 
     // -- Exec
-    let version = storage.call(Version).await??;
+    let versions = storage.call(AppliedVersions).await??;
 
     // -- Check
-    assert_eq!(version, 4);
+    assert_eq!(versions, [1, 2, 3, 4]);
     Ok(())
 }
 
@@ -191,15 +230,15 @@ async fn test_storage_call_awaits_reply() -> Result<()> {
 
 // region:    --- Support
 
-/// Answers the schema version the database stores.
-struct Version;
+/// Answers the migration versions the framework records as applied.
+struct AppliedVersions;
 
-impl Work for Version {
-    type Output = sqlx::Result<i64>;
+impl Work for AppliedVersions {
+    type Output = sqlx::Result<Vec<i64>>;
 
     async fn run(self, pool: SqlitePool) -> Self::Output {
-        sqlx::query_scalar("PRAGMA user_version")
-            .fetch_one(&pool)
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
             .await
     }
 }
@@ -211,107 +250,26 @@ impl Work for Tables {
     type Output = sqlx::Result<Vec<String>>;
 
     async fn run(self, pool: SqlitePool) -> Self::Output {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        )
-        .fetch_all(&pool)
-        .await?;
-        Ok(rows.into_iter().map(|(name,)| name).collect())
+        tables(&pool).await
     }
-}
-
-/// Writes the schema version the database stores.
-struct SetVersion(i64);
-
-impl Work for SetVersion {
-    type Output = sqlx::Result<()>;
-
-    async fn run(self, pool: SqlitePool) -> Self::Output {
-        let version = self.0;
-        sqlx::query(&format!("PRAGMA user_version = {version}"))
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-}
-
-/// The legacy pre-engine store is refused before any DDL, with a clean named
-/// error that leaves the file exactly as it was.
-#[tokio::test]
-async fn test_storage_open_refuses_the_legacy_sqlx_migration_store() -> Result<()> {
-    // -- Setup & Fixtures: the deleted `sqlx::migrate!` era's file, version 0.
-    let dir = TempDir::new()?;
-    let path = dir.path().join("sessions.db");
-    let pool = legacy_pool(&path).await?;
-    sqlx::query("CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY)")
-        .execute(&pool)
-        .await?;
-    sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, made INTEGER)")
-        .execute(&pool)
-        .await?;
-    sqlx::query("CREATE TABLE entries (id INTEGER PRIMARY KEY, session_id TEXT)")
-        .execute(&pool)
-        .await?;
-    pool.close().await;
-
-    // -- Exec
-    let refusal = Storage::open(&path)
-        .err()
-        .ok_or("opening the legacy store SHALL fail")?;
-
-    // -- Check: the named refusal names the era, both versions and the path.
-    let message = refusal.to_string();
-    let StorageError::LegacyStore {
-        stored,
-        target,
-        path: refused_path,
-    } = refusal
-    else {
-        return Err(format!("expected a legacy-store refusal, got {message}").into());
-    };
-    assert_eq!((stored, target), (0, 4));
-    assert_eq!(refused_path, path);
-    assert!(
-        message.contains("legacy sqlx-migration store")
-            && message.contains("stored schema version 0")
-            && message.contains("migrates to 4"),
-        "the refusal SHALL name the era and both versions: {message}"
-    );
-    assert!(
-        message.contains(&path.display().to_string()),
-        "the refusal SHALL name the resolved path: {message}"
-    );
-    assert!(
-        message.contains("left untouched"),
-        "the refusal SHALL state the file was left untouched: {message}"
-    );
-    assert!(
-        !message.contains("error returned from database"),
-        "the refusal SHALL not leak the sqlx wording: {message}"
-    );
-
-    // -- Check: zero CREATE statements ran — the legacy tables are all there is.
-    let pool = legacy_pool(&path).await?;
-    let tables: Vec<(String,)> = sqlx::query_as(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-    )
-    .fetch_all(&pool)
-    .await?;
-    pool.close().await;
-    assert_eq!(
-        tables.into_iter().map(|(name,)| name).collect::<Vec<_>>(),
-        ["_sqlx_migrations", "entries", "sessions"],
-        "the refusal SHALL run no DDL and leave the legacy file as it was"
-    );
-    Ok(())
 }
 
 /// A pool over the database at `path`, created when it is missing.
-async fn legacy_pool(path: &std::path::Path) -> sqlx::Result<SqlitePool> {
+async fn open_pool(path: &Path) -> sqlx::Result<SqlitePool> {
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true);
     sqlx::SqlitePool::connect_with(options).await
+}
+
+/// The names of the tables `pool` holds, in order.
+async fn tables(pool: &SqlitePool) -> sqlx::Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(name,)| name).collect())
 }
 
 /// Writes one session row.

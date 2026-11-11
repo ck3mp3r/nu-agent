@@ -26,16 +26,13 @@ fn memory_error_backend_io_transparent() -> Result<()> {
     Ok(())
 }
 
-/// WHEN the legacy-store refusal flows to the memory error, THE flatten SHALL
-/// carry the complete refusal sentence and no sqlx wording.
+/// WHEN the migration refusal flows to the memory error, THE flatten SHALL
+/// carry the complete refusal sentence whole.
 #[test]
-fn memory_error_flats_the_legacy_store_refusal_clean() -> Result<()> {
+fn memory_error_flats_the_migration_refusal_clean() -> Result<()> {
     // -- Setup & Fixtures
-    let refusal = agnt_storage::StorageError::LegacyStore {
-        stored: 0,
-        target: 2,
-        path: std::path::PathBuf::from("/tmp/nu-agent/sessions.db"),
-    };
+    let refusal =
+        agnt_storage::StorageError::Migrate(sqlx::migrate::MigrateError::VersionMissing(7));
     let sentence = refusal.to_string();
 
     // -- Exec
@@ -48,16 +45,9 @@ fn memory_error_flats_the_legacy_store_refusal_clean() -> Result<()> {
         "the flatten carries the refusal whole"
     );
     let flat = error.to_string();
-    assert!(
-        flat.contains("legacy sqlx-migration store")
-            && flat.contains("stored schema version 0")
-            && flat.contains("migrates to 2")
-            && flat.contains("left untouched"),
-        "the flatten names the era, both versions and the untouched file: {flat}"
-    );
-    assert!(
-        !flat.contains("error returned from database"),
-        "the flatten carries no sqlx wording: {flat}"
+    assert_eq!(
+        sentence, "migration 7 was previously applied but is missing in the resolved migrations",
+        "the flatten carries the framework's own text: {flat}"
     );
     Ok(())
 }

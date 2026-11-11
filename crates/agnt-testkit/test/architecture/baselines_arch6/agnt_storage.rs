@@ -1,8 +1,8 @@
 //! The ARCH-6 rows recorded for `agnt-storage`.
 
 pub const ROWS: &[&str] = &[
-    "ARCH-6 agnt-storage/src/engine.rs:43: `Work` has no consumer outside `agnt-storage`",
-    "ARCH-6 agnt-storage/src/error.rs:14: `Result` has no consumer outside `agnt-storage`",
+    "ARCH-6 agnt-storage/src/engine.rs:45: `Work` has no consumer outside `agnt-storage`",
+    "ARCH-6 agnt-storage/src/error.rs:13: `Result` has no consumer outside `agnt-storage`",
     "ARCH-6 agnt-storage/src/transcript/identity.rs:25: `TranscriptId` has no consumer outside `agnt-storage`",
 ];
 

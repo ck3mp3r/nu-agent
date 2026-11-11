@@ -1,0 +1,32 @@
+DROP TABLE transcript;
+
+CREATE TABLE transcript (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    row_seq INTEGER NOT NULL,
+    turn_seq INTEGER,
+    kind TEXT NOT NULL CHECK (kind IN ('user', 'assistant', 'system', 'tool', 'compaction', 'media', 'reasoning', 'opaque')),
+    content TEXT NOT NULL,
+    tool_call_id TEXT,
+    tool_name TEXT,
+    tool_executed_name TEXT,
+    tool_arguments TEXT,
+    tool_result TEXT,
+    tool_success INTEGER CHECK (tool_success IN (0, 1)),
+    tool_status TEXT CHECK (tool_status IN ('success', 'failed', 'cancelled')),
+    stamp_millis INTEGER,
+    stamp_model TEXT,
+    stamp_agent TEXT,
+    media_owner TEXT CHECK (media_owner IN ('user', 'assistant', 'tool_result')),
+    media_kind TEXT CHECK (media_kind IN ('image', 'audio', 'video', 'document')),
+    media_source_kind TEXT CHECK (media_source_kind IN ('url', 'base64', 'file_id', 'raw', 'unknown')),
+    media_source TEXT,
+    media_raw BLOB,
+    media_text TEXT,
+    media_type TEXT,
+    media_detail TEXT,
+    reasoning_redacted INTEGER CHECK (reasoning_redacted IN (0, 1)),
+    opaque_item TEXT,
+    opaque_replay INTEGER CHECK (opaque_replay IN (0, 1)),
+    UNIQUE (session_id, row_seq)
+);

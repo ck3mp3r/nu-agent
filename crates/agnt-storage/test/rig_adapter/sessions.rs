@@ -67,6 +67,7 @@ fn test_rig_adapter_fresh_file_lists_no_sessions() -> Result<()> {
     assert_eq!(
         tables,
         [
+            "_sqlx_migrations",
             "entry_turns",
             "files",
             "logs",

@@ -227,8 +227,8 @@ fn emit_compaction_failed(
 /// The clean refusal line a store failure reports.
 ///
 /// The storage refusal itself is the line when the error chain carries one;
-/// the wrappers above it (`Memory backend error: …`, the sqlx wording) are
-/// never part of what the user reads.
+/// the wrapper above it (`Memory backend error: …`) is never part of what the
+/// user reads.
 fn store_refusal_text(error: &crate::session::MemoryError) -> String {
     let mut current = std::error::Error::source(error);
     while let Some(source) = current {

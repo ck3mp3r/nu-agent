@@ -14,7 +14,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use tokio::sync::oneshot;
 
 use crate::error::{Result, StorageError};
-use crate::migrations;
 
 // endregion: --- Modules
 
@@ -33,6 +32,9 @@ const FILE_CONNECTIONS: u32 = 4;
 /// The connections an in-memory database opens: the pool holds the database,
 /// so it stays at the one connection that holds it.
 const MEMORY_CONNECTIONS: u32 = 1;
+
+/// The migrations this build embeds, and the only owner of the schema.
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 // endregion: --- Constants
 
@@ -104,14 +106,6 @@ impl Location {
         match self {
             Self::Memory => MEMORY_CONNECTIONS,
             Self::File(_) => FILE_CONNECTIONS,
-        }
-    }
-
-    /// The path this location opens, `:memory:` for an in-memory database.
-    pub(crate) fn path(&self) -> PathBuf {
-        match self {
-            Self::Memory => PathBuf::from(IN_MEMORY),
-            Self::File(path) => path.clone(),
         }
     }
 
@@ -213,7 +207,7 @@ pub(crate) fn spawn(location: Location) -> Result<(Inbox, JoinHandle<()>)> {
     }
 }
 
-/// Opens the pool of `location` and migrates it to this build's target version.
+/// Opens the pool of `location` and runs this build's migrations on it.
 async fn open_pool(location: &Location) -> Result<SqlitePool> {
     if let Location::File(path) = location
         && let Some(parent) = path.parent()
@@ -226,7 +220,7 @@ async fn open_pool(location: &Location) -> Result<SqlitePool> {
         .min_connections(1)
         .connect_with(location.connect_options())
         .await?;
-    migrations::migrate(&pool, location).await?;
+    MIGRATOR.run(&pool).await?;
     Ok(pool)
 }
 

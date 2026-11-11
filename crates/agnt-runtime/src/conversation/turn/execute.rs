@@ -129,10 +129,10 @@ where
         {
             Ok(store) => Some((store, ctx.conversation.conversation_id.clone())),
             Err(error) => match error.refusal_text() {
-                // The store refused the database: it is newer than this build
-                // migrates to, or it is the legacy layout. The turn could write
-                // nothing through it, so it fails on the refusal instead of
-                // running memory-less and reporting success.
+                // The store refused the database: its migrations cannot carry
+                // it. The turn could write nothing through it, so it fails on
+                // the refusal instead of running memory-less and reporting
+                // success.
                 Some(refusal) => {
                     log::error!("Session store refused the turn: {refusal}");
                     return Err((TurnError::StoreRefused { msg: refusal }, unstarted()));

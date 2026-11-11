@@ -36,9 +36,9 @@ impl Storage {
     ///
     /// # Errors
     ///
-    /// [`StorageError::SchemaTooNew`] when the database was written by a newer
-    /// build, [`StorageError::Io`] or [`StorageError::Sqlite`] when it cannot
-    /// be created, opened, or migrated.
+    /// [`StorageError::Migrate`] when the migrations refuse the database or
+    /// fail on it, [`StorageError::Io`] or [`StorageError::Sqlite`] when it
+    /// cannot be created or opened.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::start(Location::at(path.as_ref()))
     }
@@ -47,8 +47,8 @@ impl Storage {
     ///
     /// # Errors
     ///
-    /// [`StorageError::Sqlite`] when the database cannot be opened or
-    /// migrated.
+    /// [`StorageError::Migrate`] when the migrations fail, and
+    /// [`StorageError::Sqlite`] when the database cannot be opened.
     pub fn in_memory() -> Result<Self> {
         Self::start(Location::Memory)
     }

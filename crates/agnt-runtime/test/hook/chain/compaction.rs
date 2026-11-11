@@ -419,7 +419,7 @@ async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Re
 /// one clean line; the next decision SHALL make no further attempt.
 #[tokio::test]
 async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Result<()> {
-    // -- Setup & Fixtures: the legacy pre-engine store every open refuses.
+    // -- Setup & Fixtures: a foreign database every open refuses.
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
     let path = temp_dir.path().join("sessions.db");
     let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -488,19 +488,12 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
         return Err(format!("the refusal SHALL be a Failed event, got {failed:?}").into());
     };
     assert!(
-        message.contains("legacy sqlx-migration store")
-            && message.contains("stored schema version 0")
-            && message.contains("migrates to 4"),
-        "the line SHALL name the era and both versions: {message}"
+        message.contains("table sessions already exists"),
+        "the line SHALL carry the migration failure: {message}"
     );
     assert!(
-        message.contains(&path.display().to_string()),
-        "the line SHALL name the resolved path: {message}"
-    );
-    assert!(
-        !message.contains("error returned from database")
-            && !message.contains("Memory backend error"),
-        "the line SHALL carry no sqlx or wrapper wording: {message}"
+        !message.contains("legacy") && !message.contains("Memory backend error"),
+        "the line SHALL carry neither the old era nor the wrapper wording: {message}"
     );
     assert!(
         rx.try_recv().is_err(),

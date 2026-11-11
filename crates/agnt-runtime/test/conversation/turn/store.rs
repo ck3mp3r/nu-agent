@@ -31,10 +31,9 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// The failure the fake memory answers every store open with.
 #[derive(Clone, Copy)]
 enum Failure {
-    /// The database migrated past this build's schema.
+    /// The database was migrated by a build that knows a version this one does
+    /// not.
     NewerSchema,
-    /// The database is the legacy sqlx-migration layout.
-    LegacyStore,
     /// Any other backend failure: the class the turn degrades past.
     Backend,
 }
@@ -43,15 +42,9 @@ impl Failure {
     /// The error this class answers with.
     fn error(self) -> MemoryError {
         match self {
-            Self::NewerSchema => MemoryError::backend(StorageError::SchemaTooNew {
-                stored: 4,
-                target: 3,
-            }),
-            Self::LegacyStore => MemoryError::backend(StorageError::LegacyStore {
-                stored: 0,
-                target: 3,
-                path: std::path::PathBuf::from("/tmp/nu-agent/sessions.db"),
-            }),
+            Self::NewerSchema => MemoryError::backend(StorageError::Migrate(
+                sqlx::migrate::MigrateError::VersionMissing(7),
+            )),
             Self::Backend => MemoryError::backend(std::io::Error::other("the log is gone")),
         }
     }
@@ -175,8 +168,8 @@ fn context<'a, M: TurnMemory>(
 
 // endregion: --- Fixtures
 
-/// WHEN the store answers the database as newer than this build, THEN THE
-/// execute_turn function SHALL fail the turn on the refusal text.
+/// WHEN the store's migrations cannot carry the database, THEN THE execute_turn
+/// function SHALL fail the turn on the refusal text.
 #[tokio::test]
 async fn test_turn_store_newer_schema_fails_the_turn() -> Result<()> {
     // -- Setup & Fixtures
@@ -189,7 +182,7 @@ async fn test_turn_store_newer_schema_fails_the_turn() -> Result<()> {
 
     // -- Check
     let Err((error, _)) = result else {
-        return Err("a newer-schema store must fail the turn, not run it".into());
+        return Err("a refused store must fail the turn, not run it".into());
     };
     assert!(
         matches!(error, TurnError::StoreRefused { .. }),
@@ -202,40 +195,8 @@ async fn test_turn_store_newer_schema_fails_the_turn() -> Result<()> {
     );
     assert_eq!(
         expected,
-        "Memory backend error: the database schema is version 4, newer than the 3 \
-         this build migrates to"
-    );
-    Ok(())
-}
-
-/// WHEN the store answers the legacy layout, THEN THE execute_turn function SHALL
-/// fail the turn on the legacy refusal text.
-#[tokio::test]
-async fn test_turn_store_legacy_store_fails_the_turn() -> Result<()> {
-    // -- Setup & Fixtures
-    let config = Config::default();
-    let expected = Failure::LegacyStore.error().to_string();
-    let ctx = context(RefusingMemory(Failure::LegacyStore), true, &config);
-
-    // -- Exec
-    let result = execute_turn(ctx, Allow).await;
-
-    // -- Check
-    let Err((error, _)) = result else {
-        return Err("a legacy store must fail the turn, not run it".into());
-    };
-    assert!(
-        matches!(error, TurnError::StoreRefused { .. }),
-        "the turn fails on the store refusal; got {error:?}"
-    );
-    assert_eq!(
-        error.to_string(),
-        expected,
-        "the failure carries the legacy refusal text"
-    );
-    assert!(
-        expected.contains("legacy sqlx-migration store"),
-        "the legacy wording, not the newer-schema wording: {expected}"
+        "Memory backend error: migration 7 was previously applied but is missing in the \
+         resolved migrations"
     );
     Ok(())
 }

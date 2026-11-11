@@ -4,17 +4,15 @@
 //! The engine owns the `SqlitePool` and the tokio runtime its work runs on;
 //! a caller submits a [`Work`] unit and receives the value the unit answers.
 //! [`Storage::call`] is the async face, [`Storage::call_blocking`] the sync
-//! face. `PRAGMA user_version` carries the schema version: every open migrates
-//! a database from its stored version to this build's target version, and
-//! refuses one that is newer.
+//! face. The `sqlx` Migrator carries the schema: every open runs this build's
+//! embedded migrations, the framework records what it applied in
+//! `_sqlx_migrations`, and a database it cannot migrate fails the open.
 
 // region:    --- Modules
 
 mod engine;
 mod error;
-mod migrations;
 mod rig_adapter;
-mod schema;
 mod services;
 mod storage;
 mod transcript;

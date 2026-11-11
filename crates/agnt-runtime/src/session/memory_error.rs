@@ -67,19 +67,18 @@ impl MemoryError {
         Self::Backend(source.into())
     }
 
-    /// The refusal text when the store answered the database as newer than this
-    /// build migrates to, or as the legacy sqlx-migration layout.
+    /// The refusal text when the store's migrations could not carry the
+    /// database.
     ///
-    /// Both refusals say the same thing: the store cannot be written. A turn
-    /// that ran anyway would persist nothing and report success, so the turn
-    /// path fails on this text instead of degrading. Every other failure keeps
-    /// the caller's warn-and-degrade.
+    /// A migration failure says the same thing: the store cannot be written. A
+    /// turn that ran anyway would persist nothing and report success, so the
+    /// turn path fails on this text instead of degrading. Every other failure
+    /// keeps the caller's warn-and-degrade.
     pub fn refusal_text(&self) -> Option<String> {
         match self {
-            Self::Backend(MemoryBackendError::Storage(
-                agnt_storage::StorageError::SchemaTooNew { .. }
-                | agnt_storage::StorageError::LegacyStore { .. },
-            )) => Some(self.to_string()),
+            Self::Backend(MemoryBackendError::Storage(agnt_storage::StorageError::Migrate(_))) => {
+                Some(self.to_string())
+            }
             _ => None,
         }
     }

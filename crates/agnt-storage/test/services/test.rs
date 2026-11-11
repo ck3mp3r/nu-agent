@@ -81,19 +81,19 @@ impl Fixture {
     }
 }
 
-/// The schema version the database stores.
+/// The highest migration version the framework records as applied.
 async fn version(storage: &Storage) -> Result<i64> {
     Ok(storage.call(Version).await??)
 }
 
-/// Answers the schema version the database stores.
+/// Answers the highest migration version the framework records as applied.
 struct Version;
 
 impl Work for Version {
     type Output = sqlx::Result<i64>;
 
     async fn run(self, pool: SqlitePool) -> Self::Output {
-        sqlx::query_scalar("PRAGMA user_version")
+        sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
             .fetch_one(&pool)
             .await
     }

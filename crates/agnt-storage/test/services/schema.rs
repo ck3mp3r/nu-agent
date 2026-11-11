@@ -28,6 +28,7 @@ async fn test_services_migration_holds_the_baseline_and_the_fact_tables() -> Res
     assert_eq!(
         tables,
         [
+            "_sqlx_migrations",
             "entry_turns",
             "files",
             "logs",
