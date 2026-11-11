@@ -34,3 +34,11 @@ language = "system"
 entry = "cargo nextest run --features integration --profile ci"
 stages = ["pre-push"]
 pass_filenames = false
+
+[[repos.hooks]]
+id = "doctests"
+name = "cargo test doc"
+language = "system"
+entry = "cargo test --doc --workspace"
+stages = ["pre-push"]
+pass_filenames = false

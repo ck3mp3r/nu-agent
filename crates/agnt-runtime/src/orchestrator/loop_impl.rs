@@ -12,8 +12,8 @@ use crate::conversation::turn::TurnEnd;
 use crate::orchestrator::events::{OrchestratorEvent, WorkerCommand};
 use crate::orchestrator::external::ExternalTaskStore;
 use crate::orchestrator::handlers::{
-    WORKER_BUSY_REASON, dispatch_pending_completions, dispatch_queued_external_prompt,
-    submit_prompt,
+    CANCELLED_BY_USER_REASON, WORKER_BUSY_REASON, dispatch_pending_completions,
+    dispatch_queued_external_prompt, submit_prompt,
 };
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
@@ -190,6 +190,31 @@ where
                     }
                     OrchestratorEvent::CancelRequested => {
                         let _ = ctx.cancel.request_cancel().await;
+                        // User input overrides anything in flow: the prompts
+                        // queued from outside the surface are foreign work, so
+                        // the user's cancel drains them, and every drained
+                        // task reaches a terminal state through the store. The
+                        // drain also clears the cancel that waits for a turn
+                        // to begin, so a later repeat arrival of the same task
+                        // id cannot fire a phantom cancel.
+                        for entry in external_queue.drain() {
+                            let _ = reject_external_task(
+                                &entry.task_id,
+                                external_task_store,
+                                CANCELLED_BY_USER_REASON,
+                            );
+                        }
+                        // The completions held for an idle cycle are foreign
+                        // work too: a completion carries a remote task only and
+                        // reaches no local store disposition, so the drain
+                        // abandons each one and names its remote task the only
+                        // record the loop can leave.
+                        for completion in pending_completions.drain() {
+                            let task_id = completion.task_id;
+                            log::warn!(
+                                "abandoning the buffered completion for remote task {task_id}: the user cancelled"
+                            );
+                        }
                     }
                     OrchestratorEvent::Quit => {
                         if *ctx.worker_active {

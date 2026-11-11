@@ -122,7 +122,7 @@ cargo nextest run --features integration --profile ci           # CI run, JUnit 
 
 In the Nix dev shell these are wrapped as `tests` (unit only), `tests-all` (unit + integration), and `tests-integration` (integration only, with retries).
 
-The pre-push hook runs the full suite: `cargo clippy --all-features --tests -- -D warnings` lints all test code including integration modules, then `cargo nextest run --features integration --profile ci` runs everything and writes `target/nextest/ci/junit.xml`.
+The pre-push hook runs the full suite: `cargo clippy --all-features --tests -- -D warnings` lints all test code including integration modules, then `cargo nextest run --features integration --profile ci` runs everything and writes `target/nextest/ci/junit.xml`, and finally `cargo test --doc --workspace` runs all doctests.
 
 Integration test modules:
 

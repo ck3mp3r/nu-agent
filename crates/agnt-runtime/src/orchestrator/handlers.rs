@@ -16,6 +16,9 @@ use crate::orchestrator::stages::{
 use crate::orchestrator::turn_outcome::TurnResult;
 use agnt_kernel::bus::LifecycleEvent;
 
+/// Reason recorded on a task rejected because the user cancelled.
+pub(crate) const CANCELLED_BY_USER_REASON: &str = "Cancelled by user";
+
 /// Reason recorded on a task rejected or failed because the worker was busy.
 pub(crate) const WORKER_BUSY_REASON: &str = "Worker busy: another turn is already running";
 

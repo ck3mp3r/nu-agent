@@ -4,8 +4,7 @@
 
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::{ContentKind, ContentLine, MessageRole};
-use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
-use agnt_runtime::protocol::events::Usage;
+use agnt_runtime::protocol::events::{StopCause, Usage};
 
 use super::transcript_store::TranscriptStore;
 use super::{ScrollState, StatusMessageKind, StatusState, UiPhase};
@@ -63,23 +62,27 @@ impl LlmState {
         status: &mut StatusState,
         scroll: &mut ScrollState,
         reason: &str,
+        cause: StopCause,
     ) -> bool {
-        self.stopped_impl(store, status, scroll, reason)
+        self.stopped_impl(store, status, scroll, reason, cause)
     }
 
-    /// Render a hook-stop reason. The generic user-cancel marker
-    /// (`TURN_STOPPED_NOTICE`) becomes a brief status-bar marker; any other
-    /// reason is APPENDED as a new transcript entry — never routed through the
-    /// `assistant_message` dedup path, which would truncate the streamed
-    /// block (Fix 2 of the repetition stop UX). The streaming cursor is
-    /// cleared so the streamed block stays intact and any later assistant
-    /// message starts a fresh block.
+    /// Render a stop record. A `UserCancelled` stop becomes a brief
+    /// Notice-kind status marker carrying the record's reason text: it leaves
+    /// the transcript, keeps the streamed blocks, and leaves the scroll
+    /// position alone. Any other cause's reason is APPENDED as a new
+    /// transcript entry — never routed through the `assistant_message` dedup
+    /// path, which would truncate the streamed block (Fix 2 of the repetition
+    /// stop UX). The routing reads the closed `StopCause`, never the text. The
+    /// streaming cursor is cleared so the streamed block stays intact and any
+    /// later assistant message starts a fresh block.
     fn stopped_impl(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
         scroll: &mut ScrollState,
         reason: &str,
+        cause: StopCause,
     ) -> bool {
         let trimmed = reason.trim();
         if trimmed.is_empty() {
@@ -93,12 +96,13 @@ impl LlmState {
             store.assistant_stream_start = None;
             return false;
         }
-        if trimmed == TURN_STOPPED_NOTICE {
-            // The user-cancel marker belongs in the status bar, not the
+        if matches!(cause, StopCause::UserCancelled) {
+            // The user-cancel notice belongs in the status bar, not the
             // transcript: keep the streamed blocks, push nothing, and leave
-            // the scroll position alone.
+            // the scroll position alone. The notice carries the record's
+            // reason text.
             store.assistant_stream_start = None;
-            status.message.set_notice(TURN_STOPPED_NOTICE);
+            status.message.set_notice(trimmed);
             return true;
         }
         // Close the in-progress streamed entry: push_entry's unified spacer

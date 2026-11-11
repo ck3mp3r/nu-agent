@@ -7,6 +7,8 @@
 
 #[path = "loop/a2a.rs"]
 mod a2a;
+#[path = "loop/cancel_drain.rs"]
+mod cancel_drain;
 #[path = "loop/compaction.rs"]
 mod compaction;
 #[path = "loop/completions.rs"]

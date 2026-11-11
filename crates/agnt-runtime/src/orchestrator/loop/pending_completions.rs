@@ -58,6 +58,25 @@ impl CompletionBuffer {
     pub(crate) fn task_ids(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().map(|entry| entry.task_id.as_str())
     }
+
+    /// Empty the buffer for a user cancel: return every buffered completion in
+    /// arrival order.
+    ///
+    /// The user's cancel overrides anything in flow: no turn the buffer holds
+    /// dispatches after it. A completion carries a remote task only, so the
+    /// drain hands the entries to the caller and the caller names each
+    /// abandoned remote task the only record the loop can leave.
+    pub(crate) fn drain(&mut self) -> Vec<ExternalCompletion> {
+        self.entries.drain(..).collect()
+    }
 }
 
 // endregion: --- Implementations
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/orchestrator/loop/pending_completions.rs"]
+mod pending_completions_test;
+
+// endregion: --- Tests

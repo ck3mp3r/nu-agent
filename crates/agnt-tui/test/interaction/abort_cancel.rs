@@ -18,6 +18,9 @@ mod expiry;
 #[path = "abort_cancel/idle_escape.rs"]
 mod idle_escape;
 
+#[path = "abort_cancel/queue_less.rs"]
+mod queue_less;
+
 #[path = "abort_cancel/settle.rs"]
 mod settle;
 

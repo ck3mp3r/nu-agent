@@ -7,7 +7,6 @@ use crate::state::{AppState, StatusMessageKind, UiPhase};
 use crate::test_support::{fold_record, turn_completed};
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::MessageRole;
-use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -119,7 +118,7 @@ fn finalize_preserves_warning_and_clears_neutral_status() -> Result<()> {
 fn finalize_preserves_notice_status() -> Result<()> {
     // -- Setup & Fixtures: a Notice-kind status message.
     let mut state = AppState::default();
-    state.status.message.set_notice(TURN_STOPPED_NOTICE);
+    state.status.message.set_notice("Turn stopped");
 
     // -- Exec
     finalize_turn(&mut state);
@@ -127,7 +126,7 @@ fn finalize_preserves_notice_status() -> Result<()> {
     // -- Check: the marker survives with its kind intact.
     assert_eq!(
         state.status.message.status_line(),
-        TURN_STOPPED_NOTICE,
+        "Turn stopped",
         "finalize must preserve a Notice-kind status message"
     );
     assert_eq!(

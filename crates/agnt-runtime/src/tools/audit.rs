@@ -60,7 +60,7 @@ impl AuditLogger {
     ///
     /// ```rust,no_run
     /// use std::path::PathBuf;
-    /// use crate::tools::audit::{AuditError, AuditLogger, AuditEntry, AuditResult};
+    /// use agnt_runtime::tools::audit::{AuditError, AuditLogger, AuditEntry, AuditResult};
     ///
     /// # async fn example() -> Result<(), AuditError> {
     /// // Step 1: Define log path

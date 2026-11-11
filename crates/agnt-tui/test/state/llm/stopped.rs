@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::state::StatusMessageKind;
-use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
 
 // ---------------------------------------------------------------------------
 // InferenceRecord::Stopped — hook-stop notice (Fix 2)
@@ -121,12 +120,13 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     Ok(())
 }
 
-/// `SessionRecord::Inference(InferenceRecord::Stopped { .. })` carrying `TURN_STOPPED_NOTICE` renders a status-bar
-/// marker instead of a transcript block: the streamed blocks stay, the
-/// streaming cursor resets, and the status message holds the marker with
-/// `Notice` kind.
+/// `SessionRecord::Inference(InferenceRecord::Stopped { .. })` with a
+/// `UserCancelled` cause renders a status-bar marker instead of a transcript
+/// block: the streamed blocks stay, the streaming cursor resets, and the
+/// status message holds the record's reason text with `Notice` kind. The
+/// reason text is arbitrary — the routing reads the cause.
 #[test]
-fn stopped_event_with_turn_stopped_notice_sets_status_marker() -> Result<()> {
+fn stopped_event_with_user_cause_sets_status_marker() -> Result<()> {
     // -- Setup & Fixtures: stream an assistant block.
     let mut state = busy_state_with_clean_transcript();
     reduce_llm(&mut state, assistant_message("partial answer"));
@@ -136,12 +136,15 @@ fn stopped_event_with_turn_stopped_notice_sets_status_marker() -> Result<()> {
     // -- Exec
     let changed = reduce_llm(
         &mut state,
-        inference_stopped(TURN_STOPPED_NOTICE.to_string()),
+        inference_stopped_with_cause(
+            agnt_runtime::protocol::events::StopCause::UserCancelled,
+            "Turn stopped".to_string(),
+        ),
     );
 
     // -- Check: the marker is set and no transcript block is appended.
     assert!(changed, "the stop marker must mark the TUI changed");
-    assert_eq!(state.status.message.status_line(), TURN_STOPPED_NOTICE);
+    assert_eq!(state.status.message.status_line(), "Turn stopped");
     assert_eq!(state.status.message.kind(), StatusMessageKind::Notice);
     assert_eq!(
         state.transcript.len(),
@@ -172,7 +175,10 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
     let mut state = busy_state_with_clean_transcript();
     reduce_llm(
         &mut state,
-        inference_stopped(TURN_STOPPED_NOTICE.to_string()),
+        inference_stopped_with_cause(
+            agnt_runtime::protocol::events::StopCause::UserCancelled,
+            "Turn stopped".to_string(),
+        ),
     );
     assert_eq!(state.status.message.kind(), StatusMessageKind::Notice);
 
@@ -207,5 +213,56 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
     );
     assert_eq!(warning.status.message.kind(), StatusMessageKind::Warning);
     assert_eq!(neutral.status.message.status_line(), "Tool: prior");
+    Ok(())
+}
+
+/// WHEN a `StopCause::UserCancelled` stop record with a non-empty reason
+/// folds, THE stop routing SHALL set the Notice-kind footer status message
+/// with the record reason text and SHALL NOT append a transcript entry,
+/// scroll the transcript, or leave the streaming cursor set.
+#[test]
+fn test_state_llm_stopped_impl_user_cause_sets_footer_notice() -> Result<()> {
+    // -- Setup & Fixtures: stream an assistant block.
+    let mut state = busy_state_with_clean_transcript();
+    reduce_llm(&mut state, assistant_message("partial answer"));
+    let blocks_before = state.transcript.len();
+    let following_tail_before = state.scroll.following_tail;
+    assert!(blocks_before > 0, "the streamed block must exist");
+
+    // -- Exec: the hook's mid-stream cancel record.
+    let changed = reduce_llm(
+        &mut state,
+        inference_stopped_with_cause(
+            agnt_runtime::protocol::events::StopCause::UserCancelled,
+            "Cancelled by user".to_string(),
+        ),
+    );
+
+    // -- Check: the footer carries the record's reason; the transcript is
+    // untouched.
+    assert!(changed, "the footer notice must mark the TUI changed");
+    assert_eq!(state.status.message.status_line(), "Cancelled by user");
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Notice);
+    assert_eq!(
+        state.transcript.len(),
+        blocks_before,
+        "the cancel footer must not append a transcript entry"
+    );
+    assert_eq!(
+        state.scroll.following_tail, following_tail_before,
+        "the cancel footer must not scroll the transcript"
+    );
+    assert!(
+        state
+            .transcript
+            .entries()
+            .iter()
+            .any(|b| is_assistant_entry(b) && entry_text(b).contains("partial answer")),
+        "the streamed block must survive the cancel footer"
+    );
+    assert!(
+        state.transcript.assistant_stream_start.is_none(),
+        "the cancel footer must reset assistant_stream_start"
+    );
     Ok(())
 }

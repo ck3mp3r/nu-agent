@@ -91,6 +91,18 @@ pub(crate) fn inference_stopped(reason: impl Into<String>) -> SessionRecord {
     })
 }
 
+/// The record that stops an inference call with the cause its producer chose:
+/// the fold routes on this cause, never on the reason text.
+pub(crate) fn inference_stopped_with_cause(
+    cause: agnt_runtime::protocol::events::StopCause,
+    reason: impl Into<String>,
+) -> SessionRecord {
+    SessionRecord::Inference(InferenceRecord::Stopped {
+        cause,
+        reason: reason.into(),
+    })
+}
+
 /// One streamed inference delta, narrated.
 pub(crate) fn inference_chunk(
     delta: impl Into<String>,

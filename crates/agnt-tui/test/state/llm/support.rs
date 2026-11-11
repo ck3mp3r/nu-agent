@@ -6,8 +6,8 @@
 pub(super) use crate::interaction::reducer::{RenderInput, reduce};
 pub(super) use crate::state::{AppState, UiPhase};
 pub(super) use crate::test_support::{
-    entry_text, inference_completed, inference_started, inference_stopped, prompt_record,
-    tool_completed, tool_started, turn_completed,
+    entry_text, inference_completed, inference_started, inference_stopped,
+    inference_stopped_with_cause, prompt_record, tool_completed, tool_started, turn_completed,
 };
 pub(super) use agnt_render::transcript::entry::TranscriptEntry;
 pub(super) use agnt_render::transcript::ir::MessageRole;

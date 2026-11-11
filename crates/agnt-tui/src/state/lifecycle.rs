@@ -355,7 +355,10 @@ impl AppState {
             self.disarm_abort();
         }
 
-        self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
+        // The input lock marks a live turn the surface never submitted.
+        self.active_cycle = self.active_prompt_id.is_some()
+            || !self.pending_prompt_ids.is_empty()
+            || self.input_locked;
 
         if self.phase == UiPhase::Idle && self.active_cycle {
             self.phase = UiPhase::Busy;

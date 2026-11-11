@@ -65,12 +65,15 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
             state.llm.completed(&mut state.status, usage)
         }
         RenderInput::Record(SessionRecord::Inference(InferenceRecord::Stopped {
-            reason, ..
+            cause,
+            reason,
+            ..
         })) => state.llm.stopped(
             &mut state.transcript,
             &mut state.status,
             &mut state.scroll,
             reason,
+            *cause,
         ),
         RenderInput::Record(SessionRecord::Tool(ToolRecord::Started { call })) => {
             state.tool.start_call(&mut state.transcript, call);

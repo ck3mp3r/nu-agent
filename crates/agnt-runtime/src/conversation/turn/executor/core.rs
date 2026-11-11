@@ -21,7 +21,7 @@ pub const REPETITION_STEERING_NOTICE: &str =
 /// it as a brief status-bar marker rather than a transcript block. The turn's
 /// completed work is kept in the session log, so the stop was deliberate and
 /// nothing already done was lost.
-pub const TURN_STOPPED_NOTICE: &str = "Turn stopped";
+pub(crate) const TURN_STOPPED_NOTICE: &str = "Turn stopped";
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};

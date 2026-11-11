@@ -123,3 +123,82 @@ fn test_external_queue_begin_turn_without_a_waiting_cancel_is_not_cancelled() ->
     );
     Ok(())
 }
+
+#[test]
+fn test_external_queue_drain_returns_the_queued_prompt_and_clears_the_waiting_cancel() -> Result<()>
+{
+    // -- Setup & Fixtures
+    let mut queue = ExternalQueue::default();
+    queue.admit("task-a".to_string(), "prompt a".to_string());
+    let waiting = queue.cancel("task-a".to_string());
+
+    // -- Exec
+    let drained = queue.drain();
+
+    // -- Check
+    assert_eq!(waiting, CancelDisposition::WaitsForDispatch);
+    assert_eq!(
+        drained,
+        vec![ExternalPrompt {
+            task_id: "task-a".to_string(),
+            prompt: "prompt a".to_string(),
+        }],
+        "the user cancel must get the queued prompt back"
+    );
+    assert!(
+        queue.take_next().is_none(),
+        "the drained queue must hold no prompt to dispatch"
+    );
+    queue.admit("task-a".to_string(), "prompt a".to_string());
+    let entry = queue.take_next().ok_or("task-a should be queued again")?;
+    let cancels_at_entry = queue.begin_turn(entry.task_id);
+    assert!(
+        !cancels_at_entry,
+        "the drained waiting cancel must not fire a phantom cancel at the repeat arrival's dispatch"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_external_queue_drain_returns_prompts_in_arrival_order() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut queue = ExternalQueue::default();
+    queue.admit("task-a".to_string(), "prompt a".to_string());
+    queue.admit("task-b".to_string(), "prompt b".to_string());
+
+    // -- Exec
+    let drained = queue.drain();
+
+    // -- Check
+    let ids: Vec<&str> = drained.iter().map(|entry| entry.task_id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["task-a", "task-b"],
+        "the drain must return the prompts in arrival order"
+    );
+    assert!(
+        queue.take_next().is_none(),
+        "the drained queue must be empty"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_external_queue_drain_on_an_empty_queue_returns_no_entries() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut queue = ExternalQueue::default();
+
+    // -- Exec
+    let drained = queue.drain();
+
+    // -- Check
+    assert!(
+        drained.is_empty(),
+        "draining an empty queue must return no entries"
+    );
+    assert!(
+        queue.take_next().is_none(),
+        "an empty queue holds no prompt to dispatch"
+    );
+    Ok(())
+}

@@ -81,6 +81,20 @@ impl ExternalQueue {
         CancelDisposition::WaitsForDispatch
     }
 
+    /// Empty the queue for a user cancel: return every pending prompt in
+    /// arrival order, and drop any cancel that still waits for a turn to
+    /// begin.
+    ///
+    /// The user's cancel overrides anything in flow: no queued foreign turn
+    /// runs after it, and the waiting cancel dies with the queue, so a later
+    /// repeat arrival of the same task id cannot fire a phantom cancel at its
+    /// new dispatch.
+    pub(crate) fn drain(&mut self) -> Vec<ExternalPrompt> {
+        let drained = self.pending.drain(..).collect();
+        self.awaiting_cancel = None;
+        drained
+    }
+
     /// Take the next prompt to dispatch, in arrival order.
     pub(crate) fn take_next(&mut self) -> Option<ExternalPrompt> {
         self.pending.pop_front()
