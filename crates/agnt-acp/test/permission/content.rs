@@ -1,7 +1,7 @@
 //! Permission request content: the diff forwarded to the client.
 
 use agent_client_protocol::schema::v1::ToolCallContent;
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -9,7 +9,7 @@ use crate::permission::AcpPermissionBridge;
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::test]
-async fn test_permission_bridge_forwards_diff_content_when_display_present() -> Result<()> {
+async fn test_permission_bridge_forwards_diff_content_when_preview_present() -> Result<()> {
     // -- Setup & Fixtures
     let sink = RecordingPermissionSink::new(selected("allow-once"));
     let recorder = sink.clone();
@@ -17,7 +17,7 @@ async fn test_permission_bridge_forwards_diff_content_when_display_present() -> 
 
     // -- Exec
     let decision = bridge
-        .handle_permission_request(REQUEST, context_with_display(diff_display()))
+        .handle_permission_request(&card_with_preview(&diff_content()))
         .await?;
 
     // -- Check
@@ -48,7 +48,7 @@ async fn test_permission_bridge_omits_content_when_no_display() -> Result<()> {
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::AllowOnce);

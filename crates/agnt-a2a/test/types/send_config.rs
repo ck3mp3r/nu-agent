@@ -2,12 +2,14 @@ use serde_json::json;
 
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ---------------------------------------------------------------------------
 // SendMessageConfiguration (spec §3.2.2)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn send_config_full_roundtrip() {
+fn send_config_full_roundtrip() -> Result<()> {
     let config = SendMessageConfiguration {
         return_immediately: Some(true),
         accepted_output_modes: Some(vec![
@@ -16,19 +18,20 @@ fn send_config_full_roundtrip() {
         ]),
     };
 
-    let json = serde_json::to_value(&config).expect("serialize");
+    let json = serde_json::to_value(&config)?;
     assert_eq!(json["returnImmediately"], true);
     assert_eq!(json["acceptedOutputModes"][0], "text/plain");
 
-    let back: SendMessageConfiguration = serde_json::from_value(json).expect("deserialize");
+    let back: SendMessageConfiguration = serde_json::from_value(json)?;
     assert_eq!(back, config);
+    Ok(())
 }
 
 #[test]
-fn send_config_minimal_omits_none_fields() {
+fn send_config_minimal_omits_none_fields() -> Result<()> {
     let config = SendMessageConfiguration::default();
 
-    let json = serde_json::to_value(&config).expect("serialize");
+    let json = serde_json::to_value(&config)?;
     assert!(
         json.get("returnImmediately").is_none(),
         "returnImmediately should be absent when None, got: {json}"
@@ -38,23 +41,25 @@ fn send_config_minimal_omits_none_fields() {
         "acceptedOutputModes should be absent when None, got: {json}"
     );
 
-    let back: SendMessageConfiguration = serde_json::from_value(json).expect("deserialize");
+    let back: SendMessageConfiguration = serde_json::from_value(json)?;
     assert_eq!(back, config);
+    Ok(())
 }
 
 #[test]
-fn send_config_deserializes_camel_case_body() {
+fn send_config_deserializes_camel_case_body() -> Result<()> {
     let json = json!({
         "returnImmediately": false,
         "acceptedOutputModes": ["text/plain"]
     });
 
-    let config: SendMessageConfiguration = serde_json::from_value(json).expect("deserialize");
+    let config: SendMessageConfiguration = serde_json::from_value(json)?;
     assert_eq!(config.return_immediately, Some(false));
     assert_eq!(
         config.accepted_output_modes,
         Some(vec!["text/plain".to_string()])
     );
+    Ok(())
 }
 
 #[test]

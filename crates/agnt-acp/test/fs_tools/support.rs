@@ -10,9 +10,9 @@ pub(super) use agent_client_protocol::schema::v1::{
     ReadTextFileRequest, ReadTextFileResponse, WriteTextFileRequest, WriteTextFileResponse,
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, on_receive_request};
-pub(super) use agnt_core::conversation::builder::builtin_tool_definitions;
-pub(super) use agnt_core::tools::fs::core::version_token;
-pub(super) use agnt_core::types::{
+pub(super) use agnt_runtime::conversation::builder::builtin_tool_definitions;
+pub(super) use agnt_runtime::tools::fs::core::version_token;
+pub(super) use agnt_runtime::types::{
     DynamicTool, ToolContext, ToolDefinition, ToolExecutionError, ToolOutput, ToolSet,
 };
 
@@ -44,7 +44,10 @@ pub(super) struct ReadRecorder {
 
 impl ReadRecorder {
     pub(super) fn requests(&self) -> Vec<ReadTextFileRequest> {
-        self.requests.lock().unwrap().clone()
+        self.requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -78,7 +81,11 @@ pub(super) async fn read_client(reply: Reply) -> Result<(ConnectionTo<Client>, A
             .name("agnt-acp-fs-test-client")
             .on_receive_request(
                 async move |request: ReadTextFileRequest, responder, _cx| {
-                    client_recorder.requests.lock().unwrap().push(request);
+                    client_recorder
+                        .requests
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(request);
                     match reply.as_ref() {
                         Reply::Content(content) => {
                             responder.respond(ReadTextFileResponse::new(content.clone()))
@@ -192,11 +199,17 @@ pub(super) struct EditRecorder {
 
 impl EditRecorder {
     pub(super) fn reads(&self) -> Vec<ReadTextFileRequest> {
-        self.read_requests.lock().unwrap().clone()
+        self.read_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub(super) fn writes(&self) -> Vec<WriteTextFileRequest> {
-        self.write_requests.lock().unwrap().clone()
+        self.write_requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -228,7 +241,11 @@ pub(super) async fn edit_client(reply: Reply) -> Result<(ConnectionTo<Client>, A
             .name("agnt-acp-fs-edit-test-client")
             .on_receive_request(
                 async move |request: ReadTextFileRequest, responder, _cx| {
-                    read_recorder.read_requests.lock().unwrap().push(request);
+                    read_recorder
+                        .read_requests
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(request);
                     match reply.as_ref() {
                         Reply::Content(content) => {
                             responder.respond(ReadTextFileResponse::new(content.clone()))
@@ -240,7 +257,11 @@ pub(super) async fn edit_client(reply: Reply) -> Result<(ConnectionTo<Client>, A
             )
             .on_receive_request(
                 async move |request: WriteTextFileRequest, responder, _cx| {
-                    write_recorder.write_requests.lock().unwrap().push(request);
+                    write_recorder
+                        .write_requests
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(request);
                     responder.respond(WriteTextFileResponse::new())
                 },
                 on_receive_request!(),

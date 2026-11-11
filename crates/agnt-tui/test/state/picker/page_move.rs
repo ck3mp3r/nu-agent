@@ -1,5 +1,5 @@
 use super::*;
-use agnt_core::protocol::events::Key;
+use crate::interaction::input::Key;
 
 /// PgUp/PgDn page the selection 8 rows in every picker kind, clamped to the
 /// first and last row instead of wrapping; single-row moves stay one row.

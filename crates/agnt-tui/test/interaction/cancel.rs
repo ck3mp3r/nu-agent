@@ -1,10 +1,10 @@
 use std::{sync::mpsc, thread, time::Duration};
 
+use crate::interaction::input::{Key, UiInput};
 use crate::{
     interaction::{cancel::CancelController, reducer::reduce},
     state::{AppState, InputState},
 };
-use agnt_core::protocol::events::{Key, SystemEvent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -69,20 +69,20 @@ fn reducer_second_escape_triggers_cancel_request() {
     // lets the submit key create an active cycle.
     reduce(
         &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
+        UiInput::KeyPressed { key: Key::Enter },
         Some(&cancel_controller),
     );
 
     reduce(
         &mut state,
-        SystemEvent::KeyPressed { key: Key::Esc },
+        UiInput::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
     assert!(!cancel_controller.is_cancel_requested());
 
     reduce(
         &mut state,
-        SystemEvent::KeyPressed { key: Key::Esc },
+        UiInput::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
 

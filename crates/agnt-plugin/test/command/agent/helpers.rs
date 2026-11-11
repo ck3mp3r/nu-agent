@@ -1,6 +1,6 @@
 use super::Agent;
-use agnt_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
-use agnt_core::utils::env_map::{EnvMap, process_env};
+use agnt_runtime::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+use agnt_runtime::utils::env_map::{EnvMap, process_env};
 use nu_parser::parse;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{
@@ -8,14 +8,11 @@ use nu_protocol::{
     engine::{Call, Command, EngineState, Stack, StateWorkingSet},
 };
 use std::collections::HashMap;
-use tempfile::TempDir;
 
-/// Helper to create an Agent for testing. The Agent no longer holds a store;
-/// this is kept for tests that only check signature/name properties.
-pub(super) fn create_test_agent() -> (Agent, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let agent = Agent;
-    (agent, temp_dir)
+/// Helper to create an Agent for testing. The Agent holds no store and needs no
+/// working directory, so the helper returns a bare value.
+pub(super) fn create_test_agent() -> Agent {
+    Agent
 }
 
 #[derive(Clone)]
@@ -50,7 +47,7 @@ impl Command for ParserHarnessCommand {
 pub(super) fn parse_agent_invocation_with_signature(
     sig: nu_protocol::Signature,
     invocation: &str,
-) -> Vec<ParseError> {
+) -> core::result::Result<Vec<ParseError>, Box<dyn std::error::Error>> {
     let mut engine_state = EngineState::new();
     let mut working_set = StateWorkingSet::new(&engine_state);
     let decl_id = working_set.add_decl(Box::new(ParserHarnessCommand { signature: sig }));
@@ -61,8 +58,8 @@ pub(super) fn parse_agent_invocation_with_signature(
     let delta = working_set.render();
     engine_state
         .merge_delta(delta)
-        .expect("merge parser harness state");
-    parse_errors
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(parse_errors)
 }
 
 // Helpers to build PluginConfig structures for resolve_with_new_config tests.
@@ -110,7 +107,7 @@ pub(super) fn test_plugin_config(
     }
 }
 
-/// Resolve a `PluginConfig` through the shared `agnt-core` role resolver,
+/// Resolve a `PluginConfig` through the shared `agnt-runtime` role resolver,
 /// then apply CLI flags and validate — the same pipeline `resolve_config` runs.
 pub(super) fn resolve_with_new_config(
     plugin_config: PluginConfig,
@@ -131,7 +128,7 @@ pub(super) fn resolve_with_new_config_and_env(
         .flatten()
         .and_then(|v| v.as_str().map(str::to_string).ok());
     let mut config =
-        agnt_core::config::resolve_role_config(&plugin_config, model_override.as_deref(), env)
+        agnt_runtime::config::resolve_role_config(&plugin_config, model_override.as_deref(), env)
             .map_err(|e| LabeledError::new(format!("{e}")))?;
     super::runtime_build::apply_cli_flags(&mut config, call);
     config.validate().map_err(LabeledError::new)?;

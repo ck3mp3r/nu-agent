@@ -1,4 +1,4 @@
-//! Translation of nu-agent `SystemEvent`s into ACP `session/update` notifications.
+//! Translation of nu-agent session records into ACP `session/update` notifications.
 //!
 //! The ACP prompt handler drains the session bus while `execute_turn()` runs and
 //! forwards every translated event to the client as a `session/update`
@@ -20,11 +20,18 @@ use agent_client_protocol::schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError, CompactionRx, TryRecvError, UiEventRx};
-use agnt_core::config::defaults;
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
-use agnt_core::transcript::ir::ContentKind;
+use agnt_kernel::{
+    BuiltinKind, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, PermissionRecord,
+    SessionRecord, ToolKind as KernelToolKind, ToolRecord, ToolStatus,
+};
+use agnt_render::tool_args::plain_call_text;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::{ContentKind, Display, DisplaySection};
+use agnt_runtime::bus::{
+    Control, ControlCommand, ControlRx, Narration, NarrationEvent, ReceiveError, Stream,
+    Subscription, TryReceiveError,
+};
+use agnt_runtime::config::defaults;
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -32,6 +39,26 @@ use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
 // endregion: --- Modules
 
 // region:    --- Types
+
+/// The drawer's intake: one datum from the concerns ACP draws from.
+///
+/// The producer ships records and events; this enum only names which concern
+/// arrived. How anything is translated is this crate's business.
+pub enum TranslateInput<'a> {
+    Record(&'a SessionRecord),
+    Narration(&'a NarrationEvent),
+}
+
+/// The concerns one ACP turn drains.
+///
+/// Named fields, one per concern the turn reads: the ordered record stream
+/// (which carries compaction now), the narration text, and the control intake
+/// the compaction request rides.
+pub struct TurnSources<'a> {
+    pub stream: &'a Stream,
+    pub narration: &'a Narration,
+    pub control: &'a Control,
+}
 
 /// Destination for translated `session/update` notifications.
 ///
@@ -57,7 +84,8 @@ impl SessionUpdateSink for ConnectionTo<Client> {
     }
 }
 
-/// Translates the `SystemEvent` stream of one session into ACP `SessionUpdate`s.
+/// Translates the record and narration concerns of one session into ACP
+/// `SessionUpdate`s.
 ///
 /// Holds the per-session tool-call counter and the queue of started calls that
 /// have not completed yet. Both are required: `ToolStarted` and `ToolCompleted`
@@ -108,43 +136,52 @@ impl EventTranslator {
     /// Translate one bus event into an ACP `SessionUpdate`.
     ///
     /// Returns `None` for events that have no ACP equivalent.
-    pub fn translate(&mut self, event: SystemEvent) -> Option<SessionUpdate> {
-        match event {
-            SystemEvent::InferenceChunk { delta, .. } => Some(SessionUpdate::AgentMessageChunk(
-                ContentChunk::new(ContentBlock::Text(TextContent::new(delta))),
-            )),
-            SystemEvent::ToolStarted { call } => {
+    pub fn translate(&mut self, input: TranslateInput<'_>) -> Option<SessionUpdate> {
+        match input {
+            TranslateInput::Narration(NarrationEvent::InferenceChunk { delta, .. }) => {
+                Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::Text(TextContent::new(delta)),
+                )))
+            }
+            TranslateInput::Record(SessionRecord::Tool(ToolRecord::Started { call })) => {
                 let name = call.name.0.clone();
                 let id = self.allocate_call_id(&name, &call.arguments);
-                let summary = call.call_line.to_plain_text();
+                // The call line is a derivation, not data: derive it here, once
+                // per record, exactly as the transcript entries do at build time.
+                let call_line = call.call_line();
+                let summary = plain_call_text(&call_line);
                 let title = if summary.is_empty() {
                     name.clone()
                 } else {
-                    summary
+                    summary.to_string()
                 };
                 Some(SessionUpdate::ToolCall(
                     ToolCall::new(id, title)
                         .name(name.clone())
-                        .kind(tool_kind(&name))
+                        .kind(tool_kind(call.kind()))
                         .status(ToolCallStatus::Pending),
                 ))
             }
-            SystemEvent::ToolCompleted { call, outcome } => {
+            TranslateInput::Record(SessionRecord::Tool(ToolRecord::Completed {
+                call,
+                outcome,
+            })) => {
                 let id = self.take_call_id(&call.name.0, &call.arguments);
-                let status = if outcome.success {
+                let status = if outcome.status == ToolStatus::Success {
                     ToolCallStatus::Completed
                 } else {
                     ToolCallStatus::Failed
                 };
-                let mut content = outcome
-                    .display
-                    .as_ref()
-                    .map(content_from_display)
+                // The drawer derives the body from the result data; ACP maps that
+                // body onto its own content blocks.
+                let mut content = call
+                    .result_body(Some(&outcome.text))
+                    .map(|display| content_from_display(&display))
                     .unwrap_or_default();
                 if content.is_empty()
-                    && let Some(message) = outcome.message
+                    && let Some(message) = &outcome.message
                 {
-                    content.push(ToolCallContent::Content(Content::new(message)));
+                    content.push(ToolCallContent::Content(Content::new(message.clone())));
                 }
                 let mut fields = ToolCallUpdateFields::new().status(status);
                 if !content.is_empty() {
@@ -154,40 +191,42 @@ impl EventTranslator {
                     id, fields,
                 )))
             }
-            SystemEvent::InferenceCompleted { usage } => Some(SessionUpdate::UsageUpdate(
+            TranslateInput::Record(SessionRecord::Inference(InferenceRecord::Completed {
+                usage,
+            })) => Some(SessionUpdate::UsageUpdate(
                 // `UsageUpdate` takes a plain count, so a wire that omits the
                 // total still reports 0 to ACP clients — unchanged behavior.
                 UsageUpdate::new(usage.total_tokens.unwrap_or(0), self.max_context_tokens),
             )),
-            SystemEvent::CompactionStarted { source } => {
-                Some(compaction_update("started", &source, None))
-            }
-            SystemEvent::CompactionCompleted {
+            TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Started {
                 source,
-                summary_preview,
-                ..
-            } => Some(compaction_update(
+            })) => Some(compaction_update("started", *source, None)),
+            TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Completed {
+                source,
+                summary,
+            })) => Some(compaction_update(
                 "completed",
-                &source,
-                Some(summary_preview),
+                *source,
+                Some(summary_preview(summary)),
             )),
-            SystemEvent::CompactionFailed { source, message } => {
-                Some(compaction_update("failed", &source, Some(message)))
-            }
+            TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Failed {
+                source,
+                message,
+            })) => Some(compaction_update("failed", *source, Some(message.clone()))),
             // Mid-turn notices (context-window pressure, repetition steering)
             // reach the client as assistant text. The texts are self-describing,
             // so no prefix is added. A turn error is not a client-facing fact in
             // ACP mode: the turn's failure reaches the client as the prompt
             // response.
-            SystemEvent::SystemMessage {
-                kind: SystemKind::Warning,
+            TranslateInput::Narration(NarrationEvent::SystemMessage {
+                kind: NoticeKind::Warning,
                 text,
-            } => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+            }) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
                 ContentBlock::Text(TextContent::new(text)),
             ))),
             // No ACP equivalent: streaming compaction deltas, turn lifecycle
             // markers, and permission events (the permission bridge owns
-            // `PermissionRequested`).
+            // `PermissionRecord::Requested`).
             _ => None,
         }
     }
@@ -240,7 +279,7 @@ impl EventTranslator {
 /// receiver, so it can flush the events published just before the turn
 /// completes.
 pub async fn drain_bus_to_notifications<S, P>(
-    bus: &Bus,
+    sources: TurnSources<'_>,
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
@@ -248,8 +287,10 @@ pub async fn drain_bus_to_notifications<S, P>(
     S: SessionUpdateSink,
     P: PermissionRequestSink,
 {
-    let mut rx = bus.ui_event().subscribe();
-    drain_receiver_to_notifications(&mut rx, sink, translator, bridge).await;
+    let mut stream_rx = sources.stream.subscribe();
+    let mut narration_rx = sources.narration.subscribe();
+    drain_receiver_to_notifications(&mut stream_rx, &mut narration_rx, sink, translator, bridge)
+        .await;
 }
 
 /// Drain an existing bus receiver into `session/update` notifications until the
@@ -260,7 +301,8 @@ pub async fn drain_bus_to_notifications<S, P>(
 /// `bridge`; every request still awaiting a decision when the loop ends is
 /// denied.
 pub async fn drain_receiver_to_notifications<S, P>(
-    rx: &mut UiEventRx,
+    stream_rx: &mut Subscription<SessionRecord>,
+    narration_rx: &mut Subscription<NarrationEvent>,
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
@@ -268,20 +310,40 @@ pub async fn drain_receiver_to_notifications<S, P>(
     S: SessionUpdateSink,
     P: PermissionRequestSink,
 {
-    loop {
-        match rx.recv().await {
-            Ok(event) => {
-                if !handle_event(sink, translator, bridge, event).await {
-                    break;
+    let mut stream_open = true;
+    let mut narration_open = true;
+    while stream_open || narration_open {
+        tokio::select! {
+            received = stream_rx.recv(), if stream_open => match received {
+                Ok(record) => {
+                    if !handle_record(sink, translator, bridge, &record).await {
+                        break;
+                    }
                 }
-            }
-            Err(ChannelError::Lagged { dropped }) => {
-                log::warn!(
-                    "session {}: ui_event receiver lagged, dropped {dropped} events",
-                    translator.session_id()
-                );
-            }
-            Err(_) => break,
+                // One concern closed. The other may still hold records the
+                // bus published before it dropped, so drain that one first.
+                Err(ReceiveError::Closed) => stream_open = false,
+                Err(ReceiveError::Lagged(dropped)) => {
+                    log::warn!(
+                        "session {}: stream receiver lagged, dropped {dropped} records",
+                        translator.session_id()
+                    );
+                }
+            },
+            received = narration_rx.recv(), if narration_open => match received {
+                Ok(event) => {
+                    if !send_input(sink, translator, TranslateInput::Narration(&event)) {
+                        break;
+                    }
+                }
+                Err(ReceiveError::Closed) => narration_open = false,
+                Err(ReceiveError::Lagged(dropped)) => {
+                    log::warn!(
+                        "session {}: narration receiver lagged, dropped {dropped} events",
+                        translator.session_id()
+                    );
+                }
+            },
         }
     }
     bridge.deny_all_pending();
@@ -298,22 +360,39 @@ pub async fn drain_receiver_to_notifications<S, P>(
 /// permission decision is still awaited, so a buffered request at this point
 /// has no resolver left to unblock.
 pub fn flush_receiver_to_notifications<S: SessionUpdateSink>(
-    rx: &mut UiEventRx,
+    stream_rx: &mut Subscription<SessionRecord>,
+    narration_rx: &mut Subscription<NarrationEvent>,
     sink: &S,
     translator: &mut EventTranslator,
 ) {
     loop {
-        match rx.try_recv() {
-            Ok(event) => {
-                send_event(sink, translator, event);
-            }
-            Err(TryRecvError::Lagged(dropped)) => {
+        let more = match stream_rx.try_recv() {
+            Ok(record) => send_input(sink, translator, TranslateInput::Record(&record)),
+            Err(TryReceiveError::Lagged(dropped)) => {
                 log::warn!(
-                    "session {}: ui_event receiver lagged, dropped {dropped} events",
+                    "session {}: stream receiver lagged, dropped {dropped} records",
+                    translator.session_id()
+                );
+                true
+            }
+            Err(TryReceiveError::Empty | TryReceiveError::Closed) => false,
+        };
+        if !more {
+            break;
+        }
+    }
+    loop {
+        match narration_rx.try_recv() {
+            Ok(event) => {
+                send_input(sink, translator, TranslateInput::Narration(&event));
+            }
+            Err(TryReceiveError::Lagged(dropped)) => {
+                log::warn!(
+                    "session {}: narration receiver lagged, dropped {dropped} events",
                     translator.session_id()
                 );
             }
-            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryReceiveError::Empty | TryReceiveError::Closed) => break,
         }
     }
 }
@@ -325,14 +404,13 @@ pub fn flush_receiver_to_notifications<S: SessionUpdateSink>(
 /// the turn completes, the receivers are flushed and the turn output is
 /// returned.
 ///
-/// `compaction_rx` carries the session's compaction channel. Compaction events
-/// ride `bus.compaction()`, not `bus.ui_event()`, so a drain that subscribed
-/// only the ui channel would never see them. Each compaction event converts to
-/// its `SystemEvent` form exactly once and takes the same send path as a ui event.
+/// `control_rx` carries the session's control intake. A compaction request is a
+/// `ControlCommand`, not a record: it is the chain's auto-compaction decision,
+/// addressed to the loop owner rather than to a client.
 ///
-/// The returned flag reports whether a `SystemEvent::CompactionRequested` arrived.
-/// The request is not a client-facing event: it is the chain's auto-compaction
-/// decision, and the caller dispatches it. The flag is a `bool` because one
+/// The returned flag reports whether a `ControlCommand::CompactionRequested`
+/// arrived. The request is not a client-facing event: the caller dispatches it.
+/// The flag is a `bool` because one
 /// compaction runs per turn — a turn can trip the threshold on several
 /// completions, and the extras are dropped: after the compaction the context
 /// shrank, so the threshold re-evaluates on the next turn's completions.
@@ -346,8 +424,9 @@ pub fn flush_receiver_to_notifications<S: SessionUpdateSink>(
 /// client, exactly like every ui event published between turns. That limit is
 /// pre-existing and applies to compaction events unchanged.
 pub async fn run_turn_with_notifications<S, P, F>(
-    rx: &mut UiEventRx,
-    compaction_rx: &mut Option<CompactionRx>,
+    stream_rx: &mut Subscription<SessionRecord>,
+    narration_rx: &mut Subscription<NarrationEvent>,
+    control_rx: &mut ControlRx,
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
@@ -365,39 +444,52 @@ where
         tokio::select! {
             biased;
             output = &mut turn => break output,
-            received = rx.recv(), if draining => match received {
-                Ok(event) => {
-                    if !handle_event(sink, translator, bridge, event).await {
+            received = stream_rx.recv(), if draining => match received {
+                Ok(record) => {
+                    if !handle_record(sink, translator, bridge, &record).await {
                         draining = false;
                     }
                 }
-                Err(ChannelError::Lagged { dropped }) => {
+                Err(ReceiveError::Closed) => draining = false,
+                Err(ReceiveError::Lagged(dropped)) => {
                     log::warn!(
-                        "session {}: ui_event receiver lagged, dropped {dropped} events",
+                        "session {}: stream receiver lagged, dropped {dropped} records",
                         translator.session_id()
                     );
                 }
-                Err(_) => draining = false,
             },
-            event = recv_compaction(compaction_rx), if draining => match event {
-                // The chain's auto-compaction decision: not a client-facing
-                // event, so it is recorded rather than converted.
-                Some(SystemEvent::CompactionRequested { .. }) => compaction_requested = true,
-                Some(event) => {
-                    if !handle_event(sink, translator, bridge, event).await {
+            received = narration_rx.recv(), if draining => match received {
+                Ok(event) => {
+                    if !send_input(sink, translator, TranslateInput::Narration(&event)) {
                         draining = false;
                     }
                 }
-                // The channel closed: drop the arm so it pends instead of
-                // spinning on a closed receiver. The ui channel and the turn
-                // keep draining.
-                None => *compaction_rx = None,
+                Err(ReceiveError::Closed) => draining = false,
+                Err(ReceiveError::Lagged(dropped)) => {
+                    log::warn!(
+                        "session {}: narration receiver lagged, dropped {dropped} events",
+                        translator.session_id()
+                    );
+                }
+            },
+            command = control_rx.recv(), if draining => match command {
+                // The chain's auto-compaction decision: not a client-facing
+                // event, so it is recorded rather than converted.
+                Ok(ControlCommand::CompactionRequested { .. }) => compaction_requested = true,
+                Ok(_) => {}
+                Err(_receive_error) => draining = false,
             },
         }
     };
     if draining {
-        flush_receiver_to_notifications(rx, sink, translator);
-        compaction_requested |= flush_compaction_to_notifications(compaction_rx, sink, translator);
+        flush_receiver_to_notifications(stream_rx, narration_rx, sink, translator);
+        // A command the turn published before it completed is still queued:
+        // the biased select breaks on the finished turn without reading it.
+        while let Ok(command) = control_rx.try_recv() {
+            if matches!(command, ControlCommand::CompactionRequested { .. }) {
+                compaction_requested = true;
+            }
+        }
     }
     bridge.deny_all_pending();
     (output, compaction_requested)
@@ -407,88 +499,23 @@ where
 
 // region:    --- Support
 
-/// Forward every compaction event already buffered on `rx` as a
-/// `session/update` notification, without awaiting new events.
+/// Handle one stream record during a drain.
 ///
-/// The compaction counterpart of [`flush_receiver_to_notifications`]: a
-/// compaction event published just before the turn completes is still buffered
-/// when the drain loop breaks, so it is flushed here rather than lost.
-///
-/// Returns whether a `SystemEvent::CompactionRequested` was among them. The
-/// chain's auto decision usually lands in this window — the turn's last
-/// completion publishes it — so the flush is where the request is most often
-/// seen.
-fn flush_compaction_to_notifications<S: SessionUpdateSink>(
-    rx: &mut Option<CompactionRx>,
-    sink: &S,
-    translator: &mut EventTranslator,
-) -> bool {
-    let Some(rx) = rx else {
-        return false;
-    };
-    let mut requested = false;
-    loop {
-        match rx.try_recv() {
-            Ok(SystemEvent::CompactionRequested { .. }) => requested = true,
-            Ok(event) => {
-                send_event(sink, translator, event);
-            }
-            Err(TryRecvError::Lagged(dropped)) => {
-                log::warn!(
-                    "session {}: compaction receiver lagged, dropped {dropped} events",
-                    translator.session_id()
-                );
-            }
-            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-        }
-    }
-    requested
-}
-
-/// Receive the next compaction event, or pend forever when the drain has no
-/// compaction subscription.
-///
-/// `None` means the channel closed; the caller keeps draining the ui channel.
-async fn recv_compaction(rx: &mut Option<CompactionRx>) -> Option<SystemEvent> {
-    let Some(rx) = rx else {
-        return std::future::pending().await;
-    };
-    loop {
-        match rx.recv().await {
-            Ok(event) => return Some(event),
-            Err(ChannelError::Lagged { dropped }) => {
-                log::warn!("compaction receiver lagged, dropped {dropped} events");
-                continue;
-            }
-            Err(_) => return None,
-        }
-    }
-}
-
-/// Handle one bus event during a drain.
-///
-/// Permission requests go to the bridge — the translator has no ACP equivalent
-/// for them. Everything else is translated and sent. Returns `false` when the
-/// transport is gone.
-async fn handle_event<S, P>(
+/// A permission request goes to the bridge — the translator has no ACP
+/// equivalent for it. Everything else is translated and sent. Returns `false`
+/// when the transport is gone.
+async fn handle_record<S, P>(
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
-    event: SystemEvent,
+    record: &SessionRecord,
 ) -> bool
 where
     S: SessionUpdateSink,
     P: PermissionRequestSink,
 {
-    if let SystemEvent::PermissionRequested {
-        request_id,
-        context,
-    } = event
-    {
-        if let Err(err) = bridge
-            .handle_permission_request(request_id.as_str(), context)
-            .await
-        {
+    if let SessionRecord::Permission(requested @ PermissionRecord::Requested { .. }) = record {
+        if let Err(err) = bridge.handle_permission_request(requested).await {
             log::warn!(
                 "session {}: failed to handle permission request: {err}",
                 translator.session_id()
@@ -496,16 +523,16 @@ where
         }
         return true;
     }
-    send_event(sink, translator, event)
+    send_input(sink, translator, TranslateInput::Record(record))
 }
 
-/// Send one translated event. Returns `false` when the transport is gone.
-fn send_event<S: SessionUpdateSink>(
+/// Send one translated datum. Returns `false` when the transport is gone.
+fn send_input<S: SessionUpdateSink>(
     sink: &S,
     translator: &mut EventTranslator,
-    event: SystemEvent,
+    input: TranslateInput<'_>,
 ) -> bool {
-    let Some(update) = translator.translate(event) else {
+    let Some(update) = translator.translate(input) else {
         return true;
     };
     match sink.send_update(translator.session_id(), update) {
@@ -520,23 +547,60 @@ fn send_event<S: SessionUpdateSink>(
     }
 }
 
-/// Map a nu-agent tool name to an ACP tool kind.
-fn tool_kind(name: &str) -> ToolKind {
-    match name {
-        "read" => ToolKind::Read,
-        "edit" => ToolKind::Edit,
-        "grep" | "glob" => ToolKind::Search,
-        "nu" => ToolKind::Execute,
-        "http" => ToolKind::Fetch,
-        "skill" => ToolKind::Other,
-        _ if name.starts_with("ast_") => ToolKind::Read,
-        _ if name.starts_with("tmux_") => ToolKind::Execute,
-        _ => ToolKind::Other,
+/// Map the kernel's tool kind to an ACP tool kind.
+///
+/// The kernel already classified the call: its name became a variant once, at
+/// the boundary that produced the record. This is a total map over that enum,
+/// so no name — and no name prefix — is read here.
+fn tool_kind(kind: KernelToolKind) -> ToolKind {
+    match kind {
+        KernelToolKind::Builtin(
+            BuiltinKind::Read
+            | BuiltinKind::AstQuery
+            | BuiltinKind::AstNodes
+            | BuiltinKind::AstRefs
+            | BuiltinKind::AstTree,
+        ) => ToolKind::Read,
+        KernelToolKind::Builtin(BuiltinKind::Edit) => ToolKind::Edit,
+        KernelToolKind::Builtin(BuiltinKind::Grep | BuiltinKind::Glob) => ToolKind::Search,
+        KernelToolKind::Builtin(
+            BuiltinKind::Nu
+            | BuiltinKind::TmuxSession
+            | BuiltinKind::TmuxWindow
+            | BuiltinKind::TmuxPane
+            | BuiltinKind::TmuxLayout,
+        ) => ToolKind::Execute,
+        KernelToolKind::Builtin(BuiltinKind::Http) => ToolKind::Fetch,
+        KernelToolKind::Builtin(
+            BuiltinKind::Skill
+            | BuiltinKind::SpawnAgent
+            | BuiltinKind::TerminateAgent
+            | BuiltinKind::SendMessage
+            | BuiltinKind::ListAgents,
+        )
+        | KernelToolKind::Other => ToolKind::Other,
     }
 }
 
+/// The label this translator puts on a compaction's source.
+fn source_label(source: CompactionSource) -> &'static str {
+    match source {
+        CompactionSource::Auto => "auto",
+        CompactionSource::Manual => "slash",
+    }
+}
+
+/// The head of a compaction summary: the client previews it, never the body.
+fn summary_preview(summary: &str) -> String {
+    summary.chars().take(200).collect()
+}
+
 /// Build a `session_info_update` carrying compaction state in `_meta`.
-fn compaction_update(state: &str, source: &str, detail: Option<String>) -> SessionUpdate {
+fn compaction_update(
+    state: &str,
+    source: CompactionSource,
+    detail: Option<String>,
+) -> SessionUpdate {
     let mut compaction = serde_json::Map::new();
     compaction.insert(
         "state".to_string(),
@@ -544,7 +608,7 @@ fn compaction_update(state: &str, source: &str, detail: Option<String>) -> Sessi
     );
     compaction.insert(
         "source".to_string(),
-        serde_json::Value::String(source.to_string()),
+        serde_json::Value::String(source_label(source).to_string()),
     );
     if let Some(detail) = detail {
         compaction.insert("detail".to_string(), serde_json::Value::String(detail));
@@ -558,7 +622,7 @@ fn compaction_update(state: &str, source: &str, detail: Option<String>) -> Sessi
 }
 
 /// Map every display section to ACP tool-call content.
-pub(crate) fn content_from_display(display: &ToolDisplay) -> Vec<ToolCallContent> {
+pub(crate) fn content_from_display(display: &Display) -> Vec<ToolCallContent> {
     display.sections.iter().map(section_content).collect()
 }
 
@@ -568,7 +632,7 @@ pub(crate) fn content_from_display(display: &ToolDisplay) -> Vec<ToolCallContent
 /// content kind. The section content is a unified diff, so the old and new
 /// sides are reconstructed from the hunk lines — the reconstruction covers the
 /// hunks only, not the untouched remainder of the file.
-fn section_content(section: &ToolDisplaySection) -> ToolCallContent {
+fn section_content(section: &DisplaySection) -> ToolCallContent {
     match &section.kind {
         ContentKind::Diff { path, .. } => {
             let (old_text, new_text) = split_unified_diff(&section.content);

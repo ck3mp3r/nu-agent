@@ -1104,11 +1104,11 @@ There is no `AGENT_MODEL` env override at runtime; set the default model in `con
 
 ## Fixed retry caps
 
-Two turn-executor retry budgets are fixed defaults in `crates/agnt-core/src/config/defaults.rs`. They have no `config.toml` key, CLI flag, or environment-variable override.
+Two turn-executor retry budgets are fixed defaults in `crates/agnt-runtime/src/config/defaults.rs`. They have no `config.toml` key, CLI flag, or environment-variable override.
 
 | Constant | Default | Behavior |
 |----------|---------|----------|
-| `MAX_PROVIDER_FEEDBACK_RETRIES` | 2 | Provider feedback retries per user turn for model-correctable failures. Each retry appends one model-facing feedback message to the session memory and re-runs the turn once. |
+| `MAX_PROVIDER_FEEDBACK_RETRIES` | 3 | Provider feedback retries per user turn for model-correctable failures. Each retry appends one model-facing feedback message to the session memory and re-runs the turn once. |
 | `MAX_TURNS_FEEDBACK_RETRIES` | 1 | Max-turns steering retries per user turn. On tool-call budget exhaustion, the executor appends a steering message and re-runs the turn once with a fresh budget before returning the hard error. |
 | `MAX_REPETITION_STOP_RETRIES` | 3 | Repetition-stop steering retries per user turn. When the output-repetition guard stops the stream mid-turn, the executor converts the stop into a steering retry (steering notice + steering message + escalation-ladder reset); a stop at the retry cap is terminal. |
 

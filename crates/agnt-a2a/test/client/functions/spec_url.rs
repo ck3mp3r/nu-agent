@@ -56,7 +56,7 @@ async fn test_cancel_task_uses_spec_url() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_task_with_trailing_slash() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     let url_with_slash = format!("{}/", url.trim_end_matches('/'));
 

@@ -1,7 +1,7 @@
 //! Decision mapping: client outcome → `PermissionDecision`.
 
 use agent_client_protocol::schema::v1::RequestPermissionOutcome;
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -15,7 +15,7 @@ async fn test_permission_bridge_allow_once_returns_allow_once() -> Result<()> {
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::AllowOnce);
@@ -29,7 +29,7 @@ async fn test_permission_bridge_allow_always_returns_allow_always() -> Result<()
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::AllowAlways);
@@ -43,7 +43,7 @@ async fn test_permission_bridge_reject_once_returns_deny() -> Result<()> {
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Deny);
@@ -57,7 +57,7 @@ async fn test_permission_bridge_reject_always_returns_deny() -> Result<()> {
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Deny);
@@ -71,7 +71,7 @@ async fn test_permission_bridge_cancelled_outcome_returns_deny() -> Result<()> {
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Deny);
@@ -85,7 +85,7 @@ async fn test_permission_bridge_unknown_option_returns_deny() -> Result<()> {
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Deny);

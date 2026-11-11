@@ -3,15 +3,14 @@
 //! Holds the imports and the helpers every topical transcript test file needs.
 //! Sub-files pull them in with `use super::*;`.
 
-pub(super) use agnt_core::protocol::events::ToolCall;
-pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::transcript::entry::{
+pub(super) use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-pub(super) use agnt_core::transcript::ir::{
+pub(super) use agnt_render::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, ToolName,
 };
-pub(super) use agnt_core::transcript::renderer::ItemStatus;
+pub(super) use agnt_render::transcript::renderer::ItemStatus;
+pub(super) use agnt_runtime::protocol::events::ToolCall;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -44,15 +43,12 @@ pub(super) fn assistant_entry(text: &str) -> TranscriptEntry {
     })
 }
 
-/// A plain tool entry: a call line with no preview.
-pub(super) fn tool_entry(name: &str, summary: &str) -> TranscriptEntry {
+/// A plain tool entry: a derived call line with no preview.
+pub(super) fn tool_entry(name: &str, arguments: &str) -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName(name.to_string()),
-        "",
-        "",
-        CallLine {
-            summary: summary.to_string(),
-        },
+        agnt_runtime::tools::handler::ToolSource::Unknown,
+        arguments,
     );
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
@@ -67,11 +63,8 @@ pub(super) fn tool_entry(name: &str, summary: &str) -> TranscriptEntry {
 pub(super) fn nu_tool_entry(code: &str) -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName("nu".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: code.to_string(),
-        },
+        agnt_runtime::tools::handler::ToolSource::Unknown,
+        format!(r#"{{"command":"{code}"}}"#),
     );
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),

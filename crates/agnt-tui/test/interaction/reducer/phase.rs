@@ -1,8 +1,8 @@
 use super::*;
 
-use agnt_core::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{RequestId, ToolCall, ToolOutcome};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 #[test]
 fn submit_and_lock_table() {
@@ -11,11 +11,7 @@ fn submit_and_lock_table() {
         input: InputState::default().with_pending_submit_text("status pods".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
@@ -29,18 +25,10 @@ fn submit_and_lock_table() {
         input: InputState::default().with_pending_submit_text("first".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
 
     state.input.pending_submit_text = Some("second".to_string());
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
 
     // Activate both prompts coalesced
     let result = state.take_next_prompt_for_execution();
@@ -59,11 +47,7 @@ fn submit_and_lock_table() {
         ..Default::default()
     };
 
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
@@ -77,20 +61,16 @@ fn abort_flow_table() {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     let _ = state.activate_next_prompt();
 
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
     assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
 
     let before_markers = state.transcript.len();
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert_eq!(state.input.mode, InputMode::Insert);
@@ -104,33 +84,18 @@ fn abort_flow_table() {
         input: InputState::default().with_pending_submit_text("race".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     let _ = state.activate_next_prompt();
 
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::AbortPending);
 
-    reduce_ui(
-        &mut state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-    );
+    reduce_ui(&mut state, turn_completed(0));
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
 
     let transcript_before = state.transcript.entries().to_vec();
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert_eq!(state.transcript.entries(), transcript_before);
@@ -144,18 +109,7 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
     assert!(state.permission.has_prompt());
 
     // -- Exec: the turn completes.
-    reduce_ui(
-        &mut state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-    );
+    reduce_ui(&mut state, turn_completed(0));
 
     // -- Check
     assert!(
@@ -172,12 +126,12 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
     open_permission_card(&mut state);
 
     // -- Exec
-    reduce_ui(
+    reduce_narration(
         &mut state,
-        SystemEvent::SystemMessage {
-            kind: SystemKind::TurnError,
-            text: "boom".to_string(),
-        },
+        system_message(
+            agnt_runtime::protocol::events::NoticeKind::TurnError,
+            "boom",
+        ),
     );
 
     // -- Check
@@ -197,14 +151,14 @@ fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Resul
     // -- Setup & Fixtures: a busy turn with a permission card up.
     let mut state = busy_state_with_clean_transcript();
     open_permission_card(&mut state);
-    let open_request_id = RequestId::new("ask-0000000000000001");
+    let open_request_id = RequestId::from_minted("ask-0000000000000001");
 
     // -- Exec: a timeout for a different request.
     reduce_ui(
         &mut state,
-        SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000002"),
-        },
+        SessionRecord::Permission(PermissionRecord::TimedOut {
+            request_id: RequestId::from_minted("ask-0000000000000002"),
+        }),
     );
 
     // -- Check: the card stays up and no status message is set.
@@ -220,9 +174,9 @@ fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Resul
     // -- Exec: the timeout for the open card.
     reduce_ui(
         &mut state,
-        SystemEvent::PermissionDecisionTimedOut {
+        SessionRecord::Permission(PermissionRecord::TimedOut {
             request_id: open_request_id,
-        },
+        }),
     );
 
     // -- Check
@@ -249,75 +203,51 @@ fn completion_finalize_table() {
         input: InputState::default().with_pending_submit_text("prompt".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     let _ = state.activate_next_prompt();
 
-    let cases = vec![
-        SystemEvent::InferenceStarted,
-        SystemEvent::Tick,
-        SystemEvent::ToolStarted {
-            call: ToolCall::new(
+    let cases = [
+        inference_started(),
+        tool_started(ToolCall::new(
+            ToolName("k8s__list_pods".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Mcp,
+            "{}",
+        )),
+        tool_completed(
+            ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                "mcp",
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
-                CallLine::from_json_summary("{}"),
             ),
-        },
-        SystemEvent::ToolCompleted {
-            call: ToolCall::new(
-                ToolName("k8s__list_pods".to_string()),
-                "mcp",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
-            outcome: ToolOutcome {
-                success: true,
+            ToolOutcome {
                 status: ToolStatus::Success,
-                result: "[]".to_string(),
-                display: None,
-                error_kind: None,
+                payload: None,
+                text: "[]".to_string(),
                 message: None,
+                kind: None,
             },
-        },
-        SystemEvent::InferenceCompleted {
-            usage: Usage {
-                response_chars: 12,
-                tool_calls: 1,
-                input_tokens: 4,
-                output_tokens: 8,
-                total_tokens: Some(12),
-                cost: None,
-                cost_complete: false,
-            },
-        },
-        SystemEvent::SystemMessage {
-            kind: SystemKind::Warning,
-            text: "warned".to_string(),
-        },
+        ),
+        inference_completed(4, 8, Some(12), None, false),
     ];
 
-    for event in cases {
-        reduce_ui(&mut state, event);
+    for record in cases {
+        reduce_ui(&mut state, record);
         assert_eq!(state.phase, UiPhase::Busy);
         assert!(!state.input_locked);
     }
 
-    reduce_ui(
+    reduce_narration(
         &mut state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 1,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
+        system_message(
+            agnt_runtime::protocol::events::NoticeKind::Warning,
+            "warned",
+        ),
     );
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(!state.input_locked);
+
+    let finalize = turn_completed(0);
+    reduce_ui(&mut state, finalize);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
@@ -328,26 +258,11 @@ fn completion_finalize_table() {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     let _ = state.activate_next_prompt();
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
 
-    reduce_ui(
-        &mut state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-    );
+    reduce_ui(&mut state, turn_completed(0));
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
@@ -359,26 +274,11 @@ fn completion_finalize_table() {
         input: InputState::default().with_pending_submit_text("finalize".to_string()),
         ..Default::default()
     };
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     let _ = state.activate_next_prompt();
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
 
-    reduce_ui(
-        &mut state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-    );
+    reduce_ui(&mut state, turn_completed(0));
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
@@ -392,12 +292,12 @@ fn completion_finalize_table() {
     assert!(active_prompt_id(&state).is_some());
     assert!(state.is_active_cycle());
 
-    reduce_ui(
+    reduce_narration(
         &mut state,
-        SystemEvent::SystemMessage {
-            kind: SystemKind::TurnError,
-            text: "test error".to_string(),
-        },
+        system_message(
+            agnt_runtime::protocol::events::NoticeKind::TurnError,
+            "test error",
+        ),
     );
 
     assert_eq!(active_prompt_id(&state), None);
@@ -416,11 +316,7 @@ fn completion_finalize_table() {
     );
 
     state.input.pending_submit_text = Some("retry".to_string());
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     assert_eq!(state.phase, UiPhase::Busy);
     state.input_locked = true;
     let _ = state.take_next_prompt_for_execution();
@@ -448,11 +344,7 @@ fn test_interaction_reducer_locked_enter_enqueues_pending_prompt() -> Result<()>
     assert!(pending_prompt_ids(&state).is_empty());
 
     // -- Exec
-    let changed = reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    let changed = reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
 
     // -- Check: one queued prompt, no residue.
     assert!(changed, "a locked submit queues the dispatched draft");

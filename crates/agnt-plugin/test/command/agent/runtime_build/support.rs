@@ -6,7 +6,7 @@
 
 pub(super) use std::collections::HashMap;
 
-pub(super) use agnt_core::config::{
+pub(super) use agnt_runtime::config::{
     Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig,
 };
 pub(super) use nu_plugin::EvaluatedCall;
@@ -51,7 +51,7 @@ pub(super) fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> Pl
         {
             providers.insert(
                 provider_name.to_string(),
-                agnt_core::config::ProviderConfig {
+                agnt_runtime::config::ProviderConfig {
                     name: None,
                     api_key: None,
                     base_url: None,

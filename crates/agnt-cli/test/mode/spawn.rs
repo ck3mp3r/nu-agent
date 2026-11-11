@@ -6,13 +6,16 @@ use super::*;
 #[test]
 fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
 
     // -- Exec
     let handles = spawn_configured_hooks(
         None,
-        &bus,
+        agnt_runtime::hooks::HookSources {
+            stream: bus.stream(),
+            lifecycle: bus.lifecycle(),
+        },
         std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
         &agent_context(),
@@ -31,14 +34,17 @@ fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<
 #[test]
 fn test_mode_spawn_configured_hooks_with_empty_hooks_spawns_nothing() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
     let process = RecordingProcess::default();
     let config = PluginConfig::default();
 
     // -- Exec
     let handles = spawn_configured_hooks(
         Some(&config),
-        &bus,
+        agnt_runtime::hooks::HookSources {
+            stream: bus.stream(),
+            lifecycle: bus.lifecycle(),
+        },
         std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
         &agent_context(),

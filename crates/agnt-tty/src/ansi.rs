@@ -1,4 +1,4 @@
-use agnt_core::transcript::ir::StyleHint;
+use agnt_render::transcript::ir::StyleHint;
 
 /// Map a `StyleHint` to ANSI escape codes, or return the input unchanged when
 /// `use_color` is false (no ANSI output).

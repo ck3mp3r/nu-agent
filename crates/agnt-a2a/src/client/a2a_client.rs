@@ -1,9 +1,7 @@
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::discovery::card::ensure_crypto_provider;
 use crate::*;
 
 // ---------------------------------------------------------------------------
@@ -22,39 +20,15 @@ pub struct A2aClient {
 }
 
 impl A2aClient {
-    /// Default client — 30-second timeout.
+    /// Client over the caller-supplied transport — 30-second timeout.
     ///
-    /// # Errors
-    ///
-    /// Returns [`A2aError::Internal`] if the reqwest `Client` cannot be
-    /// built (e.g. TLS backend unavailable).
-    pub fn new() -> Result<Self, A2aError> {
-        Ok(Self {
-            http: http_client()?.clone(),
+    /// The transport is a composition-root property: the client never builds a
+    /// `reqwest::Client` of its own.
+    pub fn new(http: reqwest::Client) -> Self {
+        Self {
+            http,
             timeout: Duration::from_secs(30),
-        })
-    }
-
-    /// Client with a custom timeout.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`A2aError::Internal`] if the reqwest `Client` cannot be
-    /// built (e.g. TLS backend unavailable).
-    pub fn with_timeout(timeout: Duration) -> Result<Self, A2aError> {
-        Ok(Self {
-            http: http_client()?.clone(),
-            timeout,
-        })
-    }
-
-    /// Full custom client (shared reqwest client, custom timeout).
-    ///
-    /// **Note:** unlike [`new`] and [`with_timeout`], this constructor does
-    /// NOT set the `A2A-Version` default header. The caller is responsible
-    /// for adding it when building their own `reqwest::Client`.
-    pub fn with_client(http: reqwest::Client, timeout: Duration) -> Self {
-        Self { http, timeout }
+        }
     }
 
     /// List all known peers from the peer cache.
@@ -101,6 +75,7 @@ impl A2aClient {
             .http
             .post(&url)
             .header(reqwest::header::CONTENT_TYPE, "application/a2a+json")
+            .header("a2a-version", crate::A2A_VERSION)
             .body("{}")
             .send()
             .await
@@ -260,12 +235,6 @@ impl A2aClient {
     }
 }
 
-impl Default for A2aClient {
-    fn default() -> Self {
-        Self::new().expect("A2aClient::default() requires a working TLS backend")
-    }
-}
-
 // ---------------------------------------------------------------------------
 // A2aHttpClient implementation
 // ---------------------------------------------------------------------------
@@ -278,6 +247,7 @@ impl super::A2aHttpClient for A2aClient {
             .http
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/a2a+json")
+            .header("a2a-version", crate::A2A_VERSION)
             .body(body_str)
             .timeout(self.timeout)
             .send()
@@ -315,10 +285,19 @@ impl super::A2aHttpClient for A2aClient {
     }
 
     async fn get_bytes(&self, url: &str) -> Result<Vec<u8>, A2aError> {
+        self.get_bytes_with_timeout(url, self.timeout).await
+    }
+
+    async fn get_bytes_with_timeout(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, A2aError> {
         let response = self
             .http
             .get(url)
-            .timeout(self.timeout)
+            .header("a2a-version", crate::A2A_VERSION)
+            .timeout(timeout)
             .send()
             .await
             .map_err(map_reqwest_error)?;
@@ -350,27 +329,6 @@ impl super::A2aHttpClient for A2aClient {
 // ---------------------------------------------------------------------------
 // Helpers (pub(crate) for use by functions.rs)
 // ---------------------------------------------------------------------------
-
-/// Lazy-initialized `reqwest::Client` with the `A2A-Version` default header
-/// set. Returns an error if the TLS backend is unavailable on first access.
-fn http_client() -> Result<&'static reqwest::Client, A2aError> {
-    static CLIENT: OnceLock<Result<reqwest::Client, A2aError>> = OnceLock::new();
-    match CLIENT.get_or_init(|| {
-        ensure_crypto_provider();
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::HeaderName::from_static("a2a-version"),
-            reqwest::header::HeaderValue::from_static(crate::A2A_VERSION),
-        );
-        reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| A2aError::Internal(format!("reqwest client build: {e}")))
-    }) {
-        Ok(client) => Ok(client),
-        Err(e) => Err(e.clone()),
-    }
-}
 
 /// Map reqwest errors to typed A2aError.
 pub(crate) fn map_reqwest_error(err: reqwest::Error) -> A2aError {

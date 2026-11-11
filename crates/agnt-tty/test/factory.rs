@@ -1,5 +1,5 @@
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::renderer::UiRenderer;
+use crate::renderer::{RenderInput, UiRenderer};
+use agnt_kernel::{SessionRecord, TurnRecord};
 
 use crate::factory::{StderrUiFactory, UiRendererFactory};
 use crate::policy::{UiPolicy, Verbosity};
@@ -12,15 +12,8 @@ fn factory_creates_renderer_without_core_loop_changes() {
         verbosity: Verbosity::Normal,
     });
 
-    renderer.emit(&SystemEvent::Tick);
-    renderer.emit(&SystemEvent::TurnCompleted {
-        tool_calls: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: None,
-        cost: None,
-        cost_complete: true,
-        duration_ms: 0,
-    });
+    renderer.tick();
+    let record = SessionRecord::Turn(TurnRecord::Completed { duration_ms: 0 });
+    renderer.draw(RenderInput::Record(&record));
     renderer.flush();
 }

@@ -66,7 +66,7 @@ impl Tool {
                 "properties": {
                     "target": {"type": "string", "description": "Name of the target agent, from agent_list"},
                     "text": {"type": "string", "description": "Task text to send to the target agent"},
-                    "contextId": {"type": "string", "description": "Optional: include to resume an existing session on the target agent. Omit to start a fresh session and lose all prior context."}
+                    "contextId": {"type": "string", "description": "Omit for a fresh session. To resume, copy the contextId from a prior send result exactly and completely — never truncate or alter it. Do not reuse an id across fresh sends."}
                 },
                 "required": ["target", "text"]
             }),
@@ -120,13 +120,20 @@ impl Tool {
 }
 
 // ---------------------------------------------------------------------------
-// Tool table (lazy)
+// Tool table
 // ---------------------------------------------------------------------------
 
-fn tool_table() -> &'static Vec<Tool> {
-    use std::sync::OnceLock;
-    static TABLE: OnceLock<Vec<Tool>> = OnceLock::new();
-    TABLE.get_or_init(super::register::register_a2a_tools)
+const A2A_TOOLS: [Tool; 6] = [
+    Tool::AgentList,
+    Tool::GetCard,
+    Tool::Send,
+    Tool::Get,
+    Tool::Cancel,
+    Tool::List,
+];
+
+fn tool_table() -> &'static [Tool] {
+    &A2A_TOOLS
 }
 
 // ---------------------------------------------------------------------------

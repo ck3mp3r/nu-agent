@@ -4,40 +4,31 @@ use super::*;
 // Tool call lifecycle and status bookkeeping
 // ---------------------------------------------------------------------------
 
-/// The call-line summary depends on the tool and the call line the producer
-/// supplies: `nu` renders its command in the preview block (empty summary),
+/// The call line depends on the tool and the call's own arguments: `nu`
+/// renders its command in the preview block and carries only its timeout,
 /// other tools keep the arrow summary, and long summaries truncate.
 #[test]
 fn tool_start_call_line_summary_matrix() -> Result<()> {
     // -- Setup & Fixtures
     enum Expect {
-        Empty,
+        Timeout,
         Arrow,
         TruncatedArrow,
     }
     let long_args = format!("{{\"payload\":\"{}\"}}", "x".repeat(300));
-    let cases: Vec<(&str, SystemEvent, Expect)> = vec![
+    let cases: Vec<(&str, SessionRecord, Expect)> = vec![
         (
             "nu raw command",
-            started_with_call_line(
-                "nu",
-                r#"{"command":"ls | select name type size"}"#,
-                CallLine {
-                    summary: String::new(),
-                },
-            ),
-            Expect::Empty,
+            started("nu", r#"{"command":"ls | select name type size"}"#),
+            Expect::Timeout,
         ),
         (
             "nu multi-line command",
-            started_with_call_line(
+            started(
                 "nu",
                 r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#,
-                CallLine {
-                    summary: String::new(),
-                },
             ),
-            Expect::Empty,
+            Expect::Timeout,
         ),
         (
             "nu without command key",
@@ -61,9 +52,9 @@ fn tool_start_call_line_summary_matrix() -> Result<()> {
         let mut state = AppState::default();
         reduce_ui(&mut state, event);
         let entry = tool_entry_at(&state, 0)?;
-        let summary = &entry.call.call_line.summary;
+        let summary = call_line_of(entry);
         match expect {
-            Expect::Empty => assert_eq!(summary, &String::new(), "{label}"),
+            Expect::Timeout => assert_eq!(summary, "⏱ 120s", "{label}"),
             Expect::Arrow => assert!(summary.starts_with("→ "), "{label}: {summary}"),
             Expect::TruncatedArrow => {
                 assert!(summary.starts_with("→ "), "{label}");
@@ -94,7 +85,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
     // -- Check: one Tool entry, args summary, InProgress, empty status line.
     assert_eq!(state.transcript.len(), 1);
     let entry = tool_entry_at(&state, 0)?;
-    assert!(entry.call.call_line.summary.contains("namespace"));
+    assert!(call_line_of(entry).contains("namespace"));
     assert_eq!(entry.status, ItemStatus::InProgress);
     assert!(state.status.message.status_line().is_empty());
 
@@ -111,15 +102,14 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
             &mut completed,
             completed_with(
                 "gh__get_pr",
-                "mcp",
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 r#"{"number":1}"#,
                 ToolOutcome {
-                    success: matches!(status, ToolStatus::Success),
                     status,
-                    result: "ok".to_string(),
-                    display: None,
-                    error_kind: None,
+                    payload: None,
+                    text: "ok".to_string(),
                     message: None,
+                    kind: None,
                 },
             ),
         );
@@ -140,7 +130,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
         );
         state.tool.finish_tool_call(
             &mut state.transcript,
-            &ToolCallId::of("k8s__list_pods", r#"{"namespace":"prod"}"#),
+            &ToolCallId::new("k8s__list_pods", r#"{"namespace":"prod"}"#),
             status,
         );
         assert_eq!(state.transcript.len(), 1, "{label}");
@@ -157,21 +147,20 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
         &mut summary,
         completed_with(
             "k8s__list_pods",
-            "mcp",
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             r#"{"namespace":"prod"}"#,
             ToolOutcome {
-                success: true,
                 status: ToolStatus::Success,
-                result: r#"[{"name":"api-0","ns":"prod"}]"#.to_string(),
-                display: None,
-                error_kind: None,
+                payload: None,
+                text: r#"[{"name":"api-0","ns":"prod"}]"#.to_string(),
                 message: None,
+                kind: None,
             },
         ),
     );
     assert_eq!(summary.transcript.len(), 1);
     let entry = tool_entry_at(&summary, 0)?;
-    let summary_text = &entry.call.call_line.summary;
+    let summary_text = call_line_of(entry);
     assert!(summary_text.contains("namespace"));
     assert!(!summary_text.contains("api-0"));
     assert!(!summary_text.contains("[{"));
@@ -200,15 +189,14 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
             &mut state,
             completed_with(
                 name,
-                "builtin",
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 "{}",
                 ToolOutcome {
-                    success: true,
                     status: ToolStatus::Success,
-                    result: "ok".to_string(),
-                    display: None,
-                    error_kind: None,
+                    payload: None,
+                    text: "ok".to_string(),
                     message: None,
+                    kind: None,
                 },
             ),
         );
@@ -243,12 +231,12 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() -> Result<()> {
     // Finish out of order: each call gets its own status.
     state.tool.finish_tool_call(
         &mut state.transcript,
-        &ToolCallId::of("k8s__get_pod", r#"{"name":"api-1"}"#),
+        &ToolCallId::new("k8s__get_pod", r#"{"name":"api-1"}"#),
         Some(ToolStatus::Success),
     );
     state.tool.finish_tool_call(
         &mut state.transcript,
-        &ToolCallId::of("k8s__get_pod", r#"{"name":"api-0"}"#),
+        &ToolCallId::new("k8s__get_pod", r#"{"name":"api-0"}"#),
         Some(ToolStatus::Failed),
     );
     assert_eq!(tool_entry_at(&state, 0)?.status, ItemStatus::Failed);
@@ -276,15 +264,14 @@ fn cancelled_completed_renders_glyph_only() -> Result<()> {
             &mut state,
             completed_with(
                 "read",
-                "builtin",
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 r#"{"path":"/tmp/f"}"#,
                 ToolOutcome {
-                    success: false,
                     status: ToolStatus::Cancelled,
-                    result: String::new(),
-                    display: None,
-                    error_kind: None,
+                    payload: None,
+                    text: String::new(),
                     message: Some(reason.to_string()),
+                    kind: None,
                 },
             ),
         );
@@ -304,15 +291,14 @@ fn cancelled_completed_renders_glyph_only() -> Result<()> {
         &mut state,
         completed_with(
             "read",
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             r#"{"path":"/tmp/f"}"#,
             ToolOutcome {
-                success: false,
                 status: ToolStatus::Failed,
-                result: String::new(),
-                display: None,
-                error_kind: Some("tool_error".to_string()),
+                payload: None,
+                text: String::new(),
                 message: Some("boom".to_string()),
+                kind: Some(ToolErrorKind::Other),
             },
         ),
     );

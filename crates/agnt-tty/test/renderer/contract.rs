@@ -8,11 +8,12 @@ mod stderr;
 
 use std::sync::{Arc, Mutex};
 
-use agnt_core::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::renderer::UiRenderer;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use crate::renderer::{RenderInput, UiRenderer};
+use agnt_kernel::bus::NarrationEvent;
+use agnt_kernel::{
+    InferenceRecord, NoticeKind, PermissionRecord, SessionRecord, ToolCall, ToolOutcome,
+    ToolRecord, ToolStatus, TurnRecord, Usage,
+};
 
 use crate::policy::UiPolicy;
 
@@ -29,48 +30,65 @@ impl FakeRenderer {
     }
 
     fn events(&self) -> Vec<String> {
-        self.events.lock().expect("events").clone()
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
 impl UiRenderer for FakeRenderer {
-    fn emit(&mut self, event: &SystemEvent) {
-        let label = match event {
-            SystemEvent::InferenceStarted => "llm_start",
-            SystemEvent::Tick => "tick",
-            SystemEvent::InferenceCompleted { .. } => "llm_end",
-            SystemEvent::ToolStarted { .. } => "tool_start",
-            SystemEvent::ToolCompleted { .. } => "tool_end",
-            SystemEvent::PreviewRequested { .. } => "tool_preview",
-            SystemEvent::PermissionRequested { .. } => "permission_requested",
-            SystemEvent::PermissionDecisionSubmitted { .. } => "permission_decision_submitted",
-            SystemEvent::PermissionDecisionTimedOut { .. } => "permission_decision_timed_out",
-            SystemEvent::PermissionDecisionIgnored { .. } => "permission_decision_ignored",
-            SystemEvent::PermissionRequestCancelled { .. } => "permission_request_cancelled",
-            SystemEvent::PermissionAutoResolved { .. } => "permission_auto_resolved",
-            SystemEvent::SystemMessage {
-                kind: SystemKind::Warning,
+    fn draw(&mut self, input: RenderInput<'_>) {
+        let label = match input {
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started)) => "llm_start",
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Completed {
                 ..
-            } => "warning",
-            SystemEvent::SystemMessage {
-                kind: SystemKind::TurnError,
+            })) => "llm_end",
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Stopped { .. })) => {
+                "stopped"
+            }
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Chunk { .. })) => "chunk",
+            RenderInput::Record(SessionRecord::Tool(ToolRecord::Started { .. })) => "tool_start",
+            RenderInput::Record(SessionRecord::Tool(ToolRecord::Completed { .. })) => "tool_end",
+            RenderInput::Record(SessionRecord::Permission(PermissionRecord::Requested {
                 ..
-            } => "turn_error",
-            SystemEvent::CompactionStarted { .. } => "compaction_started",
-            SystemEvent::CompactionSummaryChunk { .. } => "compaction_summary_chunk",
-            SystemEvent::CompactionCompleted { .. } => "compaction_completed",
-            SystemEvent::CompactionFailed { .. } => "compaction_failed",
-            SystemEvent::InferenceChunk { .. } => "assistant_message",
-            SystemEvent::InferenceStopped { .. } => "stopped",
-            SystemEvent::TurnCompleted { .. } => "completed",
-            SystemEvent::KeyPressed { .. }
-            | SystemEvent::WheelScrolled { .. }
-            | SystemEvent::Resized { .. }
-            | SystemEvent::PermissionDecided { .. }
-            | SystemEvent::PromptSubmitted { .. }
-            | SystemEvent::CompactionRequested { .. } => "unrendered",
+            })) => "permission_requested",
+            RenderInput::Record(SessionRecord::Permission(PermissionRecord::Decided {
+                ..
+            })) => "permission_decision_submitted",
+            RenderInput::Record(SessionRecord::Permission(PermissionRecord::TimedOut {
+                ..
+            })) => "permission_decision_timed_out",
+            RenderInput::Record(SessionRecord::Permission(PermissionRecord::Ignored {
+                ..
+            })) => "permission_decision_ignored",
+            RenderInput::Record(SessionRecord::Permission(PermissionRecord::Cancelled {
+                ..
+            })) => "permission_request_cancelled",
+            RenderInput::Record(SessionRecord::Permission(PermissionRecord::AutoResolved {
+                ..
+            })) => "permission_auto_resolved",
+            RenderInput::Record(SessionRecord::Compaction(_)) => "compaction",
+            RenderInput::Record(SessionRecord::Session(_)) => "session",
+            RenderInput::Record(SessionRecord::Prompt(_)) => "prompt",
+            RenderInput::Record(SessionRecord::Notice(_)) => "notice",
+            RenderInput::Record(SessionRecord::Turn(TurnRecord::Completed { .. })) => "completed",
+            RenderInput::Narration(NarrationEvent::SystemMessage {
+                kind: NoticeKind::Warning,
+                ..
+            }) => "warning",
+            RenderInput::Narration(NarrationEvent::SystemMessage {
+                kind: NoticeKind::TurnError,
+                ..
+            }) => "turn_error",
+            RenderInput::Narration(NarrationEvent::InferenceChunk { .. }) => "assistant_message",
+            RenderInput::Narration(_) => "narration",
+            RenderInput::Lifecycle(_) => "lifecycle",
         };
-        self.events.lock().expect("events").push(label.to_string());
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(label.to_string());
     }
 
     fn flush(&mut self) {}
@@ -78,50 +96,59 @@ impl UiRenderer for FakeRenderer {
 
 fn tool_call(name: &str) -> ToolCall {
     ToolCall::new(
-        ToolName(name.to_string()),
-        "closure",
+        name,
+        agnt_runtime::tools::handler::ToolSource::Closure,
         "{}",
-        CallLine::from_json_summary("{}"),
     )
 }
 
+/// Draw one record through `renderer`, so every fixture reads the same.
+fn draw<R: UiRenderer>(renderer: &mut R, record: SessionRecord) {
+    renderer.draw(RenderInput::Record(&record));
+}
+
+/// Draw one narration datum through `renderer`.
+fn narrate<R: UiRenderer>(renderer: &mut R, event: NarrationEvent) {
+    renderer.draw(RenderInput::Narration(&event));
+}
+
 fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
-    renderer.emit(&SystemEvent::InferenceStarted);
-    renderer.emit(&SystemEvent::Tick);
-    renderer.emit(&SystemEvent::InferenceCompleted {
-        usage: Usage {
-            response_chars: 3,
-            tool_calls: 1,
-            input_tokens: 2,
-            output_tokens: 1,
-            total_tokens: Some(3),
-            cost: None,
-            cost_complete: false,
-        },
-    });
-    renderer.emit(&SystemEvent::ToolStarted {
-        call: tool_call("t"),
-    });
-    renderer.emit(&SystemEvent::ToolCompleted {
-        call: tool_call("t"),
-        outcome: ToolOutcome {
-            success: true,
-            status: ToolStatus::Success,
-            result: "ok".to_string(),
-            display: None,
-            error_kind: None,
-            message: None,
-        },
-    });
-    renderer.emit(&SystemEvent::TurnCompleted {
-        tool_calls: 1,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: None,
-        cost: None,
-        cost_complete: true,
-        duration_ms: 0,
-    });
+    draw(renderer, SessionRecord::Inference(InferenceRecord::Started));
+    draw(
+        renderer,
+        SessionRecord::Inference(InferenceRecord::Completed {
+            usage: Usage {
+                input_tokens: 2,
+                output_tokens: 1,
+                total_tokens: Some(3),
+                cost: None,
+                cost_complete: false,
+            },
+        }),
+    );
+    draw(
+        renderer,
+        SessionRecord::Tool(ToolRecord::Started {
+            call: tool_call("t"),
+        }),
+    );
+    draw(
+        renderer,
+        SessionRecord::Tool(ToolRecord::Completed {
+            call: tool_call("t"),
+            outcome: ToolOutcome {
+                status: ToolStatus::Success,
+                payload: None,
+                text: "ok".to_string(),
+                message: None,
+                kind: None,
+            },
+        }),
+    );
+    draw(
+        renderer,
+        SessionRecord::Turn(TurnRecord::Completed { duration_ms: 0 }),
+    );
     renderer.flush();
 }
 
@@ -136,7 +163,6 @@ fn renderer_is_substitutable_via_trait_boundary() {
         fake.events(),
         vec![
             "llm_start",
-            "tick",
             "llm_end",
             "tool_start",
             "tool_end",

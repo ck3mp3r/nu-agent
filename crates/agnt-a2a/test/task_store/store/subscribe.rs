@@ -10,9 +10,11 @@ async fn test_subscribe_receives_status_update() -> Result<()> {
         .update_status(&task.id, TaskState::Working, None)
         .map_err(|e| format!("{e:?}"))?;
 
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
-    assert!(event.is_ok(), "Should receive status update");
-    match event.unwrap().unwrap() {
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .map_err(|_| "should receive status update within 1s")?
+        .ok_or("should carry a status update event")?;
+    match event {
         TaskEvent::StatusChanged { status, .. } => {
             assert_eq!(status.state, TaskState::Working);
         }
@@ -39,9 +41,11 @@ async fn test_subscribe_receives_artifact_added() -> Result<()> {
         .add_artifact(&task.id, artifact.clone())
         .map_err(|e| format!("{e:?}"))?;
 
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
-    assert!(event.is_ok(), "Should receive artifact added event");
-    match event.unwrap().unwrap() {
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .map_err(|_| "should receive artifact added event within 1s")?
+        .ok_or("should carry an artifact added event")?;
+    match event {
         TaskEvent::ArtifactAdded { artifact: a, .. } => {
             assert_eq!(a.artifact_id, "art-1");
             assert_eq!(a.name, Some("result".to_string()));

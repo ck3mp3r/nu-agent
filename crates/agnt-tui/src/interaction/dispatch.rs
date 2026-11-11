@@ -1,8 +1,7 @@
-use agnt_core::protocol::event::PermissionDecision;
-use agnt_core::protocol::events::{Key, SystemEvent};
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use crate::{
-    interaction::{cancel::CancelController, input::TerminalEvent},
+    interaction::{cancel::CancelController, input::Key, input::TerminalEvent},
     state::{
         AppState, InfoPanel, InputMode, PANEL_PAGE_LINES, PickerKeyOutcome, ScrollAction,
         SubmitAction,
@@ -30,8 +29,8 @@ pub(crate) enum KeyLens {
     Scroll(ScrollAction),
     /// The picker resolved a submit action.
     PickerSubmit(SubmitAction),
-    /// The card's decision keys become a system event.
-    Event(Box<SystemEvent>),
+    /// The card's decision keys resolve a decision the reducer applies.
+    Decision(PermissionDecision),
     /// The panel lens resolves Ctrl-C to a quit.
     Quit,
     /// Escape that closes an info panel: the panel lens has closed itself and
@@ -156,15 +155,9 @@ fn rewrite_panel_key(state: &mut AppState, panel: InfoPanel, key: Key) -> KeyLen
 fn rewrite_card_key(state: &AppState, key: Key) -> KeyLens {
     let select = state.input.mode == InputMode::Visual;
     match key {
-        Key::Char('a') => KeyLens::Event(Box::new(SystemEvent::PermissionDecided {
-            decision: PermissionDecision::AllowOnce,
-        })),
-        Key::Char('A') => KeyLens::Event(Box::new(SystemEvent::PermissionDecided {
-            decision: PermissionDecision::AllowAlways,
-        })),
-        Key::Char('d') => KeyLens::Event(Box::new(SystemEvent::PermissionDecided {
-            decision: PermissionDecision::Deny,
-        })),
+        Key::Char('a') => KeyLens::Decision(PermissionDecision::AllowOnce),
+        Key::Char('A') => KeyLens::Decision(PermissionDecision::AllowAlways),
+        Key::Char('d') => KeyLens::Decision(PermissionDecision::Deny),
         Key::Up => KeyLens::Scroll(ScrollAction::LineUp { select }),
         Key::Down => KeyLens::Scroll(ScrollAction::LineDown { select }),
         Key::PageUp | Key::CtrlU => KeyLens::Scroll(ScrollAction::PageUp { select }),

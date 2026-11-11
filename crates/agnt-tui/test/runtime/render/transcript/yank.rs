@@ -1,8 +1,8 @@
 use super::*;
 use crate::state::InputMode;
 use crate::state::selection::TranscriptSelection;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
 
 /// The yank payload for a selection equals the rows the renderer displays for
 /// the same range — lane prefixes, separator blanks, and wrapped rows included.

@@ -149,11 +149,8 @@ fn tool_entry() -> TranscriptEntry {
         kind: ToolKind::Edit,
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "",
+            agnt_runtime::tools::handler::ToolSource::Unknown,
             r#"{"path":"src/main.rs"}"#,
-            CallLine {
-                summary: "→ src/main.rs".to_string(),
-            },
         ),
         preview: None,
         result: None,

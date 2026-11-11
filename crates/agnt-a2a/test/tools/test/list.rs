@@ -7,7 +7,7 @@ async fn test_handle_tasks_list_with_local_store() -> Result<()> {
     store.create_task(None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -36,7 +36,7 @@ async fn test_handle_tasks_list_with_local_store_filtered() -> Result<()> {
     store.create_task(None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -66,7 +66,7 @@ async fn test_handle_tasks_list_with_local_store_filtered_auth_required() -> Res
     store.create_task(None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -99,7 +99,7 @@ async fn test_handle_tasks_list_invalid_status_returns_error() -> Result<()> {
     store.create_task(None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -130,7 +130,7 @@ async fn test_handle_tasks_list_no_status_returns_all() -> Result<()> {
     store.create_task(None, None, None);
 
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: Some(store),
@@ -152,7 +152,7 @@ async fn test_handle_tasks_list_no_status_returns_all() -> Result<()> {
 #[tokio::test]
 async fn test_handle_tasks_list_no_store() -> Result<()> {
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: None,

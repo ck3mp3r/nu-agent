@@ -1,12 +1,14 @@
 use super::*;
 use serde_json::json;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ---------------------------------------------------------------------------
 // Message
 // ---------------------------------------------------------------------------
 
 #[test]
-fn message_roundtrip() {
+fn message_roundtrip() -> Result<()> {
     let msg = Message {
         role: Role::User,
         parts: vec![
@@ -25,7 +27,7 @@ fn message_roundtrip() {
         metadata: None,
     };
 
-    let json = serde_json::to_value(&msg).expect("serialize");
+    let json = serde_json::to_value(&msg)?;
     assert_eq!(json["role"], "ROLE_USER");
     assert_eq!(json["parts"][0]["text"], "Hello");
     assert!(
@@ -34,15 +36,16 @@ fn message_roundtrip() {
     );
     assert_eq!(json["parts"][1]["data"]["mediaType"], "application/json");
 
-    let back: Message = serde_json::from_value(json).expect("deserialize");
+    let back: Message = serde_json::from_value(json)?;
     assert_eq!(back, msg);
+    Ok(())
 }
 
 #[test]
-fn message_exact_json() {
+fn message_exact_json() -> Result<()> {
     let json_str =
         r#"{"role":"ROLE_AGENT","parts":[{"type":"text","text":"Sure!"}],"messageId":"msg-1"}"#;
-    let msg: Message = serde_json::from_str(json_str).expect("deserialize");
+    let msg: Message = serde_json::from_str(json_str)?;
     assert_eq!(msg.role, Role::Agent);
     assert_eq!(msg.parts.len(), 1);
     assert_eq!(msg.message_id, "msg-1");
@@ -52,4 +55,5 @@ fn message_exact_json() {
             text: "Sure!".to_string()
         }
     );
+    Ok(())
 }

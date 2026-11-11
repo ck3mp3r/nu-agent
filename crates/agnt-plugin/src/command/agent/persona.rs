@@ -1,11 +1,11 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::LabeledError;
 
-use agnt_core::config::{AgentsConfig, Config};
-use agnt_core::tools::authz::PermissionsOverlay;
+use agnt_runtime::config::{AgentsConfig, Config};
+use agnt_runtime::tools::authz::PermissionsOverlay;
 
 pub(crate) struct PersonaResolution {
-    pub(crate) persona: Option<agnt_core::protocol::persona::ParsedPersona>,
+    pub(crate) persona: Option<agnt_runtime::protocol::persona::ParsedPersona>,
     /// The persona slug: the `--agent` value (or the configured default) when a
     /// persona loaded, `None` otherwise. This is the value hook envelopes carry
     /// as `agent`; it is not the front-matter display name.
@@ -22,7 +22,7 @@ pub(crate) fn resolve_persona(
     call: &EvaluatedCall,
     config: &mut Config,
 ) -> Result<PersonaResolution, LabeledError> {
-    use agnt_core::protocol::persona::{
+    use agnt_runtime::protocol::persona::{
         FrontMatterParser, FsPersonaResolver, PersonaFileResolver, PulldownCmarkFrontMatterParser,
         interpret_front_matter,
     };
@@ -31,7 +31,7 @@ pub(crate) fn resolve_persona(
     // 1. CLI --agent flag provided → validate it's not a disabled built-in
     // 2. No CLI flag → resolve from config default/fallback
     let effective_agent_name = if let Some(name) = agent_name {
-        if agnt_core::protocol::persona::builtins::is_builtin_persona(&name)
+        if agnt_runtime::protocol::persona::builtins::is_builtin_persona(&name)
             && !agents_config.is_builtin_enabled(&name)
         {
             return Err(LabeledError::new(format!(

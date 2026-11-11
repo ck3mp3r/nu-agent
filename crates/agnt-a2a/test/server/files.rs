@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_file_upload_and_download_roundtrip() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Upload a file
     let file_content = b"hello, a2a file exchange!";
@@ -10,11 +10,10 @@ async fn test_file_upload_and_download_roundtrip() -> Result<()> {
         .post(format!("{}/files:upload", server.local_url))
         .body(file_content.to_vec())
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(upload_resp.status(), 200);
 
-    let upload_body: serde_json::Value = upload_resp.json().await.unwrap();
+    let upload_body: serde_json::Value = upload_resp.json().await?;
     let file_id = upload_body["id"]
         .as_str()
         .ok_or("should have file id")?
@@ -34,11 +33,10 @@ async fn test_file_upload_and_download_roundtrip() -> Result<()> {
     let download_resp = client
         .get(format!("{}/files/{}", server.local_url, file_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(download_resp.status(), 200);
 
-    let downloaded = download_resp.bytes().await.unwrap();
+    let downloaded = download_resp.bytes().await?;
     assert_eq!(
         downloaded.as_ref(),
         file_content,
@@ -50,31 +48,30 @@ async fn test_file_upload_and_download_roundtrip() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_file_download_not_found() {
-    let (server, client) = test_server().await;
+async fn test_file_download_not_found() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .get(format!("{}/files/nonexistent-id", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 404, "non-existent file should return 404");
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_file_upload_multiple_files() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Upload two files
     let resp1 = client
         .post(format!("{}/files:upload", server.local_url))
         .body(b"file one content".to_vec())
         .send()
-        .await
-        .unwrap();
-    let body1: serde_json::Value = resp1.json().await.unwrap();
+        .await?;
+    let body1: serde_json::Value = resp1.json().await?;
     let id1 = body1["id"]
         .as_str()
         .ok_or("should have file id")?
@@ -84,9 +81,8 @@ async fn test_file_upload_multiple_files() -> Result<()> {
         .post(format!("{}/files:upload", server.local_url))
         .body(b"file two content".to_vec())
         .send()
-        .await
-        .unwrap();
-    let body2: serde_json::Value = resp2.json().await.unwrap();
+        .await?;
+    let body2: serde_json::Value = resp2.json().await?;
     let id2 = body2["id"]
         .as_str()
         .ok_or("should have file id")?
@@ -98,21 +94,17 @@ async fn test_file_upload_multiple_files() -> Result<()> {
     let dl1 = client
         .get(format!("{}/files/{}", server.local_url, id1))
         .send()
-        .await
-        .unwrap()
+        .await?
         .bytes()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(dl1.as_ref(), b"file one content");
 
     let dl2 = client
         .get(format!("{}/files/{}", server.local_url, id2))
         .send()
-        .await
-        .unwrap()
+        .await?
         .bytes()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(dl2.as_ref(), b"file two content");
 
     server.shutdown().await;

@@ -1,6 +1,6 @@
 //! MCP merge and MCP tool-definition mapping tests for `build_acp_runtime()`.
 
-use agnt_core::tools::mcp::client::McpToolDefinition;
+use agnt_runtime::tools::mcp::client::McpToolDefinition;
 
 use super::runtime_support::*;
 use super::*;
@@ -67,7 +67,7 @@ async fn test_runtime_build_acp_runtime_client_mcp_server_wins_on_collision() ->
     ))
     .await
     .map_err(|e| format!("should build runtime: {e:?}"))?;
-    let projection = runtime.mcp_state.mcp_lifecycle_projection();
+    let projection = runtime.mcp_lifecycle_projection();
 
     // -- Check
     assert_eq!(

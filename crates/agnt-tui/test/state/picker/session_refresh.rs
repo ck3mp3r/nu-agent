@@ -1,46 +1,32 @@
 use super::*;
 
-/// Opening the session picker queues a refresh request that drains as a
-/// `RefreshSessionPicker` orchestrator event.
+/// Opening the session picker queues the refresh hand the orchestrator answers.
 #[test]
 fn test_picker_session_refresh_emits_on_open() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let cancel_controller = CancelController::default();
 
     // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(
-        SharedUiAction::Sessions,
-    ));
-    let events = state.take_pending_events(&cancel_controller);
+    open_shared_ui_action(&mut state, SharedUiAction::Sessions);
 
-    // -- Check
-    assert_eq!(refresh_event_count(&events), 1);
+    // -- Check: the refresh hand is waiting.
+    assert!(state.take_next_session_picker_refresh_request().is_some());
     Ok(())
 }
 
-/// Two opens before a single drain still produce exactly one refresh event.
+/// Two opens before a single drain still produce exactly one refresh hand.
 #[test]
 fn test_picker_session_refresh_dedups_before_drain() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let cancel_controller = CancelController::default();
 
     // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(
-        SharedUiAction::Sessions,
-    ));
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(
-        SharedUiAction::Sessions,
-    ));
-    let events = state.take_pending_events(&cancel_controller);
+    open_shared_ui_action(&mut state, SharedUiAction::Sessions);
+    open_shared_ui_action(&mut state, SharedUiAction::Sessions);
 
-    // -- Check
-    assert_eq!(refresh_event_count(&events), 1);
-
-    // -- Exec & Check: the flag is cleared by the drain.
-    let drained_again = state.take_pending_events(&cancel_controller);
-    assert_eq!(refresh_event_count(&drained_again), 0);
+    // -- Check: one hand, and the flag is cleared by the drain.
+    assert!(state.take_next_session_picker_refresh_request().is_some());
+    assert!(state.take_next_session_picker_refresh_request().is_none());
     Ok(())
 }
 
@@ -49,29 +35,22 @@ fn test_picker_session_refresh_dedups_before_drain() -> Result<()> {
 fn test_picker_session_refresh_ignores_other_actions() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let cancel_controller = CancelController::default();
 
     // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models));
-    let events = state.take_pending_events(&cancel_controller);
+    open_shared_ui_action(&mut state, SharedUiAction::Models);
 
     // -- Check
-    assert_eq!(refresh_event_count(&events), 0);
+    assert!(state.take_next_session_picker_refresh_request().is_none());
     Ok(())
 }
 
 // region:    --- Test Support
 
-fn refresh_event_count(events: &[OrchestratorEvent]) -> usize {
-    events
-        .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                OrchestratorEvent::UiRequest(UiRequest::RefreshSessionPicker)
-            )
-        })
-        .count()
+/// Fold one shared UI action through the control fold and apply the launch it
+/// queues, exactly as the live surface does.
+fn open_shared_ui_action(state: &mut AppState, action: SharedUiAction) {
+    fold_control(state, &ControlCommand::SharedUiAction { action });
+    state.drain_launch_requests();
 }
 
 // endregion: --- Test Support

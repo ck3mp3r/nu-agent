@@ -14,9 +14,17 @@ pub(super) fn push_user_line(state: &mut AppState, text: impl Into<String>) {
     state.transcript.push_entry(entry);
 }
 
-/// Fold one `SystemEvent` through the boundary shim and the reducer.
-pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
-    reduce(state, event, None)
+/// Fold one stream record through the reducer, exactly as the render loop does.
+pub(super) fn reduce_ui(state: &mut AppState, record: SessionRecord) -> bool {
+    reduce(state, RenderInput::Record(&record), None)
+}
+
+/// Fold one narration event through the reducer, exactly as the render loop does.
+pub(super) fn reduce_narration(
+    state: &mut AppState,
+    event: agnt_runtime::protocol::events::NarrationEvent,
+) -> bool {
+    reduce(state, RenderInput::Narration(&event), None)
 }
 
 pub(super) fn assert_reducer_invariants(state: &AppState) {
@@ -51,33 +59,14 @@ pub(super) fn pending_prompt_ids(state: &AppState) -> Vec<u64> {
 
 /// Open a permission card on the state, as a `PermissionRequested` event would.
 pub(super) fn open_permission_card(state: &mut AppState) {
-    state
-        .permission
-        .open_prompt(crate::state::PermissionPrompt {
-            request_id: "ask-0000000000000001".to_string(),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            tool: "nu".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            scope: "nested".to_string(),
-            pattern: "*".to_string(),
-            target_field: Some("command".to_string()),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-        });
+    state.permission.open_prompt("ask-0000000000000001");
 }
 
 pub(super) fn busy_state_with_clean_transcript() -> AppState {
     let mut state = AppState::default();
-    reduce(
-        &mut state,
-        SystemEvent::PromptSubmitted {
-            text: "run".to_string(),
-            stamp_millis: None,
-            stamp_model: None,
-            stamp_agent: None,
-        },
-        None,
-    );
+    // A running turn starts at the surface's own submit lane: the record fold
+    // places rows and never submits, so the queue is what carries the prompt.
+    state.enqueue_prompt("run".to_string());
     let _ = state.activate_next_prompt();
     state.transcript.clear();
     // Simulate handle_llm_start which sets the lock

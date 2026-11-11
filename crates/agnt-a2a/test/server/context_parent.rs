@@ -1,8 +1,8 @@
 use super::*;
 
 #[tokio::test]
-async fn test_tasks_send_with_context_id() {
-    let (server, client) = test_server().await;
+async fn test_tasks_send_with_context_id() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -11,21 +11,21 @@ async fn test_tasks_send_with_context_id() {
             "contextId": "ctx-123"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["contextId"], "ctx-123",
         "contextId should be stored"
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_tasks_send_without_context_id_mints_uuid() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -33,10 +33,9 @@ async fn test_tasks_send_without_context_id_mints_uuid() -> Result<()> {
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         !body["task"]["contextId"].is_null(),
         "contextId must not be null when omitted, got: {body}"
@@ -55,7 +54,7 @@ async fn test_tasks_send_without_context_id_mints_uuid() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_stream_without_context_id_mints_uuid() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -63,8 +62,7 @@ async fn test_send_stream_without_context_id_mints_uuid() -> Result<()> {
             "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // Wait for the streamed task to become visible via GET /tasks.
     let task_id = wait_for_task_in_state(
@@ -79,8 +77,7 @@ async fn test_send_stream_without_context_id_mints_uuid() -> Result<()> {
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // Read the SSE body (stream should close after the cancel event)
     let body = tokio::time::timeout(Duration::from_secs(5), resp.bytes())
@@ -111,8 +108,8 @@ async fn test_send_stream_without_context_id_mints_uuid() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_tasks_send_with_parent_task_id() {
-    let (server, client) = test_server().await;
+async fn test_tasks_send_with_parent_task_id() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -121,21 +118,21 @@ async fn test_tasks_send_with_parent_task_id() {
             "parentTaskId": "parent-456"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["parentTaskId"], "parent-456",
         "parentTaskId should be stored"
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_tasks_send_with_context_and_parent() {
-    let (server, client) = test_server().await;
+async fn test_tasks_send_with_context_and_parent() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -145,10 +142,9 @@ async fn test_tasks_send_with_context_and_parent() {
             "parentTaskId": "parent-456"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["contextId"], "ctx-123",
         "contextId should be stored"
@@ -159,4 +155,5 @@ async fn test_tasks_send_with_context_and_parent() {
     );
 
     server.shutdown().await;
+    Ok(())
 }

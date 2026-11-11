@@ -79,6 +79,10 @@ mod status_test;
 mod tool_test;
 
 #[cfg(test)]
+#[path = "../../test/state/tool_call_line.rs"]
+mod tool_call_line_test;
+
+#[cfg(test)]
 #[path = "../../test/state/llm.rs"]
 mod llm_test;
 

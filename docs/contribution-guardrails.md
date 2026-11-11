@@ -59,7 +59,7 @@ Security rationale:
 - `Builtin` tools are read-only (`read`, `skill`) — they carry no filesystem mutation risk and bypassing permissions keeps overhead low for safe operations.
 - `BuiltinFs` tools (`edit`) mutate the filesystem and must be subject to the same permission policy as MCP/closure tools. They are not implicitly trusted even though they are built-in.
 
-See `crates/agnt-core/src/tools/handler/types.rs` (`ToolSource`) and `crates/agnt-core/src/tools/handler/authz_gate.rs` for the enforcement point.
+See `crates/agnt-runtime/src/tools/handler/types.rs` (`ToolSource`) and `crates/agnt-runtime/src/tools/handler/authz_gate.rs` for the enforcement point.
 
 ## 4) Tool/authz architecture direction
 
@@ -70,22 +70,21 @@ Keep handler dependencies one-way:
 - `pre_authorize` is side-effect free preview/context generation.
   - The `nu` tool has a pre-authorize preview: the command renders as a code block (language `nu`) in the tool entry's display slot, built from the tool-call arguments alone (cwd-free, zero side effects). The call line shows only the tool name plus the applied timeout (`⏱ {timeout}s`, 120s when omitted) — never the command, a background, or a margin row. The preview is not a second block: the tool entry carries `preview` (the gate display) and `result` (the completion display), and the render reads one unified slot, `result.or(preview)`. The preview shows while the call is pending; the completion display takes over at completion; the preview persists when the completion carries no display. A display that carries code or diff content paints on the code surface, whose single padding row above and below sits inside the entry's own rect. The entry itself carries no blank margin rows — the frame planner owns the pair spacing.
   - The `edit` preview is built from tool-call arguments plus a planned diff of the target file (no writes). A plan that would not change the file (no-op or version conflict) produces no preview — there is no diff to approve. The interactive resolver (`InteractivePermissionResolver`) populates `AskContext.pre_authorize_display` for edit and nu Builtin calls; the TTY/`NoOpAskHook` path renders nothing.
-- `builtin_kinds` owns builtin tool name parsing and classification.
-- `fs` owns builtin filesystem tool dispatch contracts.
-- `result` owns output/failure shaping.
+- `BuiltinKind` (`agnt-kernel`) owns builtin tool name parsing and classification; `builtin_tool` maps each kind to its tool.
+- `builtin_tool` owns the builtin dispatch adapter: output truncation, and failure shaping through `types::execution_error_for_kind`.
 - `types` owns shared data model types.
 
 Source:
 
-- Facade/wiring: `crates/agnt-core/src/tools/handler/mod.rs`
-- Submodules: `crates/agnt-core/src/tools/handler/{dispatch,authz_gate,pre_authorize,builtin_kinds,fs,result,types}.rs`
-- Module contract tests: `crates/agnt-core/src/tools/handler/authz_gate_test.rs`, `dispatch_test.rs`
+- Facade/wiring: `crates/agnt-runtime/src/tools/handler/mod.rs`
+- Submodules: `crates/agnt-runtime/src/tools/handler/{dispatch,authz_gate,pre_authorize,builtin_tool,resolve,types}.rs`
+- Module contract tests: `crates/agnt-runtime/test/tools/handler/authz_gate.rs`, `dispatch.rs`
 
 ## 5) Contributor checklist: adding new tools or permission UX
 
 Before code:
 
-- [ ] Confirm tool source classification and ownership boundary (`dispatch` vs `builtin_kinds`/`fs` vs MCP); see ToolSource taxonomy table (section 3) for correct variant.
+- [ ] Confirm tool source classification and ownership boundary (`dispatch` vs `builtin_tool`/`authz_gate` vs MCP); see ToolSource taxonomy table (section 3) for correct variant.
 - [ ] Confirm permission DSL mapping and precedence impact (`*` -> tool -> nested field rule).
 - [ ] Confirm whether pre-authorize preview is required and remains zero-write.
   - Zero-write rule for the `edit` preview: built from the tool-call arguments plus a planned diff of the target file; no file writes occur before approval. The `nu` preview is built from the tool-call arguments alone — no process spawn, no filesystem access.
@@ -100,43 +99,32 @@ During code:
 Tests/docs before review:
 
 - [ ] Add/adjust focused tests in:
-  - `crates/agnt-core/src/tools/handler/authz_gate_test.rs`
-  - `crates/agnt-core/src/tools/handler/dispatch_test.rs`
-  - `crates/agnt-core/src/protocol/permission_test.rs`
-  - `crates/agnt-tui/src/runtime/test.rs`
+  - `crates/agnt-runtime/test/tools/handler/authz_gate.rs`
+  - `crates/agnt-runtime/test/tools/handler/dispatch.rs`
+  - `crates/agnt-runtime/test/hook/permission_resolver.rs`
+  - `crates/agnt-tui/test/runtime/test.rs`
 - [ ] Update `docs/usage.md` when user-visible behavior changes.
 - [ ] Update this page when introducing/relaxing guardrails.
 
 ## 6) Bus channel topology and UI event dispatch
+`Bus` (`crates/agnt-runtime/src/bus/hub.rs`) exposes these channels, and only these:
 
-`Bus` (`crates/agnt-core/src/bus/hub.rs`) exposes these channels:
-
-| Channel | Event type | Role |
+| Channel | Payload | Role |
 |---|---|---|
-| `ui_event` | `UiEvent` | **Single channel for UI-facing events.** All tool, LLM, warning, permission, compaction, and turn-completion events reach the TUI here. |
-| `ui_state` | `UiStateEvent` | UI chrome state (model identity, MCP status, context window). |
-| `turn` | `TurnEvent` | Control-plane turn lifecycle: `Started` and `TaskCompleted` (A2A). |
-| `cancel` | `CancelEvent` | Cancellation requests. |
-| `compaction` | `CompactionEvent` | Compaction lifecycle. |
-| `session` | `SessionEvent` | Session lifecycle. |
-| `external` | `ExternalEvent` | External (A2A) prompt intake. |
+| `stream` | `SessionRecord` | Ordered session record log. Publish order equals receive order; lossy under lag; no durable history. |
+| `cancel` | `CancelEvent` | Cancellation requests. Never dropped. |
+| `control` | `ControlCommand` | Commands addressed to the loop owner. Never dropped; one owner per command. |
+| `lifecycle` | `LifecycleEvent` | The turn spine, the session sequence, and the compaction sequence. Never dropped. |
+| `narration` | `NarrationEvent` | Text for a human. Order-critical with an oldest-droppable tail. |
+| `facts` | `FactRecord` | Latest-wins state snapshots, whole value per field family. |
 
-The typed event enums `ToolEvent`, `LlmEvent`, `WarningEvent`, and `PermissionEvent`
-(`crates/agnt-core/src/bus/events.rs`) are **not bus channels**. They are internal
-dispatch types in the TUI state layer. `dispatch_ui_event`
-(`crates/agnt-tui/src/interaction/reducer.rs`) reconstructs them from `UiEvent`
-fields and passes them to the domain reducers (`dispatch_tool_event`,
-`dispatch_llm_event`, `dispatch_turn_event`, `status.reduce_warning_event`,
-`permission.reduce_permission_event`).
+The delivery contract of each channel (capacity, drop policy, ordering, late-subscriber rule) is `docs/bus-channels.md`. A channel is chosen by what happens when it runs ahead of its consumers.
 
-Permission display flows through `dispatch_ui_event`, not the render loop:
+Permission display flows through the record, not a dedicated channel:
 
-- `UiEvent::PermissionRequested` is handled in `dispatch_ui_event`, which calls
-  `apply_permission_request_display` and then `permission.reduce_permission_event`.
-- The render loop only reads the resulting state; it does not subscribe to a
-  dedicated permission channel.
-- `InteractivePermissionResolver` publishes `UiEvent::PermissionRequested` on
-  `bus.ui_event()` and awaits the decision on a oneshot channel.
+- `InteractivePermissionResolver` mints one gate value on two concerns: `PermissionRecord::Requested` on `stream` and the same record as the `facts` snapshot. It awaits the decision on a oneshot channel and subscribes to `cancel` before it publishes.
+- The card is drawn from the record: `shows_preview` says whether the call has a content slot, and `preview` carries only the content the producer alone can compute (an edit's proposed diff). A call whose content the drawer derives from its arguments — a `nu` command — carries `preview: None`, and the drawer draws the slot from the arguments. Never fabricate content in the record.
+- A policy decision that opened no card rides `PermissionRecord::AutoResolved`; a denial's diff rides its `preview`.
+- The viewport and sticky-control invariants in §2 still hold: the card is an inline block in the transcript, and a card never moves the sticky controls.
 
-Do not add per-category bus channels for tool, LLM, warning, or permission events.
-Route them through `ui_event`.
+Do not add per-category bus channels for tool, LLM, warning, or permission events. Tool and inference records belong on `stream`; warnings belong on `narration`.

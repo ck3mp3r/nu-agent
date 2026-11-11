@@ -1,28 +1,37 @@
 //! Permission bridge between nu-agent's permission flow and ACP
 //! `session/request_permission`.
 //!
-//! nu-agent publishes `SystemEvent::PermissionRequested` on the session bus and
+//! nu-agent publishes `PermissionRecord::Requested` on the session stream and
 //! awaits the decision on a oneshot registered in `PendingPermissions`. In ACP
 //! mode the editor is the permission UI: the bridge forwards the request to the
 //! client as `session/request_permission`, maps the client's outcome to a
 //! `PermissionDecision`, and resolves the pending oneshot.
+//!
+//! The bridge reads the request record directly. The record is the source: its
+//! `call_id` is the call identity, its `shows_preview`/`preview` carry the
+//! content only the producer could compute, and no intermediate view type
+//! exists.
 
 // region:    --- Modules
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::sync::{MutexGuard, PoisonError};
 
 use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     SessionId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::UiEventTx;
-use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
-use agnt_core::protocol::events::{RequestId, SystemEvent};
+use agnt_kernel::{PermissionRecord, ToolCall};
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::bus::{ControlCommand, ControlTx, OneshotTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::tools::handler::ToolSource;
 
-use crate::error::Result;
+use crate::error::{AcpError, Result};
 use crate::translator::content_from_display;
 
 // endregion: --- Modules
@@ -90,7 +99,7 @@ pub struct AcpPermissionBridge<S: PermissionRequestSink> {
     session_id: String,
     pending: PendingPermissions,
     denied: HashSet<String>,
-    ui_events: Option<UiEventTx>,
+    control: Option<ControlTx>,
 }
 
 // endregion: --- Types
@@ -106,58 +115,67 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             session_id: session_id.into(),
             pending,
             denied: HashSet::new(),
-            ui_events: None,
+            control: None,
         }
     }
 
-    /// Publish ignored decisions on `ui_events`.
+    /// Announce the surface's decision on `control`.
     ///
-    /// Without this builder the bridge stays silent: a decision for a request
-    /// that is no longer pending is dropped, as it was before the event
-    /// existed.
-    pub fn with_ui_events(mut self, ui_events: UiEventTx) -> Self {
-        self.ui_events = Some(ui_events);
+    /// Without this builder the bridge stays silent: the decision still
+    /// resolves the pending wait, it is just not announced.
+    pub fn with_control(mut self, control: ControlTx) -> Self {
+        self.control = Some(control);
         self
     }
 
-    /// Ask the client to authorize the tool call described by `context` and
-    /// resolve the pending decision registered under `request_id`.
+    /// Ask the client to authorize the call described by `requested` and
+    /// resolve the pending decision registered under its request id.
     ///
-    /// A `tool_key` already in the deny set is denied without asking the
-    /// client: the user chose "reject always" for it earlier in the session.
+    /// A call key already in the deny set is denied without asking the client:
+    /// the user chose "reject always" for it earlier in the session.
     pub async fn handle_permission_request(
         &mut self,
-        request_id: &str,
-        context: PermissionRequestContext,
+        requested: &PermissionRecord,
     ) -> Result<PermissionDecision> {
-        let decision = if self.denied.contains(&context.tool_key) {
+        let PermissionRecord::Requested {
+            request_id,
+            call_id,
+            summary,
+            shows_preview,
+            preview,
+            ..
+        } = requested
+        else {
+            return Err(AcpError::Runtime(
+                "permission bridge received a record that opens no card".to_string(),
+            ));
+        };
+        let call_key = call_id.as_str();
+        let decision = if self.denied.contains(call_key) {
             PermissionDecision::Deny
         } else {
             let options = build_permission_options();
-            let tool_call = build_tool_call(&context);
+            let tool_call = build_tool_call(summary, call_key, *shows_preview, preview.as_deref());
             let outcome = self
                 .sink
                 .send_request(&self.session_id, tool_call, options)
                 .await;
             let decision = map_outcome_to_decision(&outcome);
             if is_reject_always(&outcome) {
-                self.denied.insert(context.tool_key.clone());
+                self.denied.insert(call_key.to_string());
             }
             decision
         };
-        if let Some(tx) = self.pending.lock().unwrap().remove(request_id) {
+        if let Some(tx) = self.lock_pending().remove(request_id.as_str()) {
             let _ = tx.send(decision);
-        } else if let Some(ui_events) = &self.ui_events {
-            // The request timed out, was cancelled, or was already resolved.
-            // The decision is dropped, so publish the drop to make it
-            // observable. The payload carries no decision: correlate with the
-            // earlier `permission_requested` event by `request_id`.
-            let _ = ui_events
-                .send(SystemEvent::PermissionDecisionIgnored {
-                    request_id: RequestId::new(request_id),
-                    reason: REASON_REQUEST_NOT_PENDING.to_string(),
-                })
-                .await;
+        } else if let Some(control) = &self.control {
+            // The wait is gone: the request timed out, was cancelled, or was
+            // already resolved. The surface still answered, so announce the
+            // decision — the record carries the request id it belongs to.
+            let _ = control.publish(ControlCommand::PermissionDecided {
+                request_id: request_id.clone(),
+                decision,
+            });
         }
         Ok(decision)
     }
@@ -174,22 +192,21 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
     /// [`Self::handle_permission_request`] are gone from the map and are left
     /// untouched.
     pub fn deny_all_pending(&mut self) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         for (_, tx) in pending.drain() {
             let _ = tx.send(PermissionDecision::Deny);
         }
+    }
+
+    /// The pending-request map, recovered if a submitter panicked mid-insert.
+    fn lock_pending(&self) -> MutexGuard<'_, HashMap<String, OneshotTx<PermissionDecision>>> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 // endregion: --- AcpPermissionBridge Impl
 
 // region:    --- Support
-
-/// The only reason a submitted decision is ignored in v1.
-///
-/// The bridge cannot tell a timeout from a cancel from an already-resolved
-/// request, so the reason set is closed at this one value.
-const REASON_REQUEST_NOT_PENDING: &str = "request_not_pending";
 
 /// Option id for "allow this call once".
 const OPTION_ALLOW_ONCE: &str = "allow-once";
@@ -228,16 +245,28 @@ fn build_permission_options() -> Vec<PermissionOption> {
 
 /// Build the tool-call update the client renders next to the prompt.
 ///
-/// The permission event carries no ACP tool-call id, so the exact call key is
-/// used as the id: it is unique per call within a session.
-fn build_tool_call(context: &PermissionRequestContext) -> ToolCallUpdate {
+/// The record carries the exact call key; the client renders it as the ACP
+/// tool-call id, which is unique per call within a session. The card's content
+/// is drawn only when the record says the call has one, and only from the
+/// content the producer supplied: the drawer never fabricates it.
+fn build_tool_call(
+    summary: &str,
+    call_key: &str,
+    shows_preview: bool,
+    preview: Option<&str>,
+) -> ToolCallUpdate {
     let mut fields = ToolCallUpdateFields::new()
-        .title(context.summary.clone())
+        .title(summary.to_string())
         .status(ToolCallStatus::Pending);
-    if let Some(display) = &context.pre_authorize_display {
-        fields = fields.content(content_from_display(display));
+    let (name, arguments) = call_key.split_once('\n').unwrap_or((call_key, ""));
+    let call = ToolCall::new(ToolName(name.to_string()), ToolSource::Unknown, arguments);
+    if shows_preview && let Some(display) = call.preview_body(preview) {
+        let content = content_from_display(&display);
+        if !content.is_empty() {
+            fields = fields.content(content);
+        }
     }
-    ToolCallUpdate::new(context.tool_key.clone(), fields)
+    ToolCallUpdate::new(call_key.to_string(), fields)
 }
 
 /// Map the client's outcome to a nu-agent decision.

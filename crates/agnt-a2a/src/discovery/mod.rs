@@ -1,5 +1,4 @@
 pub mod browser;
-pub mod card;
 pub mod filter;
 pub mod mdns_discovery;
 pub mod service;
@@ -22,10 +21,6 @@ mod logic_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/discovery/test.rs"]
 mod test;
-
-#[cfg(test)]
-#[path = "../../test/discovery/mdns_discovery.rs"]
-mod mdns_discovery_test;
 
 #[cfg(test)]
 #[path = "../../test/discovery/impl_enum.rs"]

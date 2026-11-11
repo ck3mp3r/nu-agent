@@ -7,9 +7,10 @@
 //! backends carry the same rows and differ only in decoration. The
 //! cross-backend golden test pins that agreement.
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::{ContentLine, MessageRole, NoticeKind, Span, StyleHint};
-use agnt_core::transcript::markdown::{render_markdown_lines, rendered_line_to_plain_text};
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::{ContentLine, MessageRole, NoticeKind, Span, StyleHint};
+use agnt_render::transcript::markdown::{render_markdown_lines, rendered_line_to_plain_text};
 use agnt_render::{RenderBackend, RowRect, Theme};
 
 use crate::ansi::style_text;
@@ -159,15 +160,14 @@ fn content_lines(entry: &TranscriptEntry, width: usize) -> Vec<ContentLine> {
         }
         TranscriptEntry::Tool(tool) => {
             let name = tool.call.name.0.as_str();
-            let summary = tool.call.call_line.summary.as_str();
+            let call_line = tool.call.call_line();
+            let summary = call_line.as_str();
             let mut spans = Vec::new();
             if name.is_empty() {
                 spans.push(Span::new(summary.to_string(), StyleHint::Muted));
             } else {
                 spans.push(Span::new(name.to_string(), StyleHint::Emphasis));
-                if !summary.is_empty() {
-                    spans.push(Span::new(format!(" {summary}"), StyleHint::Muted));
-                }
+                spans.push(Span::new(format!(" {summary}"), StyleHint::Muted));
             }
             let mut lines = vec![ContentLine::from_spans(spans)];
             if let Some(display) = tool.result.as_ref().or(tool.preview.as_ref()) {

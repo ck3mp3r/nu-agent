@@ -1,4 +1,4 @@
-use agnt_core::config::{ModelSpec, ModelsCache};
+use agnt_runtime::config::{ModelSpec, ModelsCache};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Span, SyntaxShape, Value};
 
@@ -49,7 +49,7 @@ impl SimplePluginCommand for AgentModelsList {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
             .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
         let cache = ModelsCache::load_from(&paths.models_cache_path).map_err(|e| {
             LabeledError::new(format!(

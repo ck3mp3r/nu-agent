@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn test_handle_agent_list_empty() -> Result<()> {
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard::default(),
         task_store: None,
@@ -25,7 +25,7 @@ async fn test_handle_agent_list_empty() -> Result<()> {
 async fn test_handle_agent_list_with_peers() -> Result<()> {
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::default()),
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -66,7 +66,7 @@ async fn test_handle_agent_list_with_peers() -> Result<()> {
 async fn test_handle_agent_get_card_not_found() {
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::default()),
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,

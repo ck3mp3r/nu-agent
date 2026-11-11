@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use agnt_core::protocol::event::PermissionDecision;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_kernel::{PermissionRecord, SessionRecord};
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -11,24 +11,37 @@ use crate::translator::{drain_receiver_to_notifications, run_turn_with_notificat
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Publish one permission card on the stream concern.
+fn publish_card(bus: &agnt_runtime::bus::Bus, card: &PermissionRecord) -> Result<()> {
+    bus.stream()
+        .publish(SessionRecord::Permission(card.clone()))
+        .map_err(|e| format!("should publish: {e:?}"))?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_translator_drain_routes_permission_request_to_bridge() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
-    let mut rx = bus.ui_event().subscribe();
+    let bus = agnt_runtime::bus::Bus::default();
+    let mut stream_rx = bus.stream().subscribe();
+    let mut narration_rx = bus.narration().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
     let permission_sink = RecordingPermissionSink::new(selected("allow-once"));
     let recorder = permission_sink.clone();
     let mut bridge = AcpPermissionBridge::new(permission_sink, SESSION, empty_pending());
-    bus.ui_event()
-        .request_permission(permission_context())
-        .await
-        .map_err(|e| format!("should publish: {e:?}"))?;
+    publish_card(&bus, &default_requested())?;
     drop(bus);
 
     // -- Exec
-    drain_receiver_to_notifications(&mut rx, &sink, &mut translator, &mut bridge).await;
+    drain_receiver_to_notifications(
+        &mut stream_rx,
+        &mut narration_rx,
+        &sink,
+        &mut translator,
+        &mut bridge,
+    )
+    .await;
 
     // -- Check
     let requests = recorder.requests();
@@ -46,22 +59,27 @@ async fn test_translator_drain_routes_permission_request_to_bridge() -> Result<(
 #[tokio::test]
 async fn test_translator_drain_resolves_pending_permission_with_client_decision() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
-    let mut rx = bus.ui_event().subscribe();
+    let bus = agnt_runtime::bus::Bus::default();
+    let mut stream_rx = bus.stream().subscribe();
+    let mut narration_rx = bus.narration().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
     let pending = empty_pending();
     let mut bridge = permission_bridge(selected("allow-always"), Arc::clone(&pending));
-    let request_id = bus
-        .ui_event()
-        .request_permission(permission_context())
-        .await
-        .map_err(|e| format!("should publish: {e:?}"))?;
-    let decision_rx = register_pending(&pending, request_id.as_str());
+    let card = default_requested();
+    let decision_rx = register_pending(&pending, "perm-1");
+    publish_card(&bus, &card)?;
     drop(bus);
 
     // -- Exec
-    drain_receiver_to_notifications(&mut rx, &sink, &mut translator, &mut bridge).await;
+    drain_receiver_to_notifications(
+        &mut stream_rx,
+        &mut narration_rx,
+        &sink,
+        &mut translator,
+        &mut bridge,
+    )
+    .await;
     let decision = decision_rx.await?;
 
     // -- Check
@@ -72,8 +90,9 @@ async fn test_translator_drain_resolves_pending_permission_with_client_decision(
 #[tokio::test]
 async fn test_translator_drain_denies_pending_permission_when_bus_closes() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
-    let mut rx = bus.ui_event().subscribe();
+    let bus = agnt_runtime::bus::Bus::default();
+    let mut stream_rx = bus.stream().subscribe();
+    let mut narration_rx = bus.narration().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
     let pending = empty_pending();
@@ -82,7 +101,14 @@ async fn test_translator_drain_denies_pending_permission_when_bus_closes() -> Re
     drop(bus);
 
     // -- Exec
-    drain_receiver_to_notifications(&mut rx, &sink, &mut translator, &mut bridge).await;
+    drain_receiver_to_notifications(
+        &mut stream_rx,
+        &mut narration_rx,
+        &sink,
+        &mut translator,
+        &mut bridge,
+    )
+    .await;
     let decision = decision_rx.await?;
 
     // -- Check
@@ -93,23 +119,30 @@ async fn test_translator_drain_denies_pending_permission_when_bus_closes() -> Re
 #[tokio::test]
 async fn test_translator_drain_denies_pending_permission_when_sink_fails() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
-    let mut rx = bus.ui_event().subscribe();
+    let bus = agnt_runtime::bus::Bus::default();
+    let mut stream_rx = bus.stream().subscribe();
+    let mut narration_rx = bus.narration().subscribe();
     let sink = RecordingSink::failing();
     let mut translator = translator();
     let pending = empty_pending();
     let mut bridge = permission_bridge(selected("allow-once"), Arc::clone(&pending));
     let decision_rx = register_pending(&pending, "perm-never-answered");
-    bus.ui_event()
-        .send(SystemEvent::InferenceChunk {
+    bus.narration()
+        .publish(agnt_runtime::bus::NarrationEvent::InferenceChunk {
             delta: "dropped".to_string(),
             aggregated: "dropped".to_string(),
         })
-        .await
         .map_err(|e| format!("should publish: {e:?}"))?;
 
     // -- Exec
-    drain_receiver_to_notifications(&mut rx, &sink, &mut translator, &mut bridge).await;
+    drain_receiver_to_notifications(
+        &mut stream_rx,
+        &mut narration_rx,
+        &sink,
+        &mut translator,
+        &mut bridge,
+    )
+    .await;
     let decision = decision_rx.await?;
 
     // -- Check
@@ -120,8 +153,10 @@ async fn test_translator_drain_denies_pending_permission_when_sink_fails() -> Re
 #[tokio::test]
 async fn test_translator_run_turn_denies_pending_permission_when_turn_completes() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = agnt_core::bus::create_bus();
-    let mut rx = bus.ui_event().subscribe();
+    let bus = agnt_runtime::bus::Bus::default();
+    let mut stream_rx = bus.stream().subscribe();
+    let mut narration_rx = bus.narration().subscribe();
+    let mut control_rx = bus.control().subscribe();
     let sink = RecordingSink::default();
     let mut translator = translator();
     let pending = empty_pending();
@@ -130,8 +165,9 @@ async fn test_translator_run_turn_denies_pending_permission_when_turn_completes(
 
     // -- Exec
     let (output, _) = run_turn_with_notifications(
-        &mut rx,
-        &mut None,
+        &mut stream_rx,
+        &mut narration_rx,
+        &mut control_rx,
         &sink,
         &mut translator,
         &mut bridge,

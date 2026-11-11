@@ -1,6 +1,9 @@
 // region:    --- Modules
 
 pub mod backend;
+mod ui_renderer;
+
+pub use ui_renderer::{RenderInput, UiRenderer};
 
 // endregion: --- Modules
 
@@ -11,10 +14,14 @@ mod contract_test;
 #[path = "../../test/renderer/streaming/test.rs"]
 mod streaming_test;
 
-use agnt_core::protocol::event::ToolDisplay;
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
-use agnt_core::renderer::UiRenderer;
-use agnt_core::transcript::ir::{StyleHint, annotate_diff_hint};
+use agnt_kernel::bus::{LifecycleEvent, NarrationEvent};
+use agnt_kernel::{
+    CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, PermissionRecord,
+    SessionRecord, ToolRecord, ToolStatus,
+};
+use agnt_render::tool_args::plain_call_text;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::{Display, StyleHint, annotate_diff_hint};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -23,6 +30,69 @@ use crate::formatter::{ToolEndView, format_tool_start};
 use crate::markdown_buffer::StreamingMarkdownBuffer;
 use crate::policy::{UiPolicy, Verbosity};
 use crate::spinner::SpinnerState;
+
+/// The label this drawer prints for a compaction's source.
+///
+/// The mapping is the drawer's: the record carries the enum, and this crate owns
+/// the byte-for-byte text a terminal shows.
+fn compaction_source_text(source: CompactionSource) -> &'static str {
+    match source {
+        CompactionSource::Auto => "auto",
+        CompactionSource::Manual => "slash",
+    }
+}
+
+/// The label this drawer prints for a policy resolution.
+fn auto_resolution_text(action: agnt_kernel::AutoResolution) -> &'static str {
+    match action {
+        agnt_kernel::AutoResolution::Allow => "allow",
+        agnt_kernel::AutoResolution::Deny => "deny",
+    }
+}
+
+/// The label this drawer prints for a tool-error kind.
+fn tool_error_text(kind: agnt_kernel::ToolErrorKind) -> &'static str {
+    match kind {
+        agnt_kernel::ToolErrorKind::InvalidArgs => "invalid_args",
+        agnt_kernel::ToolErrorKind::Timeout => "timeout",
+        agnt_kernel::ToolErrorKind::Cancelled => "cancelled",
+        agnt_kernel::ToolErrorKind::NotFound => "not_found",
+        agnt_kernel::ToolErrorKind::PermissionDenied => "permission_denied",
+        agnt_kernel::ToolErrorKind::RateLimited => "rate_limited",
+        agnt_kernel::ToolErrorKind::Provider => "provider",
+        agnt_kernel::ToolErrorKind::Network => "network",
+        agnt_kernel::ToolErrorKind::Other => "other",
+        agnt_kernel::ToolErrorKind::Denied => "denied",
+    }
+}
+
+/// The head of a compaction summary, as a terminal row shows it.
+fn summary_preview(summary: &str) -> String {
+    summary.chars().take(200).collect()
+}
+
+/// The call line the TTY prints for `call`: derived from the call's name and
+/// raw arguments, with the arrow the terminal adds itself stripped.
+fn call_line_for(call: &agnt_runtime::protocol::events::ToolCall) -> String {
+    let line = call.call_line();
+    plain_call_text(&line).to_string()
+}
+
+/// The label this renderer prints for a tool source.
+trait ToolSourceLabel {
+    fn label(self) -> &'static str;
+}
+
+impl ToolSourceLabel for agnt_runtime::tools::handler::ToolSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Closure => "closure",
+            Self::Mcp => "mcp",
+            Self::Builtin => "builtin",
+            Self::Unknown => "unknown",
+        }
+    }
+}
 
 pub struct StderrUiRenderer<W: Write> {
     writer: W,
@@ -33,6 +103,10 @@ pub struct StderrUiRenderer<W: Write> {
     active_tool_args: Option<String>,
     streaming_started: bool,
     streaming_printed_len: usize,
+    /// The dispatched calls in the turn now running: the count the completion
+    /// row reports. It folds from `ToolRecord::Started`, the same way the hook
+    /// runner's turn fold counts them.
+    tools_this_turn: usize,
     markdown_buffer: StreamingMarkdownBuffer,
     use_color: bool,
 }
@@ -85,6 +159,7 @@ impl<W: Write> StderrUiRenderer<W> {
             active_tool_args: None,
             streaming_started: false,
             streaming_printed_len: 0,
+            tools_this_turn: 0,
             markdown_buffer: StreamingMarkdownBuffer::default(),
             use_color: stderr_is_tty,
         }
@@ -99,7 +174,7 @@ impl<W: Write> StderrUiRenderer<W> {
     /// annotation routes through the shared `annotate_diff_hint` helper —
     /// the same function the markdown diff projection uses — so both paths
     /// style diff lines identically (hunk, file-meta, add, remove).
-    fn render_tool_display(&mut self, display: &ToolDisplay) {
+    fn render_tool_display(&mut self, display: &Display) {
         if self.policy.quiet {
             return;
         }
@@ -139,6 +214,21 @@ impl<W: Write> StderrUiRenderer<W> {
         let _ = self.writer.write_all(b"\r\x1b[2K");
     }
 
+    /// Flush whatever the markdown buffer still holds and clear the streaming
+    /// cursor, so the next block starts fresh.
+    fn reset_streaming(&mut self) {
+        if self.streaming_started {
+            let remaining = self.markdown_buffer.flush();
+            if !remaining.is_empty() {
+                let _ = self.writer.write_all(remaining.as_bytes());
+            }
+            let _ = self.writer.write_all(b"\n");
+        }
+        self.streaming_started = false;
+        self.streaming_printed_len = 0;
+        self.markdown_buffer.reset();
+    }
+
     fn draw_spinner(&mut self) {
         if self.spinner.is_enabled() && self.spinner.is_active() {
             self.clear_spinner_line();
@@ -170,24 +260,21 @@ impl<W: Write> StderrUiRenderer<W> {
         }
     }
 
-    fn render_event_line(&self, event: &SystemEvent) -> Option<String> {
-        match event {
-            SystemEvent::InferenceStarted => None,
-            SystemEvent::Tick => None,
-            SystemEvent::InferenceCompleted { .. } => None,
-            SystemEvent::ToolStarted { call } => {
+    fn render_input_line(&self, input: &RenderInput<'_>) -> Option<String> {
+        match input {
+            RenderInput::Record(SessionRecord::Tool(ToolRecord::Started { call })) => {
                 if self.policy.quiet || self.spinner.is_enabled() {
                     None
                 } else {
                     Some(format_tool_start(
                         self.policy.verbosity,
                         &call.name.0,
-                        &call.source,
-                        &call.call_line.to_plain_text(),
+                        call.source.label(),
+                        &call_line_for(call),
                     ))
                 }
             }
-            SystemEvent::ToolCompleted { call, outcome } => {
+            RenderInput::Record(SessionRecord::Tool(ToolRecord::Completed { call, outcome })) => {
                 if self.policy.quiet {
                     None
                 } else {
@@ -195,186 +282,165 @@ impl<W: Write> StderrUiRenderer<W> {
                         ToolEndView {
                             verbosity: self.policy.verbosity,
                             name: &call.name.0,
-                            source: &call.source,
+                            source: call.source.label(),
                             arguments: &call.arguments,
-                            success: outcome.success,
-                            result: &outcome.result,
-                            error_kind: outcome.error_kind.as_deref(),
+                            success: outcome.status == ToolStatus::Success,
+                            result: &outcome.text,
+                            error_kind: outcome.kind.map(tool_error_text),
                             message: outcome.message.as_deref(),
                         }
                         .format(),
                     )
                 }
             }
-            SystemEvent::PreviewRequested { .. } => None,
-            SystemEvent::PermissionRequested {
-                request_id,
-                context,
-            } => {
+            RenderInput::Record(SessionRecord::Permission(record)) => {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!(
-                        "permission requested: request_id={} tool={} source={} rule={} summary={}",
-                        request_id.as_str(),
-                        context.tool,
-                        context.source,
-                        context.matched_rule_identity,
-                        context.summary
-                    ))
+                    self.permission_line(record)
                 }
             }
-            SystemEvent::PermissionDecisionSubmitted {
-                request_id,
-                decision,
-                matched_rule_identity,
-            } => {
+            RenderInput::Record(SessionRecord::Compaction(record)) => {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!(
-                        "permission decision: request_id={} decision={} rule={matched_rule_identity}",
-                        request_id.as_str(),
-                        decision.as_str()
-                    ))
+                    self.compaction_line(record)
                 }
             }
-            SystemEvent::PermissionDecisionTimedOut { request_id } => {
+            RenderInput::Record(SessionRecord::Turn(_)) => {
                 if self.policy.quiet {
                     None
                 } else {
-                    Some(format!(
-                        "permission timeout: request_id={} action=deny",
-                        request_id.as_str()
-                    ))
+                    Some(format!("✓ completed (tools={})", self.tools_this_turn))
                 }
             }
-            SystemEvent::PermissionDecisionIgnored { request_id, reason } => {
-                if self.policy.quiet {
-                    None
-                } else {
-                    Some(format!(
-                        "permission decision ignored: request_id={} reason={reason}",
-                        request_id.as_str()
-                    ))
-                }
-            }
-            SystemEvent::PermissionRequestCancelled {
-                request_id,
-                matched_rule_identity,
-            } => {
-                if self.policy.quiet {
-                    None
-                } else {
-                    Some(format!(
-                        "permission request cancelled: request_id={} rule={matched_rule_identity}",
-                        request_id.as_str()
-                    ))
-                }
-            }
-            SystemEvent::PermissionAutoResolved {
-                matched_rule_identity,
-                action,
-                reason,
-            } => {
-                if self.policy.quiet {
-                    None
-                } else {
-                    Some(match reason {
-                        Some(reason) => format!(
-                            "permission auto-resolved: rule={matched_rule_identity} action={} reason={reason}",
-                            action.as_str()
-                        ),
-                        None => format!(
-                            "permission auto-resolved: rule={matched_rule_identity} action={}",
-                            action.as_str()
-                        ),
-                    })
-                }
-            }
-            SystemEvent::SystemMessage { kind, text } => match kind {
-                SystemKind::Warning => {
+            RenderInput::Narration(NarrationEvent::SystemMessage { kind, text }) => match kind {
+                NoticeKind::Warning => {
                     if self.policy.verbosity >= Verbosity::VeryVerbose {
                         Some(format!("warning: {text}"))
                     } else {
                         None
                     }
                 }
-                SystemKind::TurnError => Some(format!("Error: {text}")),
+                NoticeKind::TurnError => Some(format!("Error: {text}")),
             },
-            SystemEvent::CompactionStarted { source } => {
+            RenderInput::Narration(NarrationEvent::CompactionSummaryChunk { .. }) => None,
+            RenderInput::Record(SessionRecord::Inference(_)) => None,
+            RenderInput::Lifecycle(LifecycleEvent::CompactionStarted { source }) => {
                 if self.policy.quiet {
                     None
                 } else {
                     Some(style_text(
-                        &format!("compaction: source={source} status=running"),
+                        &format!(
+                            "compaction: source={} status=running",
+                            compaction_source_text(*source)
+                        ),
                         &StyleHint::Muted,
                         self.use_color,
                     ))
                 }
             }
-            SystemEvent::CompactionSummaryChunk { .. } => None,
-            SystemEvent::CompactionCompleted {
+            RenderInput::Lifecycle(_) => None,
+            _ => None,
+        }
+    }
+
+    /// The permission rows, field for field from the record the gate published.
+    fn permission_line(&self, record: &PermissionRecord) -> Option<String> {
+        match record {
+            PermissionRecord::Requested {
+                request_id,
+                tool,
                 source,
-                summary_preview,
+                rule_identity,
+                summary,
                 ..
-            } => {
-                if self.policy.quiet {
-                    None
-                } else {
-                    Some(style_text(
-                        &format!("compaction: source={source} preview={summary_preview}"),
-                        &StyleHint::Success,
-                        self.use_color,
-                    ))
-                }
-            }
-            SystemEvent::CompactionFailed { source, message } => {
-                if self.policy.quiet {
-                    None
-                } else {
-                    Some(style_text(
-                        &format!("compaction: source={source} status=failed message={message}"),
-                        &StyleHint::Error,
-                        self.use_color,
-                    ))
-                }
-            }
-            SystemEvent::InferenceChunk { .. } => None,
-            SystemEvent::InferenceStopped { reason } => {
-                // An empty reason is a silent discard (provisional output from a
-                // retried model turn), not a user-visible stop.
-                if self.policy.quiet || reason.trim().is_empty() {
-                    None
-                } else {
-                    Some(style_text(
-                        &format!("⚠ stopped: {reason}"),
-                        &StyleHint::Error,
-                        self.use_color,
-                    ))
-                }
-            }
-            SystemEvent::TurnCompleted { tool_calls, .. } => {
-                if self.policy.quiet {
-                    None
-                } else {
-                    Some(format!("✓ completed (tools={tool_calls})"))
-                }
-            }
-            SystemEvent::KeyPressed { .. }
-            | SystemEvent::WheelScrolled { .. }
-            | SystemEvent::Resized { .. }
-            | SystemEvent::PermissionDecided { .. }
-            | SystemEvent::PromptSubmitted { .. }
-            | SystemEvent::CompactionRequested { .. } => None,
+            } => Some(format!(
+                "permission requested: request_id={} tool={tool} source={source} rule={rule_identity} summary={summary}",
+                request_id.as_str()
+            )),
+            PermissionRecord::Decided {
+                request_id,
+                decision,
+                rule_identity,
+            } => Some(format!(
+                "permission decision: request_id={} decision={} rule={rule_identity}",
+                request_id.as_str(),
+                decision.as_str()
+            )),
+            PermissionRecord::TimedOut { request_id } => Some(format!(
+                "permission timeout: request_id={} action=deny",
+                request_id.as_str()
+            )),
+            PermissionRecord::Ignored { request_id, reason } => Some(format!(
+                "permission decision ignored: request_id={} reason={reason}",
+                request_id.as_str()
+            )),
+            PermissionRecord::Cancelled {
+                request_id,
+                rule_identity,
+            } => Some(format!(
+                "permission request cancelled: request_id={} rule={rule_identity}",
+                request_id.as_str()
+            )),
+            PermissionRecord::AutoResolved {
+                rule_identity,
+                action,
+                reason,
+                ..
+            } => Some(match reason {
+                Some(reason) => format!(
+                    "permission auto-resolved: rule={rule_identity} action={} reason={reason}",
+                    auto_resolution_text(*action)
+                ),
+                None => format!(
+                    "permission auto-resolved: rule={rule_identity} action={}",
+                    auto_resolution_text(*action)
+                ),
+            }),
+        }
+    }
+
+    /// The compaction rows. The preview is derived here: the record carries the
+    /// whole summary, and a terminal row shows its head.
+    fn compaction_line(&self, record: &CompactionRecord) -> Option<String> {
+        match record {
+            CompactionRecord::Requested { .. } | CompactionRecord::SummaryChunk { .. } => None,
+            CompactionRecord::Started { source } => Some(style_text(
+                &format!(
+                    "compaction: source={} status=running",
+                    compaction_source_text(*source)
+                ),
+                &StyleHint::Muted,
+                self.use_color,
+            )),
+            CompactionRecord::Completed { source, summary } => Some(style_text(
+                &format!(
+                    "compaction: source={} preview={}",
+                    compaction_source_text(*source),
+                    summary_preview(summary)
+                ),
+                &StyleHint::Success,
+                self.use_color,
+            )),
+            CompactionRecord::Failed { source, message } => Some(style_text(
+                &format!(
+                    "compaction: source={} status=failed message={message}",
+                    compaction_source_text(*source)
+                ),
+                &StyleHint::Error,
+                self.use_color,
+            )),
         }
     }
 }
 
 impl<W: Write> UiRenderer for StderrUiRenderer<W> {
-    fn emit(&mut self, event: &SystemEvent) {
-        match event {
-            SystemEvent::InferenceStarted if self.spinner.is_enabled() => {
+    fn draw(&mut self, input: RenderInput<'_>) {
+        match &input {
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started))
+                if self.spinner.is_enabled() =>
+            {
                 self.active_tool_name = None;
                 self.streaming_started = false;
                 self.streaming_printed_len = 0;
@@ -382,15 +448,16 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.spinner.start();
                 self.draw_spinner();
             }
-            SystemEvent::ToolStarted { call }
+            RenderInput::Record(SessionRecord::Tool(ToolRecord::Started { call }))
                 if self.spinner.is_enabled() && !self.policy.quiet =>
             {
+                self.tools_this_turn += 1;
                 self.active_tool_name = Some(call.name.0.clone());
-                self.active_tool_args = Some(call.call_line.to_plain_text());
+                self.active_tool_args = Some(call_line_for(call));
                 self.spinner.start();
                 self.draw_spinner();
             }
-            SystemEvent::InferenceChunk { aggregated, .. } => {
+            RenderInput::Narration(NarrationEvent::InferenceChunk { aggregated, .. }) => {
                 if self.policy.quiet {
                     return;
                 }
@@ -414,12 +481,10 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                     }
                 }
             }
-            SystemEvent::Tick if self.spinner.is_active() && self.tick_gate.allow_tick() => {
-                self.spinner.tick();
-                self.draw_spinner();
-                return;
-            }
-            SystemEvent::InferenceCompleted { .. } | SystemEvent::ToolCompleted { .. }
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Completed {
+                ..
+            }))
+            | RenderInput::Record(SessionRecord::Tool(ToolRecord::Completed { .. }))
                 if self.spinner.is_active() =>
             {
                 self.clear_spinner_line();
@@ -427,12 +492,16 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.active_tool_name = None;
                 self.active_tool_args = None;
             }
-            SystemEvent::ToolCompleted { outcome, .. } if !self.policy.quiet => {
-                if let Some(display) = &outcome.display {
-                    self.render_tool_display(display);
+            RenderInput::Record(SessionRecord::Tool(ToolRecord::Completed { call, outcome }))
+                if !self.policy.quiet =>
+            {
+                if let Some(display) = call.result_body(Some(&outcome.text)) {
+                    self.render_tool_display(&display);
                 }
             }
-            SystemEvent::InferenceCompleted { usage } if self.streaming_started => {
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Completed { usage }))
+                if self.streaming_started =>
+            {
                 let remaining = self.markdown_buffer.flush();
                 if !remaining.is_empty() {
                     let _ = self.writer.write_all(remaining.as_bytes());
@@ -452,31 +521,25 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.streaming_printed_len = 0;
                 self.markdown_buffer.reset();
             }
-            SystemEvent::TurnCompleted { .. } if self.spinner.is_active() => {
+            RenderInput::Record(SessionRecord::Turn(_)) if self.spinner.is_active() => {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
                 self.active_tool_args = None;
-                if self.streaming_started {
-                    let remaining = self.markdown_buffer.flush();
-                    if !remaining.is_empty() {
-                        let _ = self.writer.write_all(remaining.as_bytes());
-                    }
-                    let _ = self.writer.write_all(b"\n");
-                    self.streaming_started = false;
-                    self.streaming_printed_len = 0;
-                    self.markdown_buffer.reset();
-                }
+                self.reset_streaming();
             }
-            SystemEvent::SystemMessage {
-                kind: SystemKind::TurnError,
+            RenderInput::Narration(NarrationEvent::SystemMessage {
+                kind: NoticeKind::TurnError,
                 ..
-            } if self.spinner.is_active() => {
+            }) if self.spinner.is_active() => {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
             }
-            SystemEvent::InferenceStopped { reason } if reason.trim().is_empty() => {
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Stopped {
+                reason,
+                ..
+            })) if reason.trim().is_empty() => {
                 // Silent discard of provisional output from a retried model
                 // turn: reset the streaming state so the retry's text starts a
                 // fresh block instead of being sliced against the discarded
@@ -488,35 +551,41 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 }
                 if self.streaming_started {
                     let _ = self.writer.write_all(b"\n");
-                    self.streaming_started = false;
-                    self.streaming_printed_len = 0;
-                    self.markdown_buffer.reset();
+                    self.reset_streaming();
                 }
             }
-            SystemEvent::InferenceStopped { .. } if self.spinner.is_active() => {
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Stopped { .. }))
+                if self.spinner.is_active() =>
+            {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
             }
-            SystemEvent::TurnCompleted { .. } if self.streaming_started => {
-                let remaining = self.markdown_buffer.flush();
-                if !remaining.is_empty() {
-                    let _ = self.writer.write_all(remaining.as_bytes());
-                }
-                let _ = self.writer.write_all(b"\n");
-                self.streaming_started = false;
-                self.streaming_printed_len = 0;
-                self.markdown_buffer.reset();
+            RenderInput::Record(SessionRecord::Turn(_)) if self.streaming_started => {
+                self.reset_streaming();
             }
             _ => {}
         }
 
-        if let Some(line) = self.render_event_line(event) {
+        // The turn's own row is drawn from the fold, so the fold resets only
+        // after that row has been rendered.
+        let is_turn_end = matches!(input, RenderInput::Record(SessionRecord::Turn(_)));
+        if let Some(line) = self.render_input_line(&input) {
             self.with_persistent_line(&line);
+        }
+        if is_turn_end {
+            self.tools_this_turn = 0;
         }
     }
 
     fn flush(&mut self) {
         let _ = self.writer.flush();
+    }
+
+    fn tick(&mut self) {
+        if self.spinner.is_active() && self.tick_gate.allow_tick() {
+            self.spinner.tick();
+            self.draw_spinner();
+        }
     }
 }

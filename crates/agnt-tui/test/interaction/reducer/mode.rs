@@ -12,7 +12,7 @@ fn mode_transition_table() {
 
     let changed = reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('i'),
         },
         None,
@@ -26,7 +26,7 @@ fn mode_transition_table() {
 
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('j'),
         },
         None,
@@ -39,7 +39,7 @@ fn mode_transition_table() {
 
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('j'),
         },
         None,
@@ -70,7 +70,7 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
     // -- Exec
     reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 5,
             row: 5,
@@ -95,7 +95,7 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
     // -- Exec
     reduce(
         &mut busy,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: true,
             column: 5,
             row: 5,

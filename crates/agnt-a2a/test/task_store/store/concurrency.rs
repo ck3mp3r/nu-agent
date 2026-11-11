@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn test_concurrent_writes() {
+fn test_concurrent_writes() -> Result<()> {
     use std::sync::Arc;
     use std::thread;
 
@@ -16,7 +16,7 @@ fn test_concurrent_writes() {
     }
 
     for h in handles {
-        h.join().expect("Thread panicked");
+        h.join().map_err(|_| "worker thread panicked")?;
     }
 
     assert_eq!(
@@ -24,4 +24,5 @@ fn test_concurrent_writes() {
         10,
         "All 10 concurrent creates should succeed"
     );
+    Ok(())
 }

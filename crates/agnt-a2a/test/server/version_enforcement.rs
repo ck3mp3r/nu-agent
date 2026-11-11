@@ -1,8 +1,8 @@
 use super::*;
 
 #[tokio::test]
-async fn test_tasks_send_unsupported_content_type() {
-    let (server, client) = test_server().await;
+async fn test_tasks_send_unsupported_content_type() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -13,11 +13,10 @@ async fn test_tasks_send_unsupported_content_type() {
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 400);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body.get("error").is_some(),
         "Should return error for unsupported content type"
@@ -37,10 +36,11 @@ async fn test_tasks_send_unsupported_content_type() {
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_a2a_version_missing_rejected() {
+async fn test_a2a_version_missing_rejected() -> Result<()> {
     let card = AgentCard {
         name: "test".into(),
         url: "http://127.0.0.1:0".into(),
@@ -52,9 +52,8 @@ async fn test_a2a_version_missing_rejected() {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    crate::discovery::card::ensure_crypto_provider();
+    .await?;
+    crate::test_support::install_crypto_provider();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     let resp = client
@@ -63,11 +62,10 @@ async fn test_a2a_version_missing_rejected() {
             "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     // Version check errors return HTTP 400
     assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_REQUEST");
     assert_eq!(
@@ -82,10 +80,11 @@ async fn test_a2a_version_missing_rejected() {
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_a2a_version_unsupported_value_rejected() {
+async fn test_a2a_version_unsupported_value_rejected() -> Result<()> {
     let card = AgentCard {
         name: "test".into(),
         url: "http://127.0.0.1:0".into(),
@@ -97,9 +96,8 @@ async fn test_a2a_version_unsupported_value_rejected() {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    crate::discovery::card::ensure_crypto_provider();
+    .await?;
+    crate::test_support::install_crypto_provider();
     let client = reqwest::Client::builder()
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
@@ -109,8 +107,7 @@ async fn test_a2a_version_unsupported_value_rejected() {
             );
             headers
         })
-        .build()
-        .unwrap();
+        .build()?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -118,10 +115,9 @@ async fn test_a2a_version_unsupported_value_rejected() {
             "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_REQUEST");
     assert_eq!(
@@ -130,10 +126,11 @@ async fn test_a2a_version_unsupported_value_rejected() {
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_agent_json_bypasses_version_check() {
+async fn test_agent_json_bypasses_version_check() -> Result<()> {
     let card = AgentCard {
         name: "test".into(),
         url: "http://127.0.0.1:0".into(),
@@ -145,26 +142,25 @@ async fn test_agent_json_bypasses_version_check() {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    crate::discovery::card::ensure_crypto_provider();
+    .await?;
+    crate::test_support::install_crypto_provider();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     // /.well-known/agent-card.json should work without A2A-Version
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["name"], "test");
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_extended_agent_card_bypasses_version_check() {
+async fn test_extended_agent_card_bypasses_version_check() -> Result<()> {
     let card = AgentCard {
         name: "test".into(),
         url: "http://127.0.0.1:0".into(),
@@ -176,20 +172,19 @@ async fn test_extended_agent_card_bypasses_version_check() {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    crate::discovery::card::ensure_crypto_provider();
+    .await?;
+    crate::test_support::install_crypto_provider();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     // /extendedAgentCard should work without A2A-Version
     let resp = client
         .get(format!("{}/extendedAgentCard", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(body.get("agentCard").is_some());
 
     server.shutdown().await;
+    Ok(())
 }

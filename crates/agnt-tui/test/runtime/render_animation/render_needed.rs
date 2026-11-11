@@ -10,7 +10,7 @@ fn render_needed_gating() -> Result<()> {
     assert!(!coord.render_needed());
 
     // -- Exec
-    coord.reduce_event_batch([SystemEvent::Tick]);
+    coord.reduce_record_batch([inference_started()]);
 
     // -- Check: the reducer fold marks the frame dirty.
     assert!(coord.render_needed());

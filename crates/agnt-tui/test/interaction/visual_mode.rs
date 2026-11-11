@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::selection::TranscriptSelection;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
 
 // region:    --- Test Support
 

@@ -45,22 +45,12 @@ async fn cancel_paths() -> Result<()> {
 
     // -- Exec: the cancelled turn completes.
     queued
-        .advance(&[DriveEvent::SystemEvent(Box::new(
-            SystemEvent::TurnCompleted {
-                tool_calls: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: None,
-                cost: None,
-                cost_complete: true,
-                duration_ms: 0,
-            },
-        ))])
+        .advance(&[DriveEvent::Record(Box::new(turn_completed(0)))])
         .await?;
 
     // -- Check: the queued prompt is submitted through the drain path.
     assert!(queued.orchestrator_events().iter().any(
-        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "queued")
+        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "queued")
     ));
 
     // -- Setup & Fixtures: idle and busy with no queued prompts.

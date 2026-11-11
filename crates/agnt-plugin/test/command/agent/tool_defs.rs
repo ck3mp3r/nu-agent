@@ -1,8 +1,10 @@
 use super::tool_defs::assemble_tool_definitions;
-use agnt_core::conversation::builder::{
+use agnt_runtime::conversation::builder::{
     builtin_tool_definitions, list_agents_tool_definitions, messaging_tool_definitions,
     orchestrator_tool_definitions,
 };
+use agnt_runtime::types::{ToolAnnotations, ToolDefinition, ToolName};
+use serde_json::json;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -60,7 +62,7 @@ fn orchestrator_tool_description_shows_no_agents_message_when_empty() -> Result<
 
 #[test]
 fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
-    use agnt_core::protocol::persona::PersonaSummary;
+    use agnt_runtime::protocol::persona::PersonaSummary;
     let agents = vec![
         PersonaSummary {
             name: "coder".to_string(),
@@ -179,16 +181,16 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_compat_fields()
     Ok(())
 }
 
-// --- Tool assembly tests: A2A tools gated on a2a_enabled ---
+// --- Tool assembly tests: peer tool definition injection ---
 
 #[test]
-fn a2a_tools_absent_when_disabled() -> Result<()> {
-    let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
-    let agents_config = agnt_core::config::AgentsConfig::default();
+fn peer_tools_absent_when_none_injected() -> Result<()> {
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let agents_config = agnt_runtime::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
     let assembly =
-        assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, cwd, false)?;
+        assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, cwd, Vec::new())?;
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -236,13 +238,20 @@ fn a2a_tools_absent_when_disabled() -> Result<()> {
 }
 
 #[test]
-fn a2a_tools_present_when_enabled() -> Result<()> {
-    let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
-    let agents_config = agnt_core::config::AgentsConfig::default();
+fn peer_tools_present_when_injected() -> Result<()> {
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let agents_config = agnt_runtime::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
+    let peer_definitions = peer_definitions(&["tasks_send", "tasks_get", "tasks_list"])?;
 
-    let assembly =
-        assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, cwd, true)?;
+    let assembly = assemble_tool_definitions(
+        &closure_registry,
+        &agents_config,
+        &[],
+        cwd,
+        cwd,
+        peer_definitions,
+    )?;
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -251,28 +260,23 @@ fn a2a_tools_present_when_enabled() -> Result<()> {
         .collect();
 
     assert!(
-        names.contains(&"agent_list"),
-        "agent_list must be present when A2A enabled, got: {names:?}"
-    );
-    assert!(
-        names.contains(&"agent_getCard"),
-        "agent_getCard must be present when A2A enabled, got: {names:?}"
-    );
-    assert!(
         names.contains(&"tasks_send"),
-        "tasks_send must be present when A2A enabled, got: {names:?}"
+        "tasks_send must be present when injected, got: {names:?}"
     );
     assert!(
         names.contains(&"tasks_get"),
-        "tasks_get must be present when A2A enabled, got: {names:?}"
-    );
-    assert!(
-        names.contains(&"tasks_cancel"),
-        "tasks_cancel must be present when A2A enabled, got: {names:?}"
+        "tasks_get must be present when injected, got: {names:?}"
     );
     assert!(
         names.contains(&"tasks_list"),
-        "tasks_list must be present when A2A enabled, got: {names:?}"
+        "tasks_list must be present when injected, got: {names:?}"
+    );
+
+    // Injected definitions land after the builtins, in the order provided.
+    let builtin_count = builtin_tool_definitions()?.len();
+    assert_eq!(
+        names[builtin_count..builtin_count + 3].to_vec(),
+        vec!["tasks_send", "tasks_get", "tasks_list"]
     );
 
     // Baseline must also have them
@@ -283,8 +287,28 @@ fn a2a_tools_present_when_enabled() -> Result<()> {
         .collect();
 
     assert!(
-        baseline_names.contains(&"agent_list"),
-        "agent_list must be in baseline when A2A enabled"
+        baseline_names.contains(&"tasks_list"),
+        "tasks_list must be in baseline when injected"
     );
     Ok(())
+}
+
+// -- Test Support
+
+/// Synthesized peer tool definitions: the assembly only passes them through.
+fn peer_definitions(names: &[&str]) -> Result<Vec<ToolDefinition>> {
+    names
+        .iter()
+        .map(|name| {
+            Ok(ToolDefinition {
+                annotations: ToolAnnotations::default(),
+                name: ToolName::new(*name)?,
+                description: format!("{name} peer tool"),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {},
+                }),
+            })
+        })
+        .collect()
 }

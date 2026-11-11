@@ -1,9 +1,9 @@
 use super::*;
 
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::RenderBackend;
+use agnt_render::transcript::ir::{Display, DisplaySection};
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use crate::widgets::RatatuiBackend;
 
@@ -50,8 +50,8 @@ fn test_transcript_preview_tool_entry_renders_one_code_surface() -> Result<()> {
         (0..columns)
             .map(|x| cell_symbol(&terminal, x, 0))
             .collect::<String>()
-            .contains("ls | select name"),
-        "the call line carries the summary"
+            .contains("⏱ 120s"),
+        "the call line carries the derived timeout line"
     );
     assert_eq!(
         cell_bg(&terminal, 1, 0),
@@ -88,11 +88,8 @@ fn test_transcript_preview_diff_tint_wins_over_code_surface() -> Result<()> {
     let rows = 8u16;
     let call = ToolCall::new(
         ToolName("edit".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: "→ a/a.rs".to_string(),
-        },
+        agnt_runtime::tools::handler::ToolSource::Unknown,
+        r#"{"path":"a/a.rs"}"#,
     );
     let entry = ToolEntry {
         kind: ToolKind::from_name(&call.name),
@@ -171,35 +168,18 @@ fn test_transcript_preview_hydrated_rows_paint_the_gate_band_per_status() -> Res
 
     for (label, status, glyph) in cases {
         let mut coord = RuntimeCoordinator::new(40, 8, None);
-        let snapshot = UiMessageSnapshot::new("tool", "→ ⏱ 120s")
+        let snapshot = UiMessageSnapshot::new("tool", "out")
             .with_tool_name("nu".to_string())
             .with_tool_details(
                 Some(r#"{"command":"ls | select name"}"#.to_string()),
-                None,
+                Some("out".to_string()),
                 Some(matches!(status, ToolStatus::Success)),
             )
             .with_tool_status(status);
 
-        // -- Exec: hydrate the pair, then render a viewport exactly as tall.
-        coord.hydrate_transcript_from_messages(
-            vec![
-                snapshot,
-                UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(
-                    ToolDisplay {
-                        title: None,
-                        sections: vec![ToolDisplaySection {
-                            label: None,
-                            kind: ContentKind::Code {
-                                language: "nu".to_string(),
-                            },
-                            content: "ls | select name".to_string(),
-                            stats: None,
-                        }],
-                    },
-                ),
-            ],
-            None,
-        );
+        // -- Exec: hydrate the row, then render a viewport exactly as tall. The
+        // gate-preview band is derived from the call's own arguments.
+        coord.hydrate_transcript_from_messages(vec![snapshot], None);
         assert_eq!(
             coord.state.transcript.len(),
             1,

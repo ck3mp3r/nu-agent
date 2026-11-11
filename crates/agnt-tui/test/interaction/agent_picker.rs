@@ -44,7 +44,7 @@ fn agent_picker_lifecycle_table() -> Result<()> {
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "alpha".into(),
             description: None,
             display: "alpha".into(),
@@ -133,8 +133,8 @@ fn agent_slash_and_palette_share_same_action_handler() -> Result<()> {
         None,
     );
     assert_eq!(
-        slash_state.take_next_launch_request(),
-        Some(SharedUiAction::Agents)
+        slash_state.picker.render_kind(),
+        Some(crate::state::PickerRenderKind::Agent)
     );
     assert_eq!(slash_state.take_next_prompt_for_execution(), None);
 
@@ -165,8 +165,8 @@ fn agent_slash_and_palette_share_same_action_handler() -> Result<()> {
         None,
     );
     assert_eq!(
-        palette_state.take_next_launch_request(),
-        Some(SharedUiAction::Agents)
+        palette_state.picker.render_kind(),
+        Some(crate::state::PickerRenderKind::Agent)
     );
     assert_eq!(palette_state.take_next_prompt_for_execution(), None);
     Ok(())

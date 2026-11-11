@@ -1,14 +1,16 @@
 use std::time::Instant;
 
 use crate::interaction::input::{TerminalEvent, TerminalKey};
+use crate::interaction::reducer::RenderInput;
 use crate::runtime::RuntimeCoordinator;
 use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::{MessageRole, NoticeKind, ToolName};
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use agnt_render::transcript::ir::{MessageRole, NoticeKind, ToolName};
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::events::{
+    InferenceRecord, NarrationEvent, SessionRecord, ToolCall, Usage,
+};
 
 /// Push one message entry via the store's sole push API.
 pub(super) fn push_message_line(
@@ -95,26 +97,34 @@ pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
 
 // region:    --- Test Support
 
-/// An `InferenceCompleted` event carrying the given usage totals.
+/// An `InferenceCompleted` record carrying the given usage totals.
 pub(super) fn llm_completed(
-    response_chars: usize,
-    tool_calls: usize,
     input_tokens: u64,
     output_tokens: u64,
     total_tokens: Option<u64>,
     cost: Option<f64>,
     cost_complete: bool,
-) -> agnt_core::protocol::events::SystemEvent {
-    agnt_core::protocol::events::SystemEvent::InferenceCompleted {
-        usage: agnt_core::protocol::events::Usage {
-            response_chars,
-            tool_calls,
+) -> SessionRecord {
+    SessionRecord::Inference(InferenceRecord::Completed {
+        usage: Usage {
             input_tokens,
             output_tokens,
             total_tokens,
             cost,
             cost_complete,
         },
+    })
+}
+
+impl RuntimeCoordinator {
+    /// Fold one stream record, exactly as the render loop does.
+    pub(crate) fn fold_record(&mut self, record: &SessionRecord) -> bool {
+        self.reduce_render_input(RenderInput::Record(record))
+    }
+
+    /// Fold one narration event, exactly as the render loop does.
+    pub(crate) fn fold_narration(&mut self, event: &NarrationEvent) -> bool {
+        self.reduce_render_input(RenderInput::Narration(event))
     }
 }
 
@@ -161,11 +171,8 @@ pub(super) fn key(key: TerminalKey) -> DriveEvent {
 pub(super) fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStatus>) {
     let call = ToolCall::new(
         ToolName("read".to_string()),
-        "",
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         "{}",
-        CallLine {
-            summary: "hi".to_string(),
-        },
     );
     let entry = TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),

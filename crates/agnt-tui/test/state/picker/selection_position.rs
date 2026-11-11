@@ -44,9 +44,13 @@ fn position_selection_on_matching_id() -> Result<()> {
     matching.set_picker_options(ActivePicker::Model, test_model_options());
 
     // -- Exec
-    matching.reduce_ui_state_event(
-        agnt_core::orchestrator::UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models),
+    fold_control(
+        &mut matching,
+        &ControlCommand::SharedUiAction {
+            action: SharedUiAction::Models,
+        },
     );
+    matching.drain_launch_requests();
 
     // -- Check: the selection lands on the active identity row.
     assert_eq!(
@@ -64,9 +68,13 @@ fn position_selection_on_matching_id() -> Result<()> {
     no_match.set_picker_options(ActivePicker::Model, test_model_options());
 
     // -- Exec
-    no_match.reduce_ui_state_event(
-        agnt_core::orchestrator::UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models),
+    fold_control(
+        &mut no_match,
+        &ControlCommand::SharedUiAction {
+            action: SharedUiAction::Models,
+        },
     );
+    no_match.drain_launch_requests();
 
     // -- Check: the selection stays at 0.
     assert_eq!(

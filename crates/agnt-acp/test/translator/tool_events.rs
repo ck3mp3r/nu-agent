@@ -3,12 +3,12 @@
 use agent_client_protocol::schema::v1::{
     ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind,
 };
-use agnt_core::protocol::event::ToolDisplay;
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_kernel::{SessionRecord, ToolCall, ToolOutcome, ToolRecord};
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::support::*;
+use crate::translator::TranslateInput;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -23,7 +23,7 @@ fn test_translator_tool_started_produces_pending_tool_call() -> Result<()> {
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool started must translate")?;
 
     // -- Check
@@ -33,21 +33,29 @@ fn test_translator_tool_started_produces_pending_tool_call() -> Result<()> {
     assert_eq!(call.status, ToolCallStatus::Pending);
     assert_eq!(call.kind, ToolKind::Read);
     assert_eq!(call.name.as_deref(), Some("read"));
-    assert_eq!(call.title, "read src/lib.rs");
+    assert_eq!(
+        call.title, "src/lib.rs",
+        "the title is the call line derived from the call's own arguments"
+    );
     assert!(!call.tool_call_id.0.is_empty());
     Ok(())
 }
 
 #[test]
 fn test_translator_tool_started_falls_back_to_name_when_summary_empty() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName("glob".to_string()), "builtin", "{}", call_line("")),
-    };
+    // -- Setup & Fixtures: empty arguments derive an empty call line, so the
+    // name is the whole title.
+    let event = SessionRecord::Tool(ToolRecord::Started {
+        call: ToolCall::new(
+            ToolName("glob".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Builtin,
+            "",
+        ),
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool started must translate")?;
 
     // -- Check
@@ -84,12 +92,50 @@ fn test_translator_tool_kind_mapping_covers_every_family() -> Result<()> {
     // -- Exec & Check
     for (name, expected) in cases {
         let update = translator
-            .translate(tool_started(name, "{}"))
+            .translate(TranslateInput::Record(&tool_started(name, "{}")))
             .ok_or_else(|| format!("tool '{name}' must translate"))?;
         let SessionUpdate::ToolCall(call) = update else {
             return Err(format!("expected tool_call for '{name}', got: {update:?}").into());
         };
         assert_eq!(call.kind, expected, "wrong kind for tool '{name}'");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_translator_tool_kind_mapping_covers_remaining_builtins() -> Result<()> {
+    // -- Setup & Fixtures
+    // The builtins outside the families above, and a name that is not a builtin
+    // at all: both render as ACP's `Other`.
+    let cases = [
+        ("skill", ToolKind::Other),
+        ("spawn_agent", ToolKind::Other),
+        ("terminate_agent", ToolKind::Other),
+        ("send_message", ToolKind::Other),
+        ("list_agents", ToolKind::Other),
+        ("mcp_tool", ToolKind::Other),
+    ];
+
+    // -- Exec & Check
+    for (name, expected) in cases {
+        assert_eq!(wire_kind(name)?, expected, "wrong kind for tool '{name}'");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_translator_tool_kind_ignores_name_prefixes() -> Result<()> {
+    // -- Setup & Fixtures
+    // Only a builtin's own identity classifies it: a name that merely shares a
+    // builtin family's prefix (an MCP tool, a closure) is not of that family.
+    let cases = [
+        ("ast_foo", ToolKind::Other),
+        ("tmux_custom", ToolKind::Other),
+    ];
+
+    // -- Exec & Check
+    for (name, expected) in cases {
+        assert_eq!(wire_kind(name)?, expected, "wrong kind for tool '{name}'");
     }
     Ok(())
 }
@@ -105,7 +151,7 @@ fn test_translator_tool_completed_success_produces_completed_update() -> Result<
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -123,7 +169,7 @@ fn test_translator_tool_completed_failure_produces_failed_update() -> Result<()>
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -137,26 +183,24 @@ fn test_translator_tool_completed_failure_produces_failed_update() -> Result<()>
 #[test]
 fn test_translator_tool_completed_message_becomes_content_when_no_display() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::ToolCompleted {
+    let event = SessionRecord::Tool(ToolRecord::Completed {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit"),
         ),
         outcome: ToolOutcome {
-            success: false,
             status: ToolStatus::Cancelled,
-            result: String::new(),
-            display: None,
-            error_kind: None,
+            payload: None,
+            text: String::new(),
             message: Some("Permission denied by user".to_string()),
+            kind: None,
         },
-    };
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -176,77 +220,31 @@ fn test_translator_tool_completed_message_becomes_content_when_no_display() -> R
 }
 
 #[test]
-fn test_translator_tool_completed_text_display_becomes_content() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName("grep".to_string()),
-            "builtin",
-            "{}",
-            call_line("→ grep foo"),
-        ),
-        outcome: ToolOutcome {
-            success: true,
-            status: ToolStatus::Success,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("grep foo".to_string()),
-                sections: vec![text_section("matches", "src/lib.rs:1: foo")],
-            }),
-            error_kind: None,
-            message: None,
-        },
-    };
-
-    // -- Exec
-    let update = translator()
-        .translate(event)
-        .ok_or("tool completed must translate")?;
-
-    // -- Check
-    let SessionUpdate::ToolCallUpdate(update) = update else {
-        return Err(format!("expected tool_call_update, got: {update:?}").into());
-    };
-    let content = update.fields.content.ok_or("display must become content")?;
-    assert_eq!(content.len(), 1);
-    let ToolCallContent::Content(block) = &content[0] else {
-        return Err(format!("expected content block, got: {:?}", content[0]).into());
-    };
-    let ContentBlock::Text(text) = &block.content else {
-        return Err(format!("expected text block, got: {:?}", block.content).into());
-    };
-    assert_eq!(text.text, "src/lib.rs:1: foo");
-    Ok(())
-}
-
-#[test]
 fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<()> {
     // -- Setup & Fixtures
     let diff =
         "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+omega\n gamma\n";
-    let event = SystemEvent::ToolCompleted {
+    let event = SessionRecord::Tool(ToolRecord::Completed {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit src/file.txt"),
         ),
         outcome: ToolOutcome {
-            success: true,
             status: ToolStatus::Success,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("edit src/file.txt".to_string()),
-                sections: vec![diff_section("src/file.txt", diff)],
-            }),
-            error_kind: None,
+            payload: None,
+            text: format!(
+                "{{\"path\":\"src/file.txt\",\"diff\":\"{}\"}}",
+                diff.replace('\n', "\\n")
+            ),
             message: None,
+            kind: None,
         },
-    };
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -268,29 +266,27 @@ fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<
 fn test_translator_tool_completed_diff_without_old_side_has_no_old_text() -> Result<()> {
     // -- Setup & Fixtures
     let diff = "--- a/src/new.txt\n+++ b/src/new.txt\n@@ -0,0 +1,1 @@\n+first line\n";
-    let event = SystemEvent::ToolCompleted {
+    let event = SessionRecord::Tool(ToolRecord::Completed {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            "builtin",
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
-            call_line("→ edit src/file.txt"),
         ),
         outcome: ToolOutcome {
-            success: true,
             status: ToolStatus::Success,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("edit src/new.txt".to_string()),
-                sections: vec![diff_section("src/new.txt", diff)],
-            }),
-            error_kind: None,
+            payload: None,
+            text: format!(
+                "{{\"path\":\"src/new.txt\",\"diff\":\"{}\"}}",
+                diff.replace('\n', "\\n")
+            ),
             message: None,
+            kind: None,
         },
-    };
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -314,10 +310,12 @@ fn test_translator_tool_call_id_matches_between_started_and_completed() -> Resul
 
     // -- Exec
     let started = translator
-        .translate(tool_started("read", arguments))
+        .translate(TranslateInput::Record(&tool_started("read", arguments)))
         .ok_or("tool started must translate")?;
     let completed = translator
-        .translate(tool_completed("read", arguments, true))
+        .translate(TranslateInput::Record(&tool_completed(
+            "read", arguments, true,
+        )))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -338,10 +336,16 @@ fn test_translator_tool_call_id_differs_for_different_arguments() -> Result<()> 
 
     // -- Exec
     let first = translator
-        .translate(tool_started("read", "{\"path\":\"a.rs\"}"))
+        .translate(TranslateInput::Record(&tool_started(
+            "read",
+            "{\"path\":\"a.rs\"}",
+        )))
         .ok_or("tool started must translate")?;
     let second = translator
-        .translate(tool_started("read", "{\"path\":\"b.rs\"}"))
+        .translate(TranslateInput::Record(&tool_started(
+            "read",
+            "{\"path\":\"b.rs\"}",
+        )))
         .ok_or("tool started must translate")?;
 
     // -- Check
@@ -363,10 +367,10 @@ fn test_translator_tool_call_id_unique_for_repeated_identical_calls() -> Result<
 
     // -- Exec
     let first = translator
-        .translate(tool_started("read", arguments))
+        .translate(TranslateInput::Record(&tool_started("read", arguments)))
         .ok_or("tool started must translate")?;
     let second = translator
-        .translate(tool_started("read", arguments))
+        .translate(TranslateInput::Record(&tool_started("read", arguments)))
         .ok_or("tool started must translate")?;
 
     // -- Check
@@ -389,18 +393,22 @@ fn test_translator_repeated_identical_calls_match_completions_in_order() -> Resu
     let arguments = "{\"path\":\"src/lib.rs\"}";
     let mut translator = translator();
     let first_start = translator
-        .translate(tool_started("read", arguments))
+        .translate(TranslateInput::Record(&tool_started("read", arguments)))
         .ok_or("tool started must translate")?;
     let second_start = translator
-        .translate(tool_started("read", arguments))
+        .translate(TranslateInput::Record(&tool_started("read", arguments)))
         .ok_or("tool started must translate")?;
 
     // -- Exec
     let first_done = translator
-        .translate(tool_completed("read", arguments, true))
+        .translate(TranslateInput::Record(&tool_completed(
+            "read", arguments, true,
+        )))
         .ok_or("tool completed must translate")?;
     let second_done = translator
-        .translate(tool_completed("read", arguments, true))
+        .translate(TranslateInput::Record(&tool_completed(
+            "read", arguments, true,
+        )))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -428,7 +436,11 @@ fn test_translator_completion_without_start_still_produces_update() -> Result<()
 
     // -- Exec
     let update = translator
-        .translate(tool_completed("read", "{\"path\":\"src/lib.rs\"}", true))
+        .translate(TranslateInput::Record(&tool_completed(
+            "read",
+            "{\"path\":\"src/lib.rs\"}",
+            true,
+        )))
         .ok_or("a completion without a start must still translate")?;
 
     // -- Check
@@ -445,15 +457,19 @@ fn test_translator_completion_without_start_does_not_consume_later_start_id() ->
     let arguments = "{\"path\":\"src/lib.rs\"}";
     let mut translator = translator();
     let orphan = translator
-        .translate(tool_completed("read", arguments, true))
+        .translate(TranslateInput::Record(&tool_completed(
+            "read", arguments, true,
+        )))
         .ok_or("a completion without a start must still translate")?;
 
     // -- Exec
     let started = translator
-        .translate(tool_started("read", arguments))
+        .translate(TranslateInput::Record(&tool_started("read", arguments)))
         .ok_or("tool started must translate")?;
     let completed = translator
-        .translate(tool_completed("read", arguments, true))
+        .translate(TranslateInput::Record(&tool_completed(
+            "read", arguments, true,
+        )))
         .ok_or("tool completed must translate")?;
 
     // -- Check
@@ -475,4 +491,19 @@ fn test_translator_completion_without_start_does_not_consume_later_start_id() ->
         "the later call must still match its own completion"
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Test Support
+// ---------------------------------------------------------------------------
+
+/// The ACP kind the client sees for a `ToolStarted` naming `name`.
+fn wire_kind(name: &str) -> Result<ToolKind> {
+    let update = translator()
+        .translate(TranslateInput::Record(&tool_started(name, "{}")))
+        .ok_or_else(|| format!("tool '{name}' must translate"))?;
+    let SessionUpdate::ToolCall(call) = update else {
+        return Err(format!("expected tool_call for '{name}', got: {update:?}").into());
+    };
+    Ok(call.kind)
 }

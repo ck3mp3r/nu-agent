@@ -8,7 +8,7 @@ use serde_json::json;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn agent_card_full_roundtrip() {
+fn agent_card_full_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let card = AgentCard {
         name: "TestAgent".to_string(),
         description: Some("A test agent".to_string()),
@@ -60,7 +60,7 @@ fn agent_card_full_roundtrip() {
         default_output_modes: vec!["text/plain".to_string()],
     };
 
-    let json = serde_json::to_value(&card).expect("serialize");
+    let json = serde_json::to_value(&card)?;
     assert_eq!(json["name"], "TestAgent");
     assert_eq!(json["description"], "A test agent");
     assert_eq!(json["url"], "https://example.com/agent");
@@ -77,12 +77,13 @@ fn agent_card_full_roundtrip() {
     assert_eq!(json["extensions"][0], "ext1");
     assert!(json.get("metadata").is_some());
 
-    let back: AgentCard = serde_json::from_value(json).expect("deserialize");
+    let back: AgentCard = serde_json::from_value(json)?;
     assert_eq!(back, card);
+    Ok(())
 }
 
 #[test]
-fn agent_card_minimal_roundtrip() {
+fn agent_card_minimal_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let card = AgentCard {
         name: "MinimalAgent".to_string(),
         description: None,
@@ -93,7 +94,7 @@ fn agent_card_minimal_roundtrip() {
         ..Default::default()
     };
 
-    let json = serde_json::to_value(&card).expect("serialize");
+    let json = serde_json::to_value(&card)?;
     assert_eq!(json["name"], "MinimalAgent");
     assert!(json.get("description").is_none());
     assert_eq!(json["url"], "https://example.com/agent");
@@ -110,12 +111,13 @@ fn agent_card_minimal_roundtrip() {
     assert!(json.get("extensions").is_none());
     assert!(json.get("metadata").is_none());
 
-    let back: AgentCard = serde_json::from_value(json).expect("deserialize");
+    let back: AgentCard = serde_json::from_value(json)?;
     assert_eq!(back, card);
+    Ok(())
 }
 
 #[test]
-fn agent_card_empty_skills_is_array() {
+fn agent_card_empty_skills_is_array() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let card = AgentCard {
         name: "NoSkills".to_string(),
         description: None,
@@ -126,12 +128,13 @@ fn agent_card_empty_skills_is_array() {
         ..Default::default()
     };
 
-    let json = serde_json::to_value(&card).expect("serialize");
+    let json = serde_json::to_value(&card)?;
     assert_eq!(json["skills"], json!([]), "skills should be an empty array");
+    Ok(())
 }
 
 #[test]
-fn agent_card_default_version() {
+fn agent_card_default_version() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let card: AgentCard = serde_json::from_str(
         r#"{
             "name": "Agent",
@@ -139,13 +142,14 @@ fn agent_card_default_version() {
             "skills": [],
             "capabilities": {}
         }"#,
-    )
-    .expect("deserialize");
+    )?;
     assert_eq!(card.version, "0.1.0");
+    Ok(())
 }
 
 #[test]
-fn agent_card_forward_compat_unknown_fields() {
+fn agent_card_forward_compat_unknown_fields() -> core::result::Result<(), Box<dyn std::error::Error>>
+{
     // Unknown fields MUST be silently accepted for forward compatibility.
     let json_str = r#"{
         "name": "ForwardCompat",
@@ -157,8 +161,9 @@ fn agent_card_forward_compat_unknown_fields() {
         "extra_object": {"a": 1}
     }"#;
 
-    let card: AgentCard = serde_json::from_str(json_str).expect("deserialize");
+    let card: AgentCard = serde_json::from_str(json_str)?;
     assert_eq!(card.name, "ForwardCompat");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +171,7 @@ fn agent_card_forward_compat_unknown_fields() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn skill_with_inputs_and_outputs() {
+fn skill_with_inputs_and_outputs() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let skill = Skill {
         id: "s1".to_string(),
         name: "Echo".to_string(),
@@ -181,17 +186,18 @@ fn skill_with_inputs_and_outputs() {
         }]),
     };
 
-    let json = serde_json::to_value(&skill).expect("serialize");
+    let json = serde_json::to_value(&skill)?;
     assert_eq!(json["id"], "s1");
     assert_eq!(json["inputs"][0]["type"], "string");
     assert_eq!(json["outputs"][0]["type"], "string");
 
-    let back: Skill = serde_json::from_value(json).expect("deserialize");
+    let back: Skill = serde_json::from_value(json)?;
     assert_eq!(back, skill);
+    Ok(())
 }
 
 #[test]
-fn skill_without_inputs_outputs() {
+fn skill_without_inputs_outputs() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let skill = Skill {
         id: "s2".to_string(),
         name: "Simple".to_string(),
@@ -200,12 +206,13 @@ fn skill_without_inputs_outputs() {
         outputs: None,
     };
 
-    let json = serde_json::to_value(&skill).expect("serialize");
+    let json = serde_json::to_value(&skill)?;
     assert!(json.get("inputs").is_none());
     assert!(json.get("outputs").is_none());
 
-    let back: Skill = serde_json::from_value(json).expect("deserialize");
+    let back: Skill = serde_json::from_value(json)?;
     assert_eq!(back, skill);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -213,33 +220,35 @@ fn skill_without_inputs_outputs() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn skill_input_roundtrip() {
+fn skill_input_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let input = SkillInput {
         kind: "number".to_string(),
         description: "A numeric value".to_string(),
     };
 
-    let json = serde_json::to_value(&input).expect("serialize");
+    let json = serde_json::to_value(&input)?;
     assert_eq!(json["type"], "number");
     assert_eq!(json["description"], "A numeric value");
 
-    let back: SkillInput = serde_json::from_value(json).expect("deserialize");
+    let back: SkillInput = serde_json::from_value(json)?;
     assert_eq!(back, input);
+    Ok(())
 }
 
 #[test]
-fn skill_output_roundtrip() {
+fn skill_output_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let output = SkillOutput {
         kind: "boolean".to_string(),
         description: "Success flag".to_string(),
     };
 
-    let json = serde_json::to_value(&output).expect("serialize");
+    let json = serde_json::to_value(&output)?;
     assert_eq!(json["type"], "boolean");
     assert_eq!(json["description"], "Success flag");
 
-    let back: SkillOutput = serde_json::from_value(json).expect("deserialize");
+    let back: SkillOutput = serde_json::from_value(json)?;
     assert_eq!(back, output);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -247,33 +256,35 @@ fn skill_output_roundtrip() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn security_scheme_api_key_roundtrip() {
+fn security_scheme_api_key_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let scheme = SecurityScheme::ApiKey(ApiKeySecurityScheme {
         name: "X-API-Key".to_string(),
         location: "header".to_string(),
     });
-    let json = serde_json::to_value(&scheme).expect("serialize");
+    let json = serde_json::to_value(&scheme)?;
     assert_eq!(json["type"], "apiKey");
     assert_eq!(json["name"], "X-API-Key");
     assert_eq!(json["in"], "header");
-    let back: SecurityScheme = serde_json::from_value(json).expect("deserialize");
+    let back: SecurityScheme = serde_json::from_value(json)?;
     assert_eq!(back, scheme);
+    Ok(())
 }
 
 #[test]
-fn security_scheme_http_bearer_roundtrip() {
+fn security_scheme_http_bearer_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let scheme = SecurityScheme::HttpAuth(HttpAuthSecurityScheme {
         scheme: "bearer".to_string(),
     });
-    let json = serde_json::to_value(&scheme).expect("serialize");
+    let json = serde_json::to_value(&scheme)?;
     assert_eq!(json["type"], "http");
     assert_eq!(json["scheme"], "bearer");
-    let back: SecurityScheme = serde_json::from_value(json).expect("deserialize");
+    let back: SecurityScheme = serde_json::from_value(json)?;
     assert_eq!(back, scheme);
+    Ok(())
 }
 
 #[test]
-fn security_scheme_oauth2_roundtrip() {
+fn security_scheme_oauth2_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let scheme = SecurityScheme::OAuth2(Box::new(OAuth2SecurityScheme {
         flows: OAuthFlows {
             authorization_code: Some(OAuthFlow {
@@ -290,7 +301,7 @@ fn security_scheme_oauth2_roundtrip() {
             client_credentials: None,
         },
     }));
-    let json = serde_json::to_value(&scheme).expect("serialize");
+    let json = serde_json::to_value(&scheme)?;
     assert_eq!(json["type"], "oauth2");
     assert_eq!(
         json["flows"]["authorizationCode"]["authorizationUrl"],
@@ -300,33 +311,37 @@ fn security_scheme_oauth2_roundtrip() {
         json["flows"]["authorizationCode"]["tokenUrl"],
         "https://auth.example.com/token"
     );
-    let back: SecurityScheme = serde_json::from_value(json).expect("deserialize");
+    let back: SecurityScheme = serde_json::from_value(json)?;
     assert_eq!(back, scheme);
+    Ok(())
 }
 
 #[test]
-fn security_scheme_open_id_connect_roundtrip() {
+fn security_scheme_open_id_connect_roundtrip()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let scheme = SecurityScheme::OpenIdConnect(OpenIdConnectSecurityScheme {
         open_id_connect_url: "https://auth.example.com/.well-known/openid-configuration"
             .to_string(),
     });
-    let json = serde_json::to_value(&scheme).expect("serialize");
+    let json = serde_json::to_value(&scheme)?;
     assert_eq!(json["type"], "openIdConnect");
     assert_eq!(
         json["openIdConnectUrl"],
         "https://auth.example.com/.well-known/openid-configuration"
     );
-    let back: SecurityScheme = serde_json::from_value(json).expect("deserialize");
+    let back: SecurityScheme = serde_json::from_value(json)?;
     assert_eq!(back, scheme);
+    Ok(())
 }
 
 #[test]
-fn security_scheme_mutual_tls_roundtrip() {
+fn security_scheme_mutual_tls_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let scheme = SecurityScheme::MutualTls(MutualTlsSecurityScheme {});
-    let json = serde_json::to_value(&scheme).expect("serialize");
+    let json = serde_json::to_value(&scheme)?;
     assert_eq!(json["type"], "mutualTls");
-    let back: SecurityScheme = serde_json::from_value(json).expect("deserialize");
+    let back: SecurityScheme = serde_json::from_value(json)?;
     assert_eq!(back, scheme);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -334,27 +349,29 @@ fn security_scheme_mutual_tls_roundtrip() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn agent_provider_roundtrip() {
+fn agent_provider_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let provider = AgentProvider {
         organization: "MyOrg".to_string(),
         url: Some("https://myorg.example.com".to_string()),
     };
-    let json = serde_json::to_value(&provider).expect("serialize");
+    let json = serde_json::to_value(&provider)?;
     assert_eq!(json["organization"], "MyOrg");
     assert_eq!(json["url"], "https://myorg.example.com");
-    let back: AgentProvider = serde_json::from_value(json).expect("deserialize");
+    let back: AgentProvider = serde_json::from_value(json)?;
     assert_eq!(back, provider);
+    Ok(())
 }
 
 #[test]
-fn agent_provider_without_url() {
+fn agent_provider_without_url() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let provider = AgentProvider {
         organization: "MyOrg".to_string(),
         url: None,
     };
-    let json = serde_json::to_value(&provider).expect("serialize");
+    let json = serde_json::to_value(&provider)?;
     assert_eq!(json["organization"], "MyOrg");
     assert!(json.get("url").is_none());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -362,18 +379,19 @@ fn agent_provider_without_url() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn agent_interface_roundtrip() {
+fn agent_interface_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let iface = AgentInterface {
         url: "http://127.0.0.1:8080".to_string(),
         protocol_version: "1.0".to_string(),
         protocol_binding: PROTOCOL_BINDING.to_string(),
     };
-    let json = serde_json::to_value(&iface).expect("serialize");
+    let json = serde_json::to_value(&iface)?;
     assert_eq!(json["url"], "http://127.0.0.1:8080");
     assert_eq!(json["protocolVersion"], "1.0");
     assert_eq!(json["protocolBinding"], PROTOCOL_BINDING);
-    let back: AgentInterface = serde_json::from_value(json).expect("deserialize");
+    let back: AgentInterface = serde_json::from_value(json)?;
     assert_eq!(back, iface);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -381,36 +399,40 @@ fn agent_interface_roundtrip() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn agent_card_security_schemes_default_empty() {
+fn agent_card_security_schemes_default_empty()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let card = AgentCard {
         name: "test".to_string(),
         url: "https://example.com".to_string(),
         ..Default::default()
     };
-    let json = serde_json::to_value(&card).expect("serialize");
+    let json = serde_json::to_value(&card)?;
     assert!(
         json.get("securitySchemes").is_none(),
         "empty securitySchemes should be omitted"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_card_supported_interfaces_default_empty() {
+fn agent_card_supported_interfaces_default_empty()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let card = AgentCard {
         name: "test".to_string(),
         url: "https://example.com".to_string(),
         ..Default::default()
     };
-    let json = serde_json::to_value(&card).expect("serialize");
+    let json = serde_json::to_value(&card)?;
     assert_eq!(
         json["supportedInterfaces"],
         json!([]),
         "empty supportedInterfaces should be an empty array"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_card_forward_compat_old_json() {
+fn agent_card_forward_compat_old_json() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // Old JSON without new fields should deserialize with defaults.
     let json_str = r#"{
         "name": "CompatAgent",
@@ -419,7 +441,7 @@ fn agent_card_forward_compat_old_json() {
         "capabilities": {},
         "skills": []
     }"#;
-    let card: AgentCard = serde_json::from_str(json_str).expect("deserialize");
+    let card: AgentCard = serde_json::from_str(json_str)?;
     assert_eq!(card.name, "CompatAgent");
     assert!(card.provider.is_none());
     assert!(card.icon_url.is_none());
@@ -427,6 +449,7 @@ fn agent_card_forward_compat_old_json() {
     assert!(card.supported_interfaces.is_empty());
     assert!(card.security_schemes.is_empty());
     assert!(card.extensions.is_empty());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +457,7 @@ fn agent_card_forward_compat_old_json() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn agent_capabilities_defaults() {
+fn agent_capabilities_defaults() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let caps = AgentCapabilities::default();
     assert!(caps.streaming, "streaming should default to true");
     assert!(
@@ -442,10 +465,11 @@ fn agent_capabilities_defaults() {
         "push_notifications should default to false"
     );
     assert!(caps.stateful, "stateful should default to true");
+    Ok(())
 }
 
 #[test]
-fn agent_capabilities_roundtrip() {
+fn agent_capabilities_roundtrip() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let caps = AgentCapabilities {
         streaming: false,
         push_notifications: true,
@@ -453,29 +477,33 @@ fn agent_capabilities_roundtrip() {
         extended_agent_card: true,
     };
 
-    let json = serde_json::to_value(&caps).expect("serialize");
+    let json = serde_json::to_value(&caps)?;
     assert_eq!(json["streaming"], false);
     assert_eq!(json["pushNotifications"], true);
     assert_eq!(json["stateful"], false);
     assert_eq!(json["extendedAgentCard"], true);
 
-    let back: AgentCapabilities = serde_json::from_value(json).expect("deserialize");
+    let back: AgentCapabilities = serde_json::from_value(json)?;
     assert_eq!(back, caps);
+    Ok(())
 }
 
 #[test]
-fn agent_capabilities_deserialize_missing_fields_use_defaults() {
-    let caps: AgentCapabilities = serde_json::from_str(r#"{}"#).expect("deserialize");
+fn agent_capabilities_deserialize_missing_fields_use_defaults()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
+    let caps: AgentCapabilities = serde_json::from_str(r#"{}"#)?;
     assert!(caps.streaming);
     assert!(!caps.push_notifications);
     assert!(caps.stateful);
+    Ok(())
 }
 
 #[test]
-fn agent_capabilities_partial_deserialize() {
-    let caps: AgentCapabilities =
-        serde_json::from_str(r#"{"streaming": false}"#).expect("deserialize");
+fn agent_capabilities_partial_deserialize() -> core::result::Result<(), Box<dyn std::error::Error>>
+{
+    let caps: AgentCapabilities = serde_json::from_str(r#"{"streaming": false}"#)?;
     assert!(!caps.streaming);
     assert!(!caps.push_notifications); // default
     assert!(caps.stateful); // default
+    Ok(())
 }

@@ -25,8 +25,10 @@ version = "0.1.0"
 agnt-a2a = { path = "crates/agnt-a2a" }
 agnt-acp = { path = "crates/agnt-acp" }
 agnt-cli = { path = "crates/agnt-cli" }
-agnt-core = { path = "crates/agnt-core" }
+agnt-kernel = { path = "crates/agnt-kernel" }
+agnt-plugin = { path = "crates/agnt-plugin" }
 agnt-render = { path = "crates/agnt-render" }
+agnt-runtime = { path = "crates/agnt-runtime" }
 agnt-storage = { path = "crates/agnt-storage" }
 agnt-testkit = { path = "crates/agnt-testkit" }
 agnt-tui = { path = "crates/agnt-tui" }
@@ -104,4 +106,10 @@ notify = "8.2.0"
 
 # Dev/test
 serial_test = "4.0.1"
+
+# Architecture assertion suite: Rust sources are parsed, never line-scanned.
+# `printing` is what exposes `syn::spanned::Spanned`; `span-locations` is what
+# makes a parsed span report a real line number.
+syn = { version = "2.0.119", default-features = false, features = ["clone-impls", "full", "parsing", "printing", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 

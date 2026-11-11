@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use agnt_core::renderer::UiRenderer;
+use crate::renderer::UiRenderer;
 
 use crate::policy::UiPolicy;
 

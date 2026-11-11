@@ -2,7 +2,7 @@
 //!
 //! The translator's compaction arms are unit-tested in isolation, so those
 //! tests pass whether or not anything feeds them. These tests publish on
-//! `bus.compaction()` — the channel the production publishers use — while a
+//! the record stream — the channel the production publishers use — while a
 //! turn drains, which is the only way to prove the arms are live.
 
 use super::*;
@@ -40,10 +40,14 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
     let sink = RecordingSink::default();
-    let bus = manager
+    // The translator draws compaction from the record stream, so the fixture
+    // publishes records there — the lifecycle spine carries the same sweep for
+    // the other surfaces.
+    let compaction = manager
         .get_session(&session_id)
         .ok_or("session must exist")?
-        .bus()
+        .channels()
+        .stream
         .clone();
 
     // Park the turn on the session's runtime lock. `prompt()` subscribes its
@@ -65,27 +69,17 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
     );
 
     // -- Exec
-    let _ = bus
-        .compaction()
-        .send(SystemEvent::CompactionStarted {
-            source: "auto".to_string(),
-        })
-        .await;
-    let _ = bus
-        .compaction()
-        .send(SystemEvent::CompactionCompleted {
-            source: "auto".to_string(),
-            summary_preview: "the session covered the parser rewrite".to_string(),
-            summary_body: "the session covered the parser rewrite in full detail".to_string(),
-        })
-        .await;
-    let _ = bus
-        .compaction()
-        .send(SystemEvent::CompactionFailed {
-            source: "auto".to_string(),
-            message: "the summarizer returned nothing".to_string(),
-        })
-        .await;
+    let _ = compaction.publish(SessionRecord::Compaction(CompactionRecord::Started {
+        source: CompactionSource::Auto,
+    }));
+    let _ = compaction.publish(SessionRecord::Compaction(CompactionRecord::Completed {
+        source: CompactionSource::Auto,
+        summary: "the session covered the parser rewrite".to_string(),
+    }));
+    let _ = compaction.publish(SessionRecord::Compaction(CompactionRecord::Failed {
+        source: CompactionSource::Auto,
+        message: "the summarizer returned nothing".to_string(),
+    }));
     drop(guard);
     let _ = prompt.await?;
 

@@ -6,17 +6,8 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
 
     let cancel_controller = CancelController::default();
     let mut state = AppState::default();
-    reduce(
-        &mut state,
-        SystemEvent::PromptSubmitted {
-            text: "hello".to_string(),
-            stamp_millis: None,
-            stamp_model: None,
-            stamp_agent: None,
-        },
-        Some(&cancel_controller),
-    );
-    let _ = state.take_next_prompt_for_execution();
+    state.enqueue_prompt("hello".to_string());
+    let _ = state.activate_next_prompt();
     state
         .transcript
         .push_entry(TranscriptEntry::Message(MessageEntry {
@@ -30,12 +21,12 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
     // First Esc enters AbortPending, second confirms the cancel
     reduce(
         &mut state,
-        SystemEvent::KeyPressed { key: Key::Esc },
+        UiInput::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
     reduce(
         &mut state,
-        SystemEvent::KeyPressed { key: Key::Esc },
+        UiInput::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
 

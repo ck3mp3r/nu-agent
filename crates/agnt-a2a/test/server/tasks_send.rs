@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_tasks_send_creates_task() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -13,11 +13,10 @@ async fn test_tasks_send_creates_task() -> Result<()> {
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(body.get("task").is_some(), "Should have a task field");
     let task_id = body["task"]["id"].as_str().ok_or("should have task id")?;
     assert!(!task_id.is_empty(), "Task should have an ID");
@@ -29,7 +28,7 @@ async fn test_tasks_send_creates_task() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_with_return_immediately_returns_working_task() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -38,11 +37,10 @@ async fn test_send_with_return_immediately_returns_working_task() -> Result<()> 
             "configuration": {"returnImmediately": true}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["status"]["state"], "TASK_STATE_WORKING",
         "non-blocking send must return the in-progress task, got: {body}"
@@ -54,7 +52,7 @@ async fn test_send_with_return_immediately_returns_working_task() -> Result<()> 
 
 #[tokio::test]
 async fn test_send_without_configuration_blocks_until_terminal() -> Result<()> {
-    let (server, client) = test_server_with_blocking_timeout(MAX_TEST_BLOCKING_TIMEOUT).await;
+    let (server, client) = test_server_with_blocking_timeout(MAX_TEST_BLOCKING_TIMEOUT).await?;
 
     // Cancel the task from another connection once the blocking send has
     // created it.
@@ -80,11 +78,10 @@ async fn test_send_without_configuration_blocks_until_terminal() -> Result<()> {
             "message": {"role": "user", "parts": [{"type": "text", "text": "block me"}]}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["status"]["state"], "TASK_STATE_CANCELED",
         "blocking send must return the terminal task, got: {body}"
@@ -96,7 +93,7 @@ async fn test_send_without_configuration_blocks_until_terminal() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_blocking_timeout_returns_non_terminal_task() -> Result<()> {
-    let (server, client) = test_server_with_blocking_timeout(Duration::from_millis(200)).await;
+    let (server, client) = test_server_with_blocking_timeout(Duration::from_millis(200)).await?;
 
     let started = std::time::Instant::now();
     let resp = client
@@ -106,8 +103,7 @@ async fn test_send_blocking_timeout_returns_non_terminal_task() -> Result<()> {
             "configuration": {"returnImmediately": false}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
     assert!(
         started.elapsed() >= Duration::from_millis(200),
@@ -115,7 +111,7 @@ async fn test_send_blocking_timeout_returns_non_terminal_task() -> Result<()> {
         started.elapsed()
     );
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["status"]["state"], "TASK_STATE_WORKING",
         "timed-out blocking send must return the non-terminal task, got: {body}"
@@ -127,7 +123,7 @@ async fn test_send_blocking_timeout_returns_non_terminal_task() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_with_accepted_output_modes_parses_without_error() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -139,11 +135,10 @@ async fn test_send_with_accepted_output_modes_parses_without_error() -> Result<(
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body.get("task").is_some(),
         "acceptedOutputModes must parse without error, got: {body}"
@@ -155,7 +150,7 @@ async fn test_send_with_accepted_output_modes_parses_without_error() -> Result<(
 
 #[tokio::test]
 async fn test_send_without_accepted_output_modes_succeeds() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -164,11 +159,10 @@ async fn test_send_without_accepted_output_modes_succeeds() -> Result<()> {
             "configuration": {"returnImmediately": true}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body.get("task").is_some(),
         "absent acceptedOutputModes must not be rejected, got: {body}"
@@ -180,7 +174,7 @@ async fn test_send_without_accepted_output_modes_succeeds() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_rejects_unsupported_accepted_output_modes() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -192,15 +186,14 @@ async fn test_send_rejects_unsupported_accepted_output_modes() -> Result<()> {
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         resp.status(),
         400,
         "acceptedOutputModes with no intersection must be rejected"
     );
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(
         body["error"]["details"][0]["reason"],
@@ -214,7 +207,7 @@ async fn test_send_rejects_unsupported_accepted_output_modes() -> Result<()> {
 #[tokio::test]
 async fn test_send_accepts_card_advertised_output_mode() -> Result<()> {
     let (server, client) =
-        test_server_with_output_modes(vec!["application/json".to_string()]).await;
+        test_server_with_output_modes(vec!["application/json".to_string()]).await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -226,15 +219,14 @@ async fn test_send_accepts_card_advertised_output_mode() -> Result<()> {
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         resp.status(),
         200,
         "a mode advertised by the card must be accepted"
     );
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body.get("task").is_some(),
         "should create a task, got: {body}"
@@ -247,7 +239,7 @@ async fn test_send_accepts_card_advertised_output_mode() -> Result<()> {
 #[tokio::test]
 async fn test_send_rejects_mode_not_advertised_by_card() -> Result<()> {
     let (server, client) =
-        test_server_with_output_modes(vec!["application/json".to_string()]).await;
+        test_server_with_output_modes(vec!["application/json".to_string()]).await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -259,15 +251,14 @@ async fn test_send_rejects_mode_not_advertised_by_card() -> Result<()> {
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         resp.status(),
         400,
         "a mode the card does not advertise must be rejected"
     );
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["error"]["details"][0]["reason"],
         "CONTENT_TYPE_NOT_SUPPORTED"
@@ -279,7 +270,7 @@ async fn test_send_rejects_mode_not_advertised_by_card() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_malformed_configuration_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -288,15 +279,14 @@ async fn test_send_malformed_configuration_returns_400() -> Result<()> {
             "configuration": {"returnImmediately": "yes"}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(
         resp.status(),
         400,
         "malformed configuration must be rejected, not silently defaulted"
     );
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
     assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
@@ -306,19 +296,18 @@ async fn test_send_malformed_configuration_returns_400() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_tasks_send_missing_message() {
-    let (server, client) = test_server().await;
+async fn test_tasks_send_missing_message() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({}))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 400);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body.get("error").is_some(),
         "Should return error for missing message"
@@ -329,4 +318,5 @@ async fn test_tasks_send_missing_message() {
     assert_eq!(body["error"]["details"][0]["domain"], "a2a-protocol.org");
 
     server.shutdown().await;
+    Ok(())
 }

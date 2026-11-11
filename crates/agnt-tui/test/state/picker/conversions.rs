@@ -99,7 +99,7 @@ fn picker_option_from_carries_the_section_key() -> Result<()> {
     // -- Exec
     let model_section = PickerOption::from(model).section;
     let agent_section = PickerOption::from(agent).section;
-    let session_section = PickerOption::from(agnt_core::session::SessionInfo {
+    let session_section = PickerOption::from(agnt_runtime::session::SessionInfo {
         id: "abc123".to_string(),
         message_count: 3,
         last_active: Some(last_active),

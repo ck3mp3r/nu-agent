@@ -1,6 +1,6 @@
 //! The backend seam: one trait, one rect.
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use crate::transcript::entry::TranscriptEntry;
 
 use crate::theme::Theme;
 

@@ -1,4 +1,4 @@
-use agnt_core::transcript::ir::StyleHint;
+use agnt_render::transcript::ir::StyleHint;
 
 use super::style_text;
 

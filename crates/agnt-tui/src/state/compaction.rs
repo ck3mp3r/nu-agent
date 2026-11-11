@@ -1,11 +1,11 @@
 //! Compaction domain: the compaction block rows and their streamed summary.
 
-use agnt_core::transcript::entry::{MessageEntry, NoticeEntry, TaskEntry, TranscriptEntry};
+use agnt_render::transcript::entry::{MessageEntry, NoticeEntry, TaskEntry, TranscriptEntry};
 
 use super::transcript_store::TranscriptStore;
 use super::{CompactionLine, CompactionStatus, ScrollState, StatusState};
-use agnt_core::transcript::ir::NoticeKind;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::NoticeKind;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// The name the compaction task's call line carries.
 const COMPACTION_TASK: &str = "Compaction";
@@ -171,7 +171,7 @@ impl CompactionState {
         // Store raw markdown — projected at render time with canvas width
         scroll.scroll_transcript_to_bottom();
         store.push_entry(TranscriptEntry::Message(MessageEntry {
-            role: agnt_core::transcript::ir::MessageRole::Assistant,
+            role: agnt_render::transcript::ir::MessageRole::Assistant,
             markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
             timestamp_millis: None,
             model: None,
@@ -203,7 +203,7 @@ impl CompactionState {
 
         if !body.trim().is_empty() {
             store.push_entry(TranscriptEntry::Message(MessageEntry {
-                role: agnt_core::transcript::ir::MessageRole::Assistant,
+                role: agnt_render::transcript::ir::MessageRole::Assistant,
                 markdown: crate::markdown::unwrap_single_fenced_block(&body),
                 timestamp_millis: None,
                 model: None,

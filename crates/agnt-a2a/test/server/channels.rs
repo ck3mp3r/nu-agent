@@ -13,8 +13,7 @@ async fn test_incoming_task_channel() -> Result<()> {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
+    .await?;
     let mut task_rx = server
         .take_incoming_task_receiver()
         .ok_or("should have incoming task receiver")?;
@@ -28,18 +27,17 @@ async fn test_incoming_task_channel() -> Result<()> {
         extensions: None,
         metadata: None,
     };
-    let client = test_client();
+    let client = test_client()?;
 
     // Send a task with senderUrl
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&serde_json::json!({
-            "message": serde_json::to_value(&msg).unwrap(),
+            "message": serde_json::to_value(&msg)?,
             "senderUrl": "http://sender.local:12345"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     // Verify the event was received
@@ -71,12 +69,11 @@ async fn test_task_cancel_channel_emits_task_id() -> Result<()> {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
+    .await?;
     let mut cancel_rx = server
         .take_task_cancel_receiver()
         .ok_or("should have cancel receiver")?;
-    let client = test_client();
+    let client = test_client()?;
 
     // Create a task
     let send_resp = client
@@ -85,9 +82,8 @@ async fn test_task_cancel_channel_emits_task_id() -> Result<()> {
             &json!({"message": {"role": "user", "parts": [{"type": "text", "text": "cancel me"}]}}),
         )
         .send()
-        .await
-        .unwrap();
-    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+        .await?;
+    let send_body: serde_json::Value = send_resp.json().await?;
     let task_id = send_body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -97,10 +93,9 @@ async fn test_task_cancel_channel_emits_task_id() -> Result<()> {
     let resp = client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["task"]["status"]["state"], "TASK_STATE_CANCELED");
 
     // Verify the cancel channel received the task ID

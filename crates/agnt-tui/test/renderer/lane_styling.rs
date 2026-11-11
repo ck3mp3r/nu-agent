@@ -4,8 +4,8 @@
 //! assertion here names one lane and one semantic color.
 
 use super::support::*;
-use agnt_core::transcript::ir::{MessageRole, NoticeKind};
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::{MessageRole, NoticeKind};
+use agnt_render::transcript::renderer::ItemStatus;
 
 // region:    --- Text surfaces
 

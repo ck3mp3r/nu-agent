@@ -12,36 +12,35 @@ use super::config_options::{manager_with_cache, models_cache};
 /// One switch event, flattened for comparison: `(event, from, to)`.
 type Switch = (String, Option<String>, String);
 
-/// The switch events currently buffered on the session channel.
-fn take_switches(rx: &mut agnt_core::bus::SessionRx) -> Vec<Switch> {
+/// The switch events currently buffered on the lifecycle concern.
+fn take_switches(rx: &mut LifecycleRx) -> Vec<Switch> {
     let mut switches = Vec::new();
     loop {
         match rx.try_recv() {
-            Ok(SessionEvent::AgentSwitched { from, to }) => {
+            Ok(LifecycleEvent::AgentSwitched { from, to }) => {
                 switches.push(("agent_switched".to_string(), from, to));
             }
-            Ok(SessionEvent::ModelSwitched { from, to }) => {
+            Ok(LifecycleEvent::ModelSwitched { from, to }) => {
                 switches.push(("model_switched".to_string(), Some(from), to));
             }
             Ok(_) => {}
-            Err(agnt_core::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
     switches
 }
 
-/// Subscribe the session channel before the switch runs: a broadcast channel
-/// does not buffer for later subscribers.
+/// Subscribe the lifecycle concern before the switch runs: a strict
+/// subscriber sees every later command.
 fn subscribe(
     manager: &AcpSessionManager<MockRuntimeBuilder>,
     session_id: &str,
-) -> Result<agnt_core::bus::SessionRx> {
+) -> Result<LifecycleRx> {
     Ok(manager
         .get_session(session_id)
         .ok_or("session must exist")?
-        .bus()
-        .session()
+        .channels()
+        .lifecycle
         .subscribe())
 }
 

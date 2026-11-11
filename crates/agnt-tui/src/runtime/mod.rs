@@ -53,4 +53,8 @@ mod session_picker_test;
 mod alignment_test;
 
 #[cfg(test)]
+#[path = "../../test/runtime/slash_round_trip.rs"]
+mod slash_round_trip_test;
+
+#[cfg(test)]
 pub(crate) use status::help_test::*;

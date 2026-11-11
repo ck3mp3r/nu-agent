@@ -1,32 +1,51 @@
-//! Translation of the remaining `SystemEvent` variants, including the ones with no
-//! ACP equivalent.
+//! Translation of the remaining record and narration variants, including the
+//! ones with no ACP equivalent.
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
-use agnt_core::protocol::event::{PermissionDecision, ToolDisplay};
-use agnt_core::protocol::events::{RequestId, SystemEvent, SystemKind, Usage};
+use agnt_kernel::{
+    CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, PermissionRecord, RequestId,
+    SessionRecord, StopCause, TurnRecord, Usage,
+};
+use agnt_runtime::bus::NarrationEvent;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
-use crate::translator::EventTranslator;
+use crate::translator::{EventTranslator, TranslateInput};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// The `nu-agent` compaction object an `session_info_update` carries.
+fn compaction_meta(update: &SessionUpdate) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let SessionUpdate::SessionInfoUpdate(info) = update else {
+        return Err(format!("expected session_info_update, got: {update:?}").into());
+    };
+    let meta = info
+        .meta
+        .as_ref()
+        .ok_or("compaction update must carry _meta")?;
+    let compaction = meta
+        .get("nu-agent")
+        .and_then(|value| value.as_object())
+        .ok_or("meta must hold the nu-agent compaction object")?;
+    Ok(compaction.clone())
+}
+
 // ---------------------------------------------------------------------------
-// AssistantMessage
+// Assistant message
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_translator_assistant_message_produces_agent_message_chunk() -> Result<()> {
-    // -- Setup & Fixtures
     // -- Setup & Fixtures: the two fields differ, so the assertion pins which
     // one ACP forwards — the raw delta, not the accumulated text.
-    let event = SystemEvent::InferenceChunk {
+    let event = NarrationEvent::InferenceChunk {
         delta: "hello".to_string(),
         aggregated: "hello world".to_string(),
     };
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Narration(&event))
         .ok_or("assistant message must translate")?;
 
     // -- Check
@@ -41,29 +60,27 @@ fn test_translator_assistant_message_produces_agent_message_chunk() -> Result<()
 }
 
 // ---------------------------------------------------------------------------
-// LlmCompleted
+// Inference completed
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_translator_llm_completed_produces_usage_update() -> Result<()> {
+fn test_translator_inference_completed_produces_usage_update() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::InferenceCompleted {
+    let event = SessionRecord::Inference(InferenceRecord::Completed {
         usage: Usage {
-            response_chars: 10,
-            tool_calls: 1,
             input_tokens: 100,
             output_tokens: 50,
             total_tokens: Some(150),
             cost: None,
             cost_complete: false,
         },
-    };
+    });
     let mut translator = EventTranslator::with_context_size(SESSION, 200_000);
 
     // -- Exec
     let update = translator
-        .translate(event)
-        .ok_or("llm completed must translate")?;
+        .translate(TranslateInput::Record(&event))
+        .ok_or("inference completed must translate")?;
 
     // -- Check
     let SessionUpdate::UsageUpdate(usage) = update else {
@@ -76,24 +93,22 @@ fn test_translator_llm_completed_produces_usage_update() -> Result<()> {
 }
 
 #[test]
-fn test_translator_llm_completed_default_context_size_is_builtin_default() -> Result<()> {
+fn test_translator_inference_completed_default_context_size_is_builtin_default() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::InferenceCompleted {
+    let event = SessionRecord::Inference(InferenceRecord::Completed {
         usage: Usage {
-            response_chars: 0,
-            tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: Some(7),
             cost: None,
             cost_complete: false,
         },
-    };
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
-        .ok_or("llm completed must translate")?;
+        .translate(TranslateInput::Record(&event))
+        .ok_or("inference completed must translate")?;
 
     // -- Check
     let SessionUpdate::UsageUpdate(usage) = update else {
@@ -102,7 +117,7 @@ fn test_translator_llm_completed_default_context_size_is_builtin_default() -> Re
     assert_eq!(usage.used, 7);
     assert_eq!(
         usage.size,
-        agnt_core::config::defaults::MAX_CONTEXT_TOKENS as u64
+        agnt_runtime::config::defaults::MAX_CONTEXT_TOKENS as u64
     );
     Ok(())
 }
@@ -111,62 +126,52 @@ fn test_translator_llm_completed_default_context_size_is_builtin_default() -> Re
 // Compaction
 // ---------------------------------------------------------------------------
 
+/// The compaction label this translator owns, one case per source variant.
 #[test]
-fn test_translator_compaction_started_produces_session_info_update() -> Result<()> {
+fn test_translator_compaction_started_labels_each_source() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::CompactionStarted {
-        source: "proactive".to_string(),
-    };
+    let cases = [
+        (CompactionSource::Auto, "auto"),
+        (CompactionSource::Manual, "slash"),
+    ];
+    let mut translator = translator();
 
-    // -- Exec
-    let update = translator()
-        .translate(event)
-        .ok_or("compaction started must translate")?;
-
-    // -- Check
-    let SessionUpdate::SessionInfoUpdate(info) = update else {
-        return Err(format!("expected session_info_update, got: {update:?}").into());
-    };
-    let meta = info.meta.ok_or("compaction update must carry _meta")?;
-    let compaction = meta
-        .get("nu-agent")
-        .and_then(|value| value.as_object())
-        .ok_or("meta must hold the nu-agent compaction object")?;
-    assert_eq!(
-        compaction.get("state").and_then(|value| value.as_str()),
-        Some("started")
-    );
-    assert_eq!(
-        compaction.get("source").and_then(|value| value.as_str()),
-        Some("proactive")
-    );
-    assert_eq!(compaction.get("detail"), None);
+    // -- Exec & Check
+    for (source, expected) in cases {
+        let event = SessionRecord::Compaction(CompactionRecord::Started { source });
+        let update = translator
+            .translate(TranslateInput::Record(&event))
+            .ok_or("compaction started must translate")?;
+        let compaction = compaction_meta(&update)?;
+        assert_eq!(
+            compaction.get("state").and_then(|value| value.as_str()),
+            Some("started")
+        );
+        assert_eq!(
+            compaction.get("source").and_then(|value| value.as_str()),
+            Some(expected),
+            "the source label is this translator's, not the producer's"
+        );
+        assert_eq!(compaction.get("detail"), None);
+    }
     Ok(())
 }
 
 #[test]
 fn test_translator_compaction_completed_produces_session_info_update() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::CompactionCompleted {
-        source: "proactive".to_string(),
-        summary_preview: "summary".to_string(),
-        summary_body: "full summary".to_string(),
-    };
+    let event = SessionRecord::Compaction(CompactionRecord::Completed {
+        source: CompactionSource::Auto,
+        summary: "summary".to_string(),
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
         .ok_or("compaction completed must translate")?;
 
     // -- Check
-    let SessionUpdate::SessionInfoUpdate(info) = update else {
-        return Err(format!("expected session_info_update, got: {update:?}").into());
-    };
-    let meta = info.meta.ok_or("compaction update must carry _meta")?;
-    let compaction = meta
-        .get("nu-agent")
-        .and_then(|value| value.as_object())
-        .ok_or("meta must hold the nu-agent compaction object")?;
+    let compaction = compaction_meta(&update)?;
     assert_eq!(
         compaction.get("state").and_then(|value| value.as_str()),
         Some("completed")
@@ -179,27 +184,48 @@ fn test_translator_compaction_completed_produces_session_info_update() -> Result
 }
 
 #[test]
-fn test_translator_compaction_failed_produces_session_info_update() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::CompactionFailed {
-        source: "proactive".to_string(),
-        message: "model unavailable".to_string(),
-    };
+fn test_translator_compaction_completed_detail_is_a_preview_not_the_body() -> Result<()> {
+    // -- Setup & Fixtures: a summary longer than the preview window.
+    let summary = "s".repeat(500);
+    let event = SessionRecord::Compaction(CompactionRecord::Completed {
+        source: CompactionSource::Auto,
+        summary: summary.clone(),
+    });
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Record(&event))
+        .ok_or("compaction completed must translate")?;
+
+    // -- Check
+    let compaction = compaction_meta(&update)?;
+    let detail = compaction
+        .get("detail")
+        .and_then(|value| value.as_str())
+        .ok_or("a completed compaction must carry its preview")?;
+    assert_eq!(
+        detail.chars().count(),
+        200,
+        "the client sees a preview only"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_translator_compaction_failed_produces_session_info_update() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = SessionRecord::Compaction(CompactionRecord::Failed {
+        source: CompactionSource::Auto,
+        message: "model unavailable".to_string(),
+    });
+
+    // -- Exec
+    let update = translator()
+        .translate(TranslateInput::Record(&event))
         .ok_or("compaction failed must translate")?;
 
     // -- Check
-    let SessionUpdate::SessionInfoUpdate(info) = update else {
-        return Err(format!("expected session_info_update, got: {update:?}").into());
-    };
-    let meta = info.meta.ok_or("compaction update must carry _meta")?;
-    let compaction = meta
-        .get("nu-agent")
-        .and_then(|value| value.as_object())
-        .ok_or("meta must hold the nu-agent compaction object")?;
+    let compaction = compaction_meta(&update)?;
     assert_eq!(
         compaction.get("state").and_then(|value| value.as_str()),
         Some("failed")
@@ -218,14 +244,14 @@ fn test_translator_compaction_failed_produces_session_info_update() -> Result<()
 #[test]
 fn test_translator_warning_produces_agent_message_chunk() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::SystemMessage {
-        kind: SystemKind::Warning,
+    let event = NarrationEvent::SystemMessage {
+        kind: NoticeKind::Warning,
         text: "Conversation is using ~120000 estimated tokens".to_string(),
     };
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Narration(&event))
         .ok_or("warning must translate")?;
 
     // -- Check
@@ -242,14 +268,14 @@ fn test_translator_warning_produces_agent_message_chunk() -> Result<()> {
 #[test]
 fn test_translator_warning_empty_message_produces_agent_message_chunk() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::SystemMessage {
-        kind: SystemKind::Warning,
+    let event = NarrationEvent::SystemMessage {
+        kind: NoticeKind::Warning,
         text: String::new(),
     };
 
     // -- Exec
     let update = translator()
-        .translate(event)
+        .translate(TranslateInput::Narration(&event))
         .ok_or("empty warning must still translate")?;
 
     // -- Check
@@ -264,142 +290,132 @@ fn test_translator_warning_empty_message_produces_agent_message_chunk() -> Resul
 }
 
 // ---------------------------------------------------------------------------
-// Events without an ACP equivalent
+// Variants without an ACP equivalent
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_translator_tick_produces_none() -> Result<()> {
-    // -- Exec & Check
-    assert!(translator().translate(SystemEvent::Tick).is_none());
-    Ok(())
-}
+fn test_translator_inference_started_produces_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = SessionRecord::Inference(InferenceRecord::Started);
 
-#[test]
-fn test_translator_llm_started_produces_none() -> Result<()> {
     // -- Exec & Check
     assert!(
         translator()
-            .translate(SystemEvent::InferenceStarted)
+            .translate(TranslateInput::Record(&event))
             .is_none()
     );
     Ok(())
 }
 
 #[test]
-fn test_translator_tool_preview_produces_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::PreviewRequested {
-        call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("edit".to_string()),
-            "builtin",
-            "{}",
-            call_line("→ edit src/file.txt"),
-        ),
-        display: ToolDisplay {
-            title: Some("edit src/file.txt".to_string()),
-            sections: vec![diff_section("src/file.txt", "--- a\n+++ b\n")],
-        },
-    };
-
-    // -- Exec & Check
-    assert!(translator().translate(event).is_none());
-    Ok(())
-}
-
-#[test]
 fn test_translator_turn_error_produces_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::SystemMessage {
-        kind: SystemKind::TurnError,
+    // -- Setup & Fixtures: a turn error reaches the client as the prompt
+    // response, never as a transcript chunk.
+    let event = NarrationEvent::SystemMessage {
+        kind: NoticeKind::TurnError,
         text: "boom".to_string(),
     };
 
     // -- Exec & Check
-    assert!(translator().translate(event).is_none());
+    assert!(
+        translator()
+            .translate(TranslateInput::Narration(&event))
+            .is_none()
+    );
     Ok(())
 }
 
 #[test]
 fn test_translator_stopped_produces_none() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::InferenceStopped {
+    let event = SessionRecord::Inference(InferenceRecord::Stopped {
+        cause: StopCause::Other,
         reason: "hook stopped the run".to_string(),
-    };
+    });
 
     // -- Exec & Check
-    assert!(translator().translate(event).is_none());
+    assert!(
+        translator()
+            .translate(TranslateInput::Record(&event))
+            .is_none()
+    );
     Ok(())
 }
 
 #[test]
-fn test_translator_completed_produces_none() -> Result<()> {
+fn test_translator_turn_completed_produces_none() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::TurnCompleted {
-        tool_calls: 3,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: None,
-        cost: None,
-        cost_complete: true,
-        duration_ms: 0,
-    };
+    let event = SessionRecord::Turn(TurnRecord::Completed { duration_ms: 0 });
 
     // -- Exec & Check
-    assert!(translator().translate(event).is_none());
+    assert!(
+        translator()
+            .translate(TranslateInput::Record(&event))
+            .is_none()
+    );
     Ok(())
 }
 
 #[test]
 fn test_translator_compaction_summary_chunk_produces_none() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SystemEvent::CompactionSummaryChunk {
-        source: "proactive".to_string(),
+    let event = SessionRecord::Compaction(CompactionRecord::SummaryChunk {
+        source: CompactionSource::Auto,
         delta: "sum".to_string(),
         aggregated: "summary".to_string(),
-    };
+    });
 
     // -- Exec & Check
-    assert!(translator().translate(event).is_none());
+    assert!(
+        translator()
+            .translate(TranslateInput::Record(&event))
+            .is_none()
+    );
     Ok(())
 }
 
 #[test]
 fn test_translator_permission_requested_produces_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = SystemEvent::PermissionRequested {
-        request_id: RequestId::new("perm-1"),
-        context: permission_context(),
-    };
+    // -- Setup & Fixtures: the permission bridge owns the card, not the
+    // translator.
+    let event = SessionRecord::Permission(default_requested());
 
     // -- Exec & Check
-    assert!(translator().translate(event).is_none());
+    assert!(
+        translator()
+            .translate(TranslateInput::Record(&event))
+            .is_none()
+    );
     Ok(())
 }
 
 #[test]
-fn test_translator_permission_decision_events_produce_none() -> Result<()> {
-    // -- Setup & Fixtures
+fn test_translator_permission_resolutions_produce_none() -> Result<()> {
+    // -- Setup & Fixtures: every resolution of the gate is silent on the wire.
     let events = [
-        SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("perm-1"),
+        PermissionRecord::Decided {
+            request_id: RequestId::from_minted("perm-1"),
             decision: PermissionDecision::AllowOnce,
-            matched_rule_identity: "rule".to_string(),
+            rule_identity: "rule".to_string(),
         },
-        SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("perm-1"),
+        PermissionRecord::TimedOut {
+            request_id: RequestId::from_minted("perm-1"),
         },
-        SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("perm-1"),
+        PermissionRecord::Ignored {
+            request_id: RequestId::from_minted("perm-1"),
             reason: "superseded".to_string(),
         },
     ];
     let mut translator = translator();
 
     // -- Exec & Check
-    for event in events {
+    for record in events {
+        let event = SessionRecord::Permission(record);
         assert!(
-            translator.translate(event).is_none(),
-            "permission decision events must not translate"
+            translator
+                .translate(TranslateInput::Record(&event))
+                .is_none(),
+            "permission resolutions must not translate"
         );
     }
     Ok(())

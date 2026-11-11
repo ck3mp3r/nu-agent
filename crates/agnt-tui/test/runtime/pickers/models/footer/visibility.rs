@@ -12,7 +12,7 @@ async fn test_model_picker_footer_absent_at_inner_height_six() -> Result<()> {
     let mut driver = RenderLoopDriver::new(62, 12);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: identity.clone(),

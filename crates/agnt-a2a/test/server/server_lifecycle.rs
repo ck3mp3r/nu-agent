@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn test_server_starts_and_returns_port() {
+async fn test_server_starts_and_returns_port() -> Result<()> {
     let card = AgentCard {
         name: "test".to_string(),
         url: "http://127.0.0.1:0".to_string(),
@@ -13,8 +13,7 @@ async fn test_server_starts_and_returns_port() {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
+    .await?;
     assert!(server.port > 0, "Port should be > 0");
     assert_eq!(
         server.local_url,
@@ -22,30 +21,30 @@ async fn test_server_starts_and_returns_port() {
     );
 
     // Health endpoint responds
-    crate::discovery::card::ensure_crypto_provider();
+    crate::test_support::install_crypto_provider();
     let resp = reqwest::Client::new()
         .get(format!("{}/health", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body = resp.text().await.unwrap();
+    let body = resp.text().await?;
     assert_eq!(body, "ok");
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_a2a_version_response_header() {
-    let (server, client) = test_server().await;
+async fn test_a2a_version_response_header() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     // Health endpoint
     let resp = client
         .get(format!("{}/health", server.local_url))
         .send()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let version = resp
         .headers()
         .get("A2A-Version")
@@ -60,8 +59,7 @@ async fn test_a2a_version_response_header() {
     let resp = client
         .get(format!("{}/tasks", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     let version = resp
         .headers()
         .get("A2A-Version")
@@ -76,8 +74,7 @@ async fn test_a2a_version_response_header() {
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     let version = resp
         .headers()
         .get("A2A-Version")
@@ -89,6 +86,7 @@ async fn test_a2a_version_response_header() {
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
@@ -104,8 +102,7 @@ async fn test_server_cleanup_frees_port() -> Result<()> {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
+    .await?;
     let port = server.port;
 
     server.shutdown().await;
@@ -132,16 +129,15 @@ async fn test_server_cleanup_frees_port() -> Result<()> {
 
 #[tokio::test]
 async fn test_agent_card_endpoint() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["name"], "test-agent");
     let skills = body["skills"]
         .as_array()
@@ -164,13 +160,12 @@ async fn test_agent_card_endpoint() -> Result<()> {
 
 #[tokio::test]
 async fn test_agent_card_cache_headers() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     let cache_control = resp
@@ -195,7 +190,7 @@ async fn test_agent_card_cache_headers() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_extended_agent_card() {
+async fn test_extended_agent_card() -> Result<()> {
     let card = AgentCard {
         name: "test".into(),
         url: "http://127.0.0.1:0".into(),
@@ -207,18 +202,16 @@ async fn test_extended_agent_card() {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
+    .await?;
 
-    crate::discovery::card::ensure_crypto_provider();
+    crate::test_support::install_crypto_provider();
     let resp = reqwest::Client::new()
         .get(format!("{}/extendedAgentCard", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(body.get("agentCard").is_some(), "Should have agentCard");
     assert!(
         body.get("extendedCapabilities").is_some(),
@@ -234,6 +227,7 @@ async fn test_extended_agent_card() {
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
@@ -258,18 +252,16 @@ async fn test_agent_card_update_via_handle() -> Result<()> {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    let client = test_client();
+    .await?;
+    let client = test_client()?;
 
     // GET initial card — assert name is "Agent A"
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["name"], "Agent A");
     assert_eq!(body["description"], "First agent");
     let skills = body["skills"]
@@ -280,7 +272,7 @@ async fn test_agent_card_update_via_handle() -> Result<()> {
     // Write a new card via agent_card_handle()
     {
         let card_handle = server.agent_card_handle();
-        let mut card = card_handle.write().expect("agent_card lock");
+        let mut card = card_handle.write().unwrap_or_else(|e| e.into_inner());
         let new_skills = vec![Skill {
             id: "skill-b".into(),
             name: "Skill B".into(),
@@ -295,10 +287,9 @@ async fn test_agent_card_update_via_handle() -> Result<()> {
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["name"], "Agent B");
     assert_eq!(body["description"], "Second agent");
     let skills = body["skills"]

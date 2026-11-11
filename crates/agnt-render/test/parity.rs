@@ -3,7 +3,7 @@ use crate::gallery::Gallery;
 use crate::plain::PlainBackend;
 use crate::planner::LayoutPlanner;
 use crate::theme::Theme;
-use agnt_core::transcript::entry::TranscriptEntry;
+use crate::transcript::entry::TranscriptEntry;
 
 /// The parity property (design §4.2): the plan's row accounting equals the
 /// backend's rendered row count over the gallery corpus, and every planned

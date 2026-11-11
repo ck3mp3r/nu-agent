@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::interaction::cancel::CancelController;
-use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
 
 /// WHEN prompts queue up while a turn runs, THE pending-event drain SHALL
 /// deliver them once, in FIFO order, as a single coalesced `PromptSubmitted`
@@ -26,7 +26,7 @@ fn pending_prompts_drain_once_as_one_prompt_submitted_event() -> Result<()> {
     let submitted: Vec<&str> = events
         .iter()
         .filter_map(|event| match event {
-            OrchestratorEvent::PromptSubmitted { text } => Some(text.as_str()),
+            OrchestratorEvent::PromptSubmitted { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -38,6 +38,29 @@ fn pending_prompts_drain_once_as_one_prompt_submitted_event() -> Result<()> {
 
     // -- Check: a second drain delivers nothing.
     assert!(again.is_empty());
+    Ok(())
+}
+
+/// WHEN an external prompt's row arrives ahead of a typed prompt, THE drain
+/// SHALL submit only the typed prompt.
+///
+/// The external prompt's turn belongs to the loop's own control intake: the
+/// surface renders its row and submits nothing, so the typed prose is the one
+/// submission this cycle carries.
+#[test]
+fn an_external_prompt_shows_a_row_and_leaves_the_submit_to_the_loop() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    enqueue_external(&mut state, "task-1", "external one");
+    state.enqueue_prompt("typed".to_string());
+
+    // -- Exec
+    let typed = state.take_next_prompt_for_execution();
+
+    // -- Check: the typed prompt is the only submission, and both rows render.
+    assert_eq!(typed.as_deref(), Some("typed"));
+    assert_eq!(state.take_next_prompt_for_execution(), None);
+    assert_eq!(user_rows(&state), vec!["external one", "typed"]);
     Ok(())
 }
 

@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_subscribe_stream_receives_events() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task
     let resp = client
@@ -12,9 +12,8 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
             "contextId": "ctx-abc"
         }))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -24,8 +23,7 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
     let sse_resp = client
         .post(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert!(
         sse_resp.status().is_success(),
@@ -47,8 +45,7 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // Read SSE body — the stream should close after the cancel event
     let body_bytes = tokio::time::timeout(Duration::from_secs(5), sse_resp.bytes())
@@ -90,7 +87,7 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
 
 #[tokio::test]
 async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task with a contextId
     let resp = client
@@ -100,9 +97,8 @@ async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()
             "contextId": "ctx-abc"
         }))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -112,8 +108,7 @@ async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()
     let sse_resp = client
         .post(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert!(
         sse_resp.status().is_success(),
         "Subscribe should return 200"
@@ -139,8 +134,7 @@ async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     let body_bytes = tokio::time::timeout(Duration::from_secs(5), sse_resp.bytes())
         .await
@@ -171,18 +165,17 @@ async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()
 }
 
 #[tokio::test]
-async fn test_subscribe_task_not_found() {
-    let (server, client) = test_server().await;
+async fn test_subscribe_task_not_found() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/tasks/nonexistent/subscribe", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 404);
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body.get("error").is_some(),
         "Should return error for nonexistent task"
@@ -193,20 +186,20 @@ async fn test_subscribe_task_not_found() {
     assert_timestamp_has_z_suffix(&body);
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_subscribe_terminal_task_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task, then cancel it so it reaches a terminal state
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -215,15 +208,13 @@ async fn test_subscribe_terminal_task_returns_400() -> Result<()> {
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // Subscribe to the terminal task — spec §3.1.6 requires an error
     let sse_resp = client
         .post(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(
         sse_resp.status(),
@@ -231,7 +222,7 @@ async fn test_subscribe_terminal_task_returns_400() -> Result<()> {
         "subscribe to a terminal task must return 400"
     );
 
-    let err_body: serde_json::Value = sse_resp.json().await.unwrap();
+    let err_body: serde_json::Value = sse_resp.json().await?;
     assert_eq!(err_body["error"]["code"], 400);
     assert_eq!(
         err_body["error"]["details"][0]["reason"], "UNSUPPORTED_OPERATION",
@@ -244,7 +235,7 @@ async fn test_subscribe_terminal_task_returns_400() -> Result<()> {
 
 #[tokio::test]
 async fn test_push_notification_payload_is_stream_response_format() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
     let (hook_url, mut hook_rx) = start_webhook_receiver().await?;
 
     // Create a task with a contextId so the payload can carry it
@@ -255,9 +246,8 @@ async fn test_push_notification_payload_is_stream_response_format() -> Result<()
             "contextId": "ctx-push"
         }))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -271,16 +261,14 @@ async fn test_push_notification_payload_is_stream_response_format() -> Result<()
         ))
         .json(&json!({"url": hook_url}))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(push_resp.status(), 200);
 
     // Trigger a status change
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // The webhook must receive a StreamResponse-shaped payload
     let payload = tokio::time::timeout(Duration::from_secs(5), hook_rx.recv())
@@ -305,16 +293,15 @@ async fn test_push_notification_payload_is_stream_response_format() -> Result<()
 
 #[tokio::test]
 async fn test_push_config_crud_endpoints() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task first
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -328,9 +315,8 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
         ))
         .json(&json!({"url": "https://hook.example.com/notify"}))
         .send()
-        .await
-        .unwrap();
-    let create_body: serde_json::Value = create_resp.json().await.unwrap();
+        .await?;
+    let create_body: serde_json::Value = create_resp.json().await?;
     let config_id = create_body["id"]
         .as_str()
         .ok_or("should have config id")?
@@ -344,10 +330,9 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
             server.local_url, task_id, config_id
         ))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(get_resp.status(), 200);
-    let get_body: serde_json::Value = get_resp.json().await.unwrap();
+    let get_body: serde_json::Value = get_resp.json().await?;
     assert_eq!(get_body["id"], config_id);
     assert_eq!(get_body["url"], "https://hook.example.com/notify");
 
@@ -358,9 +343,8 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
-    let list_body: serde_json::Value = list_resp.json().await.unwrap();
+        .await?;
+    let list_body: serde_json::Value = list_resp.json().await?;
     let configs = list_body["configs"]
         .as_array()
         .ok_or("should have configs array")?;
@@ -374,8 +358,7 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
             server.local_url, task_id, config_id
         ))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(del_resp.status(), 200);
 
     // Verify deleted
@@ -385,9 +368,8 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
-    let list2_body: serde_json::Value = list2_resp.json().await.unwrap();
+        .await?;
+    let list2_body: serde_json::Value = list2_resp.json().await?;
     let configs2 = list2_body["configs"]
         .as_array()
         .ok_or("should have configs array")?;
@@ -399,16 +381,15 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
 
 #[tokio::test]
 async fn test_push_config_not_found() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -421,8 +402,7 @@ async fn test_push_config_not_found() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 404);
 
     // Delete is idempotent, always succeeds
@@ -432,8 +412,7 @@ async fn test_push_config_not_found() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     server.shutdown().await;
@@ -442,16 +421,15 @@ async fn test_push_config_not_found() -> Result<()> {
 
 #[tokio::test]
 async fn test_push_config_missing_url() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -465,10 +443,9 @@ async fn test_push_config_missing_url() -> Result<()> {
         ))
         .json(&json!({}))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 400);
-    let resp_body: serde_json::Value = resp.json().await.unwrap();
+    let resp_body: serde_json::Value = resp.json().await?;
     assert!(resp_body.get("error").is_some());
     assert_eq!(resp_body["error"]["code"], 400);
     assert_eq!(resp_body["error"]["status"], "BAD_REQUEST");

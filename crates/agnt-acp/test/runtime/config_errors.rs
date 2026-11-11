@@ -1,7 +1,5 @@
 //! AGENTS.md warning and config-load error-branch tests for `build_acp_runtime()`.
 
-use agnt_core::conversation::managers::PersonaManager;
-
 use super::runtime_support::*;
 use super::*;
 
@@ -40,7 +38,7 @@ async fn test_runtime_build_acp_runtime_unreadable_agents_md_is_non_fatal() -> R
         })?;
 
     // -- Check
-    let chain = runtime.persona.cached_agents_chain().unwrap_or("");
+    let chain = runtime.cached_agents_chain().unwrap_or("");
     assert!(
         !chain.contains("UNREADABLE_MARKER"),
         "an unreadable AGENTS.md must not contribute to the chain, got: {chain}"

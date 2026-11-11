@@ -15,17 +15,14 @@ fn tool_display_section_hints_matrix() -> Result<()> {
     let diff_content = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n context\n\\ No newline at end of file\n";
     let prefix_content = "@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n";
 
-    // -- Exec & Check: diff section hints and tints.
+    // -- Exec & Check: the derived diff body carries the structural hints.
     let mut state = AppState::default();
     reduce_ui(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
-    complete_with_display(
+    complete_with_result(
         &mut state,
         "edit",
         r#"{"path":"sample.txt"}"#,
-        Some(ToolDisplay {
-            title: Some("edit sample.txt".to_string()),
-            sections: vec![diff_section(Some("sample.txt"), diff_content)],
-        }),
+        &edit_payload("sample.txt", diff_content),
     );
     let hints = diff_section_hints(&state);
     assert!(hints.contains(&StyleHint::DiffHunk), "got {hints:?}");
@@ -48,14 +45,11 @@ fn tool_display_section_hints_matrix() -> Result<()> {
     // -- Exec & Check: line-number prefixes survive projection.
     let mut prefixed = AppState::default();
     reduce_ui(&mut prefixed, started("edit", r#"{"path":"sample.txt"}"#));
-    complete_with_display(
+    complete_with_result(
         &mut prefixed,
         "edit",
         r#"{"path":"sample.txt"}"#,
-        Some(ToolDisplay {
-            title: Some("edit sample.txt".to_string()),
-            sections: vec![diff_section(Some("sample.txt"), prefix_content)],
-        }),
+        &edit_payload("sample.txt", prefix_content),
     );
     let lines: Vec<String> = prefixed
         .transcript
@@ -69,33 +63,6 @@ fn tool_display_section_hints_matrix() -> Result<()> {
             "line must keep its line-number prefix {needle}; got {lines:?}"
         );
     }
-
-    // -- Exec & Check: non-diff code sections keep MdCode* hints.
-    let mut code = AppState::default();
-    reduce_ui(&mut code, started("nu", r#"{"command":"ls"}"#));
-    complete_with_display(
-        &mut code,
-        "nu",
-        r#"{"command":"ls"}"#,
-        Some(ToolDisplay {
-            title: Some("nu sample.rs".to_string()),
-            sections: vec![ToolDisplaySection {
-                label: Some("sample.rs".to_string()),
-                kind: ContentKind::Code {
-                    language: "rust".to_string(),
-                },
-                content: "fn main() {}\n".to_string(),
-                stats: None,
-            }],
-        }),
-    );
-    let code_hints = diff_section_hints(&code);
-    assert!(
-        code_hints
-            .iter()
-            .any(|h| matches!(h, StyleHint::MdCodeKeyword | StyleHint::MdCodePlain)),
-        "non-diff code section must keep MdCode* hints; got {code_hints:?}"
-    );
     Ok(())
 }
 
@@ -108,32 +75,11 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
     let content = "--- a/README.md\n+++ b/README.md\n@@ -1,4 +1,6 @@\n # Title\n \n+```rust\n fn a() {}\n+```\n tail\n";
     let mut state = AppState::default();
     reduce_ui(&mut state, started("edit", r#"{"path":"README.md"}"#));
-    reduce_ui(
+    complete_with_result(
         &mut state,
-        completed_with(
-            "edit",
-            "closure",
-            r#"{"path":"README.md"}"#,
-            ToolOutcome {
-                success: true,
-                status: ToolStatus::Success,
-                result: "{}".to_string(),
-                display: Some(ToolDisplay {
-                    title: Some("edit README.md".to_string()),
-                    sections: vec![ToolDisplaySection {
-                        label: Some("README.md".to_string()),
-                        kind: ContentKind::Diff {
-                            language: "diff".to_string(),
-                            path: "test.rs".to_string(),
-                        },
-                        content: content.to_string(),
-                        stats: None,
-                    }],
-                }),
-                error_kind: None,
-                message: None,
-            },
-        ),
+        "edit",
+        r#"{"path":"README.md"}"#,
+        &edit_payload("README.md", content),
     );
 
     let tool = tool_entry_at(&state, 0)?;
@@ -154,8 +100,8 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
     let rendered_rows = agnt_render::RenderBackend::measure(&probe, entry, 120);
     assert_eq!(
         rendered_rows,
-        display_lines.len() + 1,
-        "one call row, then exactly one row per display line: a completion display renders bare, with no surface margins"
+        display_lines.len() + 3,
+        "the call row and the band's two margin rows bracket exactly one row per display line"
     );
 
     // No projected display line may carry a raw trailing newline.
@@ -178,14 +124,11 @@ fn tool_entry_carries_its_diff_display_once() -> Result<()> {
     let content = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n";
     let mut state = AppState::default();
     reduce_ui(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
-    complete_with_display(
+    complete_with_result(
         &mut state,
         "edit",
         r#"{"path":"sample.txt"}"#,
-        Some(ToolDisplay {
-            title: None,
-            sections: vec![diff_section(None, content)],
-        }),
+        &edit_payload("sample.txt", content),
     );
 
     // -- Check: one entry, carrying the result; no companion display entries.
@@ -221,17 +164,14 @@ fn diff_display_preserves_hunk_context_and_line_number_readability() -> Result<(
     // -- Setup & Fixtures
     let mut state = AppState::default();
     reduce_ui(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
-    complete_with_display(
+    complete_with_result(
         &mut state,
         "edit",
         r#"{"path":"sample.txt"}"#,
-        Some(ToolDisplay {
-            title: Some("edit sample.txt".to_string()),
-            sections: vec![diff_section(
-                Some("sample.txt"),
-                "--- a/sample.txt\n+++ b/sample.txt\n@@ -10,3 +10,4 @@\n line-a\n-line-b\n+line-c\n line-d\n",
-            )],
-        }),
+        &edit_payload(
+            "sample.txt",
+            "--- a/sample.txt\n+++ b/sample.txt\n@@ -10,3 +10,4 @@\n line-a\n-line-b\n+line-c\n line-d\n",
+        ),
     );
 
     // -- Check: the hunk header survives projection.
@@ -247,17 +187,14 @@ fn diff_display_preserves_hunk_context_and_line_number_readability() -> Result<(
     // -- Setup & Fixtures: line-number readability case.
     let mut prefixed = AppState::default();
     reduce_ui(&mut prefixed, started("edit", r#"{"path":"sample.txt"}"#));
-    complete_with_display(
+    complete_with_result(
         &mut prefixed,
         "edit",
         r#"{"path":"sample.txt"}"#,
-        Some(ToolDisplay {
-            title: Some("edit sample.txt".to_string()),
-            sections: vec![diff_section(
-                Some("sample.txt"),
-                "--- a/sample.txt\n+++ b/sample.txt\n@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n",
-            )],
-        }),
+        &edit_payload(
+            "sample.txt",
+            "--- a/sample.txt\n+++ b/sample.txt\n@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n",
+        ),
     );
 
     // -- Check: the line-number prefixes stay readable.
@@ -284,41 +221,28 @@ fn diff_display_preserves_hunk_context_and_line_number_readability() -> Result<(
 /// any, is what stays on screen.
 #[test]
 fn completion_without_display_leaves_no_result_and_no_extra_entries() -> Result<()> {
-    // -- Setup & Fixtures: one completion with no display at all.
+    // -- Setup & Fixtures: one completion whose tool draws no body.
     let mut bare = AppState::default();
     reduce_ui(&mut bare, started("read", r#"{"path":"a.rs"}"#));
-    complete_with_display(&mut bare, "read", r#"{"path":"a.rs"}"#, None);
+    complete_with_result(&mut bare, "read", r#"{"path":"a.rs"}"#, "a.rs body");
 
     // -- Check: no result, no extra entries.
     assert_eq!(bare.transcript.len(), 1, "one entry per call");
     let tool = tool_entry_at(&bare, 0)?;
     assert!(
         tool.result.is_none(),
-        "a display-less completion sets no result"
+        "a tool that draws no body sets no result"
     );
     assert!(tool.preview.is_none(), "nothing was ever previewed");
 
-    // -- Setup & Fixtures: a previewed call that completes with no display.
+    // -- Setup & Fixtures: a previewed call that completes drawing no body.
     let mut previewed = AppState::default();
     reduce_ui(&mut previewed, started("nu", r#"{"command":"ls"}"#));
-    reduce_ui(
+    apply_permission_request_display(
         &mut previewed,
-        SystemEvent::PreviewRequested {
-            call: tool_call("nu", r#"{"command":"ls"}"#),
-            display: ToolDisplay {
-                title: None,
-                sections: vec![ToolDisplaySection {
-                    label: None,
-                    kind: ContentKind::Code {
-                        language: "nu".to_string(),
-                    },
-                    content: "ls".to_string(),
-                    stats: None,
-                }],
-            },
-        },
+        &permission_requested("nu(command=ls)", "nu\n{\"command\":\"ls\"}", None),
     );
-    complete_with_display(&mut previewed, "nu", r#"{"command":"ls"}"#, None);
+    complete_with_result(&mut previewed, "nu", r#"{"command":"ls"}"#, "out");
 
     // -- Check: the preview persists, no result is recorded, no entry is added.
     assert_eq!(previewed.transcript.len(), 1, "one entry per call");

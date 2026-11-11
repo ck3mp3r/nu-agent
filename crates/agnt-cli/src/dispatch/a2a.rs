@@ -9,23 +9,23 @@ use std::io::IsTerminal;
 use std::sync::Arc;
 
 use agnt_a2a::{AgentBuilder, Skill};
-use agnt_core::config::defaults;
-use agnt_core::conversation::builder::{
+use agnt_runtime::config::defaults;
+use agnt_runtime::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, ToolAssembly, assemble_tool_definitions,
     merge_compaction_configs,
 };
-use agnt_core::conversation::runtime_build::{
+use agnt_runtime::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
     build_runtime,
 };
-use agnt_core::hooks::HookAgentContext;
-use agnt_core::session::resolver::{
+use agnt_runtime::hooks::HookAgentContext;
+use agnt_runtime::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
-use agnt_core::tools::closure::{ClosureRegistry, CwdEngine};
-use agnt_core::tools::handler::McpToolRegistry;
-use agnt_core::tools::mcp::config::McpConfig;
-use agnt_core::types::ToolServer;
+use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::config::McpConfig;
+use agnt_runtime::types::{ToolAnnotations, ToolDefinition, ToolName, ToolServer};
 use nu_protocol::Span;
 
 use crate::A2aArgs;
@@ -77,20 +77,20 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
     // Discovery comes first: the file the ladder selects carries the `[paths]`
     // values the full resolution below applies.
-    let discovery = agnt_core::config::Paths::resolve_for_process(None)
+    let discovery = agnt_runtime::config::Paths::resolve_for_process(None)
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let (mut config, plugin_config) = resolve_config_from_clap(args, &discovery.config_path)?;
 
     let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
-    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+    let paths = agnt_runtime::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let theme_path = paths.theme_path.clone();
-    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+    let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.
@@ -158,6 +158,15 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let a2a_agent_name = messaging_identity.as_deref().unwrap_or("agent");
     let mesh_key = agnt_a2a::mesh_key::resolve_mesh_key(a2a.mesh_key.clone(), &cwd);
 
+    // The composition root owns the transport: one client, built here, threaded
+    // into every A2A call and push delivery. The header policy that used to sit
+    // in the crate's own pool lives in `A2aClient` as a per-request stamp. The
+    // process-wide TLS provider is installed once in `main`, before any
+    // dispatch reaches this point.
+    let transport = reqwest::Client::builder()
+        .build()
+        .map_err(|e| Error::Custom(format!("A2A transport: {e}")))?;
+
     let mut builder = AgentBuilder::new(a2a_agent_name).has_explicit_name(has_explicit_name);
     if let Some(desc) = persona.as_ref().and_then(|p| p.description.as_deref()) {
         builder = builder.description(desc);
@@ -175,7 +184,13 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         builder = builder.skills(vec![persona_skill]);
     }
 
-    let mut a2a_handle = match builder.port(a2a.port).mesh_key(mesh_key).build().await {
+    let mut a2a_handle = match builder
+        .port(a2a.port)
+        .mesh_key(mesh_key)
+        .with_transport(transport)
+        .build()
+        .await
+    {
         Ok(handle) => handle,
         Err((err, Some(server))) => {
             server.shutdown().await;
@@ -196,7 +211,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         None
     } else {
         Some(
-            agnt_core::tools::mcp::runtime::connect_servers(
+            agnt_runtime::tools::mcp::runtime::connect_servers(
                 &tool_server_handle,
                 &mcp_config.mcp,
                 Some(cwd.as_path()),
@@ -223,8 +238,11 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let mcp_registry = McpToolRegistry::from_tools(discovered_mcp_tools.clone())
         .map_err(|msg| Error::Custom(format!("Failed to build MCP tool registry: {msg}")))?;
 
-    // A2A is always enabled in this subcommand, so the A2A tool definitions are
-    // registered for the LLM.
+    // The a2a subcommand always runs the server, so the A2A tool definitions
+    // are registered for the LLM.
+    let peer_definitions = peer_tool_definitions(true)
+        .map_err(|e| Error::Custom(format!("Invalid tool name: {e}")))?;
+
     let ToolAssembly {
         tool_definitions,
         baseline_tool_definitions,
@@ -235,7 +253,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         &discovered_mcp_tools,
         &cwd,
         &paths.agents_dir,
-        true,
+        peer_definitions,
     )
     .map_err(|e| Error::Custom(format!("Invalid tool name: {e}")))?;
 
@@ -250,7 +268,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         .map_err(Error::from)?;
 
     // Signal bus shared by tool registration and the runtime.
-    let bus = agnt_core::bus::create_bus();
+    let bus = agnt_runtime::bus::Bus::default();
 
     let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
 
@@ -258,10 +276,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let merged_compaction =
         merge_compaction_configs(plugin_config.compaction.as_ref(), &cli_compaction);
 
-    let BuildArtifacts {
-        merged_compaction,
-        render_registry,
-    } = AgentRuntimeBuilder::new(BuildInput {
+    let BuildArtifacts { merged_compaction } = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
         closure_registry: &closure_registry,
         cwd: cwd.clone(),
@@ -324,16 +339,18 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         cwd: cwd.clone(),
         paths,
         bus: bus.clone(),
-        render_registry,
         hook_context,
+        compactor_model: None,
     })
     .await
     .map_err(Error::from)?;
 
     // ── Extract A2A receivers into the mode context ──────────────────────
-    // The receivers are moved into the mode function, which polls them to
-    // inject incoming A2A tasks as prompts and to auto-complete them.
-    let a2a_context = A2aContext {
+    // The mode functions consume the bridged channels to inject incoming A2A
+    // tasks as prompts and to auto-complete them. The raw channels stay here:
+    // the bridge below is their single consumer, and it converts each transport
+    // event to the runtime's external-task vocabulary once, for both modes.
+    let mut a2a_context = A2aContext {
         task_rx: a2a_handle.server.take_incoming_task_receiver(),
         completion_rx: a2a_handle.take_completion_receiver(),
         task_cancel_rx: a2a_handle.take_task_cancel_receiver(),
@@ -343,7 +360,12 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         self_port: Some(a2a_handle.server.port),
         discovery: Some(a2a_handle.discovery_handle()),
         mesh_key: Some(a2a_handle.mesh_key().to_string()),
+        ..Default::default()
     };
+    // Convert the transport events to the runtime's external-task vocabulary
+    // once, here, so both modes consume only runtime types. Each forwarder is
+    // the single consumer of its raw channel.
+    a2a_context.bridge_a2a_channels();
 
     let result = match mode {
         CliMode::Tui => {
@@ -393,12 +415,35 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
 // region:    --- Support
 
+/// Map the A2A peer tool registry into rig tool definitions.
+///
+/// Returns an empty vec when `enabled` is false. A tool name the rig type
+/// rejects surfaces as text so the caller can wrap it in its own error type.
+pub(crate) fn peer_tool_definitions(
+    enabled: bool,
+) -> core::result::Result<Vec<ToolDefinition>, String> {
+    if !enabled {
+        return Ok(Vec::new());
+    }
+    agnt_a2a::a2a_tool_defs()
+        .into_iter()
+        .map(|def| {
+            Ok(ToolDefinition {
+                annotations: ToolAnnotations::default(),
+                name: ToolName::new(def.name).map_err(|e| e.to_string())?,
+                description: def.description,
+                parameters: def.parameters,
+            })
+        })
+        .collect()
+}
+
 /// Select the execution mode from the terminal state.
 ///
 /// The A2A subcommand never receives a prompt, so the input is always empty:
 /// TUI when both stdin and stderr are terminals; stderr rendering otherwise.
 fn resolve_mode() -> CliMode {
-    use agnt_core::conversation::mode_logic::{AgentMode, resolve_agent_mode};
+    use agnt_runtime::conversation::mode_logic::{AgentMode, resolve_agent_mode};
     let stdin_is_tty = std::io::stdin().is_terminal();
     let stderr_is_tty = std::io::stderr().is_terminal();
     match resolve_agent_mode(true, stdin_is_tty, stderr_is_tty) {

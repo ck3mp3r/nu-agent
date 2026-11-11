@@ -1,8 +1,8 @@
 //! The banner family widget: centered banner text on the banner lane.
 
-use agnt_core::transcript::entry::BannerEntry;
-use agnt_core::transcript::ir::{ContentLine, StyleHint};
 use agnt_render::catalog::{LaneKind, LaneLine};
+use agnt_render::transcript::entry::BannerEntry;
+use agnt_render::transcript::ir::{ContentLine, StyleHint};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -95,7 +95,7 @@ impl PaneWidget for BannerWidget<'_> {
 fn centered_gutter(
     lane: &LaneLine,
     continuation: bool,
-    spans: &[agnt_core::transcript::ir::Span],
+    spans: &[agnt_render::transcript::ir::Span],
     width: usize,
 ) -> String {
     let prefix = lane.prefix(continuation);

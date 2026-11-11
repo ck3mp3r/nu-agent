@@ -1,13 +1,13 @@
 //! The code surface: margins, the untinted call line, and the surface body.
 
 use super::support::*;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// The code preview under test: a titled, labelled nu body.
-fn code_preview() -> agnt_core::transcript::entry::TranscriptEntry {
+fn code_preview() -> agnt_render::transcript::entry::TranscriptEntry {
     tool_entry(
         "nu",
-        "→ ls | select name",
+        r#"{"command":"ls | select name"}"#,
         Some(titled_code_display("nu", "ls | select name")),
         None,
         ItemStatus::Done,
@@ -123,7 +123,7 @@ fn test_renderer_fill_code_diff_preview_paints_gutter_lines() -> Result<()> {
     // -- Setup & Fixtures
     let entry = tool_entry(
         "edit",
-        "→ a.rs (diff)",
+        r#"{"path":"a.rs"}"#,
         Some(diff_display(SIMPLE_DIFF)),
         None,
         ItemStatus::Done,

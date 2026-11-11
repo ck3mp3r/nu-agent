@@ -1,12 +1,10 @@
 use super::*;
 
 use crate::runtime::RuntimeCoordinator;
-use agnt_core::session::resolver::{StoredEntry, hydrate_transcript_messages};
-use agnt_core::session::tool_status::{ToolStatus, ToolStatusMap};
-use agnt_core::tools::handler::builtin_tool::call_line_render_for;
-use agnt_core::tools::handler::tool_display_from_arguments;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::types::{
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_runtime::session::resolver::{StoredEntry, hydrate_transcript_messages};
+use agnt_runtime::session::tool_status::{ToolStatus, ToolStatusMap};
+use agnt_runtime::types::{
     AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
@@ -125,37 +123,33 @@ fn entry_status(entry: &TranscriptEntry) -> Option<ItemStatus> {
 fn live_entries(
     tool: &str,
     arguments: &str,
-    cwd: &std::path::Path,
+    _cwd: &std::path::Path,
     status: ToolStatus,
     message: Option<&str>,
 ) -> Result<Vec<TranscriptEntry>> {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let call = || {
-        agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName(tool.to_string()),
-            "builtin",
+        agnt_runtime::protocol::events::ToolCall::new(
+            agnt_render::transcript::ir::ToolName(tool.to_string()),
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
-            call_line_render_for(tool, arguments),
         )
     };
-    coordinator.reduce_system_event(SystemEvent::ToolStarted { call: call() });
-    if let Some(display) = tool_display_from_arguments(tool, arguments, cwd) {
-        coordinator.reduce_system_event(SystemEvent::PreviewRequested {
-            call: call(),
-            display,
-        });
-    }
-    coordinator.reduce_system_event(SystemEvent::ToolCompleted {
+    coordinator.fold_record(&SessionRecord::Tool(ToolRecord::Started { call: call() }));
+    apply_permission_request_display(
+        &mut coordinator.state,
+        &permission_requested(tool, &format!("{tool}\n{arguments}"), None),
+    );
+    coordinator.fold_record(&SessionRecord::Tool(ToolRecord::Completed {
         call: call(),
-        outcome: agnt_core::protocol::events::ToolOutcome {
-            success: matches!(status, ToolStatus::Success),
+        outcome: agnt_runtime::protocol::events::ToolOutcome {
             status,
-            result: String::new(),
-            display: None,
-            error_kind: None,
+            payload: None,
+            text: String::new(),
             message: message.map(str::to_string),
+            kind: None,
         },
-    });
+    }));
     Ok(coordinator.state().transcript.entries().to_vec())
 }
 

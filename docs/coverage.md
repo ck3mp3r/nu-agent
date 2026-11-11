@@ -83,7 +83,7 @@ Cobertura XML, for CI systems that expect that format.
 Restrict the run and the report to one crate with `-p`:
 
 ```sh
-cargo llvm-cov -p agnt-core --html
+cargo llvm-cov -p agnt-runtime --html
 cargo llvm-cov -p agnt-tui --lcov --output-path lcov-tui.info
 ```
 
@@ -165,7 +165,7 @@ Tests run under [`cargo-nextest`](https://nexte.st). Profiles are defined in `.c
 | `integration` | `cargo nextest run --features integration --profile integration` | All tests — lower parallelism, one retry for flaky server tests |
 | `ci` | `cargo nextest run --features integration --profile ci` | Full suite for CI — no retries, JUnit XML output |
 
-Integration test modules are gated behind the `integration` cargo feature, so the default profile runs unit tests only. The `integration` feature is defined in `agnt-a2a`, `agnt-acp`, `agnt-cli`, `agnt-core`, `agnt-tui`, and `agnt-plugin`; enabling it on `agnt-plugin` or `agnt-tui` propagates to the other two crates.
+Integration test modules are gated behind the `integration` cargo feature, so the default profile runs unit tests only. The `integration` feature is defined in `agnt-a2a`, `agnt-acp`, `agnt-cli`, `agnt-runtime`, `agnt-tui`, and `agnt-plugin`; enabling it on `agnt-plugin` or `agnt-tui` propagates to `agnt-runtime`.
 
 The Nix dev shell wraps the profiles as `tests` (unit only), `tests-all` (unit + integration), and `tests-integration` (integration only, with retries). The `coverage` wrapper runs the full workspace coverage suite under the `integration` profile and writes an HTML report to `coverage/`.
 

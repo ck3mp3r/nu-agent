@@ -8,7 +8,11 @@ fn compaction_summary_chunks_render_as_markdown() -> Result<()> {
     let mut italic = AppState::default();
     reduce_compaction(
         &mut italic,
-        chunk("history", "summary *italic*", "summary *italic*"),
+        chunk(
+            CompactionSource::Auto,
+            "summary *italic*",
+            "summary *italic*",
+        ),
     );
 
     // -- Check: italic spans carry MdItalic.
@@ -20,12 +24,11 @@ fn compaction_summary_chunks_render_as_markdown() -> Result<()> {
 
     // -- Setup & Fixtures: fenced body.
     let mut fenced = AppState::default();
-    reduce_compaction(&mut fenced, started("auto"));
+    reduce_compaction(&mut fenced, started(CompactionSource::Auto));
     reduce_compaction(
         &mut fenced,
         completed(
-            "auto",
-            "",
+            CompactionSource::Auto,
             "```\n## Work State\n### Completed\n- Mapped c5t notes for project `63e90e73`; confirmed `7722bef9`.\n```",
         ),
     );

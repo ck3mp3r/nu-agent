@@ -15,11 +15,11 @@
 //! [`TranscriptStore::frame_plan`] hands the render layer the entry rows it
 //! paints.
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::Display;
 use agnt_render::RenderBackend;
 use agnt_render::backend::RowRect;
 use agnt_render::planner::{EntryFamily, FramePlan, LayoutPlanner, PlannedEntry};
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::Display;
 
 use crate::widgets::RatatuiBackend;
 
@@ -363,10 +363,15 @@ impl TranscriptStore {
         });
     }
 
+    /// Drop every entry and end the store's lifetime: the eviction count and
+    /// the streaming cursors index rows that no longer exist.
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
         self.height_index = HeightIndex::default();
         self.height_index_width = None;
+        self.evicted_total = 0;
+        self.assistant_stream_start = None;
+        self.summary_stream_start = None;
     }
 
     // region:    --- Accessors

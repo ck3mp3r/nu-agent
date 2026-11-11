@@ -10,6 +10,8 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph};
 
+use crate::interaction::input::{Key, UiInput};
+use crate::interaction::reducer::RenderInput;
 use crate::interaction::{
     cancel::CancelController,
     dispatch::{KeyLens, dispatch_terminal_event, rewrite_action},
@@ -29,13 +31,13 @@ use crate::runtime::status::{RepoBranchTracker, status_left_content, status_righ
 use crate::state::{
     AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind,
 };
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::events::Key;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
-use agnt_core::tools::mcp::runtime::McpServerLifecycle;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::protocol::events::{
+    CompactionRecord, InferenceRecord, NarrationEvent, SessionRecord,
+};
+use agnt_runtime::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
+use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
 
 /// The runtime coordinator that owns the TUI application state and the render
 /// bookkeeping for the interactive render loop.
@@ -65,8 +67,9 @@ impl RuntimeCoordinator {
     pub fn new(columns: u16, _rows: u16, side_pane_visible: Option<bool>) -> Self {
         let theme_name = ThemeName::default();
         let theme = theme_name.resolve();
-        let (event_tx, _event_rx) =
-            tokio::sync::mpsc::channel::<agnt_core::orchestrator::OrchestratorEvent>(256);
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<
+            agnt_runtime::orchestrator::events::OrchestratorEvent,
+        >(256);
         let side_margin = if columns >= 8 { MAIN_SIDE_MARGIN } else { 0 };
         let last_input_content_width = columns.saturating_sub(2 * side_margin + 4) as usize;
         let mut coordinator = Self {
@@ -125,19 +128,70 @@ impl RuntimeCoordinator {
         self.mark_render_needed();
     }
 
-    /// Consume a UI-state event from the bus. Status-owned events are handled
-    /// by `StatusState` first; the rest fall through to `AppState`.
-    pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) {
-        if self.state.status.reduce_ui_state_event(event.clone()) {
-            return;
-        }
-        self.state.reduce_ui_state_event(event);
+    /// Consume one kernel-state snapshot from the facts channel.
+    ///
+    /// Returns whether the fold changed the rendered state.
+    pub fn reduce_fact_record(&mut self, fact: agnt_runtime::bus::FactRecord) -> bool {
+        self.state.status.reduce_fact_record(fact)
     }
 
-    /// Consume a `SystemEvent`. This is the only reducer entry point for
-    /// events: every bus arm converges here.
-    pub fn reduce_system_event(&mut self, event: SystemEvent) -> bool {
-        crate::interaction::reducer::reduce(&mut self.state, event, Some(&self.cancel_controller))
+    /// Consume one command from the control intake.
+    ///
+    /// The surface acts on the commands it owns and ignores the rest: a
+    /// foreign command changes nothing.
+    pub(crate) fn reduce_control(&mut self, command: &agnt_runtime::bus::ControlCommand) -> bool {
+        let changed = self.reduce_render_input(RenderInput::Control(command));
+        if changed {
+            self.mark_render_needed();
+        }
+        changed
+    }
+
+    /// Consume one step of the turn spine.
+    ///
+    /// The surface acts on the steps it owns and ignores the rest: the fold's
+    /// latch closes on the first live turn after a replay batch, and a foreign
+    /// step changes nothing.
+    pub(crate) fn reduce_lifecycle(&mut self, event: &agnt_runtime::bus::LifecycleEvent) -> bool {
+        let changed = self.reduce_render_input(RenderInput::Lifecycle(event));
+        if changed {
+            self.mark_render_needed();
+        }
+        changed
+    }
+
+    /// Consume one surface input: a key, a wheel notch, or a resize.
+    pub fn reduce_input(&mut self, input: UiInput) -> bool {
+        let folded = crate::interaction::reducer::reduce(
+            &mut self.state,
+            input,
+            Some(&self.cancel_controller),
+        );
+        // A fold that queued a shared UI action cannot apply it inline: the key
+        // lens is still borrowing the state it dispatched from.
+        folded | self.state.drain_launch_requests()
+    }
+
+    /// Consume one datum from a bus concern. This is the only reducer entry
+    /// point for the bus: every record, narration event, lifecycle step, and
+    /// control command converges here.
+    pub(crate) fn reduce_render_input(&mut self, input: RenderInput<'_>) -> bool {
+        let folded = crate::interaction::reducer::reduce(
+            &mut self.state,
+            input,
+            Some(&self.cancel_controller),
+        );
+        folded | self.state.drain_launch_requests()
+    }
+
+    /// Drain the catalogs the pickers' reply hands delivered since the last
+    /// poll. Returns whether a catalog changed the rendered state.
+    pub(crate) fn poll_picker_replies(&mut self) -> bool {
+        let changed = self.state.poll_picker_replies();
+        if changed {
+            self.mark_render_needed();
+        }
+        changed
     }
 
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
@@ -259,7 +313,7 @@ impl RuntimeCoordinator {
 
     pub fn event_sender(
         &self,
-    ) -> &tokio::sync::mpsc::Sender<agnt_core::orchestrator::OrchestratorEvent> {
+    ) -> &tokio::sync::mpsc::Sender<agnt_runtime::orchestrator::events::OrchestratorEvent> {
         &self.state.event_tx
     }
 
@@ -630,8 +684,7 @@ impl RuntimeCoordinator {
                     matches!(ch, 'j' | 'k') && self.state.input.insert_exit_pending_j();
                 match rewrite_action(&mut self.state, Key::Char(ch)) {
                     KeyLens::Pass => {
-                        let _ = self
-                            .reduce_system_event(SystemEvent::KeyPressed { key: Key::Char(ch) });
+                        let _ = self.reduce_input(UiInput::KeyPressed { key: Key::Char(ch) });
                         if chord_pending {
                             // The chord left insert mode: drop the j/k the textarea
                             // already holds.
@@ -677,8 +730,7 @@ impl RuntimeCoordinator {
         match key {
             TerminalKey::Char(ch) => match rewrite_action(&mut self.state, Key::Char(ch)) {
                 KeyLens::Pass => {
-                    let _ =
-                        self.reduce_system_event(SystemEvent::KeyPressed { key: Key::Char(ch) });
+                    let _ = self.reduce_input(UiInput::KeyPressed { key: Key::Char(ch) });
                     self.textarea.input(ratatui_textarea::Input {
                         key: ratatui_textarea::Key::Char(ch),
                         ctrl: false,
@@ -718,7 +770,7 @@ impl RuntimeCoordinator {
                 } else {
                     Key::Enter
                 };
-                let changed = self.reduce_system_event(SystemEvent::KeyPressed { key: submit_key });
+                let changed = self.reduce_input(UiInput::KeyPressed { key: submit_key });
                 self.replace_textarea(Vec::new());
                 self.state.check_inline_slash("");
                 self.mark_render_needed();
@@ -806,46 +858,83 @@ impl RuntimeCoordinator {
         }
     }
 
-    /// Fold a batch of bus events under the chunk-coalescing rule:
-    /// at most the latest `InferenceChunk` and the latest
-    /// `CompactionSummaryChunk` are held; a pending chunk flushes before any
-    /// other event so the streamed text keeps its order; a newer chunk of the
-    /// same kind replaces the older one. Returns whether any fold changed
-    /// state, and marks the render needed when it did.
-    pub(crate) fn reduce_event_batch(
+    /// Fold a batch of stream records under the chunk-coalescing rule: at most
+    /// the latest inference chunk and the latest compaction summary chunk are
+    /// held; a pending chunk flushes before any other record so the streamed
+    /// text keeps its order; a newer chunk of the same kind replaces the older
+    /// one. Returns whether any fold changed state.
+    pub(crate) fn reduce_record_batch(
         &mut self,
-        events: impl IntoIterator<Item = SystemEvent>,
+        records: impl IntoIterator<Item = SessionRecord>,
     ) -> bool {
-        let mut pending_inference: Option<SystemEvent> = None;
-        let mut pending_compaction: Option<SystemEvent> = None;
+        self.fold_batch(
+            records,
+            |record| {
+                matches!(
+                    record,
+                    SessionRecord::Inference(InferenceRecord::Chunk { .. })
+                )
+            },
+            |record| {
+                matches!(
+                    record,
+                    SessionRecord::Compaction(CompactionRecord::SummaryChunk { .. })
+                )
+            },
+            |coordinator, record| coordinator.reduce_render_input(RenderInput::Record(record)),
+        )
+    }
+
+    /// Fold a batch of narration events under the same chunk-coalescing rule.
+    pub(crate) fn reduce_narration_batch(
+        &mut self,
+        events: impl IntoIterator<Item = NarrationEvent>,
+    ) -> bool {
+        self.fold_batch(
+            events,
+            |event| matches!(event, NarrationEvent::InferenceChunk { .. }),
+            |event| matches!(event, NarrationEvent::CompactionSummaryChunk { .. }),
+            |coordinator, event| coordinator.reduce_render_input(RenderInput::Narration(event)),
+        )
+    }
+
+    /// The coalescing skeleton both batches share: hold the newest chunk of each
+    /// kind, flush the held ones before any other item, and flush the tail.
+    fn fold_batch<T>(
+        &mut self,
+        items: impl IntoIterator<Item = T>,
+        is_inference_chunk: impl Fn(&T) -> bool,
+        is_compaction_chunk: impl Fn(&T) -> bool,
+        mut fold: impl FnMut(&mut Self, &T) -> bool,
+    ) -> bool {
+        let mut pending_inference: Option<T> = None;
+        let mut pending_compaction: Option<T> = None;
         let mut changed = false;
 
-        for event in events {
-            if matches!(&event, SystemEvent::InferenceChunk { .. }) {
-                pending_inference = Some(event);
+        for item in items {
+            if is_inference_chunk(&item) {
+                pending_inference = Some(item);
                 continue;
             }
-            if matches!(&event, SystemEvent::CompactionSummaryChunk { .. }) {
-                pending_compaction = Some(event);
+            if is_compaction_chunk(&item) {
+                pending_compaction = Some(item);
                 continue;
             }
-
             if let Some(pending) = pending_inference.take() {
-                changed |= self.reduce_system_event(pending);
+                changed |= fold(self, &pending);
             }
             if let Some(pending) = pending_compaction.take() {
-                changed |= self.reduce_system_event(pending);
+                changed |= fold(self, &pending);
             }
-
-            changed |= self.reduce_system_event(event);
+            changed |= fold(self, &item);
         }
 
-        // Flush the tail of the stream.
+        // Flush the tail of the batch.
         if let Some(pending) = pending_inference.take() {
-            changed |= self.reduce_system_event(pending);
+            changed |= fold(self, &pending);
         }
         if let Some(pending) = pending_compaction.take() {
-            changed |= self.reduce_system_event(pending);
+            changed |= fold(self, &pending);
         }
 
         if changed {
@@ -863,7 +952,7 @@ impl RuntimeCoordinator {
             || self.state.transcript.entries().iter().any(|entry| {
                 matches!(
                     entry,
-                    agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+                    agnt_render::transcript::entry::TranscriptEntry::Tool(tool)
                         if tool.status == ItemStatus::InProgress
                 )
             })

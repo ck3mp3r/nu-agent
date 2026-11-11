@@ -1,6 +1,6 @@
 //! Deny set: `reject-always` memory and auto-deny for the rest of the session.
 
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -14,7 +14,7 @@ async fn test_permission_bridge_is_denied_false_for_unknown_key() -> Result<()> 
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
     let denied = bridge.is_denied(TOOL_KEY);
 
     // -- Check
@@ -30,7 +30,7 @@ async fn test_permission_bridge_reject_always_adds_key_to_deny_set() -> Result<(
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
     let denied = bridge.is_denied(TOOL_KEY);
 
     // -- Check
@@ -46,7 +46,7 @@ async fn test_permission_bridge_reject_once_does_not_add_key_to_deny_set() -> Re
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
     let denied = bridge.is_denied(TOOL_KEY);
 
     // -- Check
@@ -61,11 +61,13 @@ async fn test_permission_bridge_denied_key_is_denied_without_asking_sink() -> Re
     let sink = RecordingPermissionSink::new(selected("reject-always"));
     let recorder = sink.clone();
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
-    let first = bridge.handle_permission_request(REQUEST, context()).await?;
+    let first = bridge.handle_permission_request(&card()).await?;
     assert_eq!(first, PermissionDecision::Deny);
 
     // -- Exec
-    let second = bridge.handle_permission_request("req-2", context()).await?;
+    let second = bridge
+        .handle_permission_request(&card_with_request("req-2"))
+        .await?;
 
     // -- Check
     assert_eq!(second, PermissionDecision::Deny);
@@ -83,12 +85,12 @@ async fn test_permission_bridge_other_key_still_asks_sink_after_reject_always() 
     let sink = RecordingPermissionSink::new(selected("reject-always"));
     let recorder = sink.clone();
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
-    let first = bridge.handle_permission_request(REQUEST, context()).await?;
+    let first = bridge.handle_permission_request(&card()).await?;
     assert_eq!(first, PermissionDecision::Deny);
 
     // -- Exec
     let other = bridge
-        .handle_permission_request("req-2", context_for(OTHER_TOOL_KEY))
+        .handle_permission_request(&card_with_request_for("req-2", OTHER_TOOL_KEY))
         .await?;
 
     // -- Check
@@ -111,7 +113,7 @@ async fn test_permission_bridge_deny_set_is_scoped_to_one_key() -> Result<()> {
     // -- Setup & Fixtures
     let sink = RecordingPermissionSink::new(selected("reject-always"));
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, empty_pending());
-    let first = bridge.handle_permission_request(REQUEST, context()).await?;
+    let first = bridge.handle_permission_request(&card()).await?;
     assert_eq!(first, PermissionDecision::Deny);
 
     // -- Exec

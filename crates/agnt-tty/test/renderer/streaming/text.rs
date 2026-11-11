@@ -17,30 +17,20 @@ fn renderer_with_policy(
     StderrUiRenderer::new(sink.clone(), UiPolicy { quiet, verbosity }, stderr_is_tty)
 }
 
-fn turn_completed_event() -> SystemEvent {
-    SystemEvent::TurnCompleted {
-        tool_calls: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: None,
-        cost: None,
-        cost_complete: true,
-        duration_ms: 0,
-    }
+fn turn_completed_record() -> SessionRecord {
+    SessionRecord::Turn(TurnRecord::Completed { duration_ms: 0 })
 }
 
-fn inference_completed_event() -> SystemEvent {
-    SystemEvent::InferenceCompleted {
+fn inference_completed_record() -> SessionRecord {
+    SessionRecord::Inference(InferenceRecord::Completed {
         usage: Usage {
-            response_chars: 0,
-            tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: None,
             cost: None,
             cost_complete: true,
         },
-    }
+    })
 }
 
 #[test]
@@ -51,12 +41,18 @@ fn normal_mode_streams_text() {
     let mut renderer = renderer_with_policy(&sink, false, Verbosity::Normal, false);
 
     // -- Exec
-    renderer.emit(&SystemEvent::InferenceStarted);
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: "hello world".to_string(),
-        aggregated: "hello world".to_string(),
-    });
-    renderer.emit(&turn_completed_event());
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: "hello world".to_string(),
+            aggregated: "hello world".to_string(),
+        },
+    );
+    draw(&mut renderer, turn_completed_record());
     renderer.flush();
 
     // -- Check: the full text is rendered exactly once, not re-printed.
@@ -79,7 +75,10 @@ fn normal_mode_prints_each_chunk_new_suffix() -> Result<()> {
     ];
 
     // -- Exec
-    renderer.emit(&SystemEvent::InferenceStarted);
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
 
     // -- Check: nothing printed before the first chunk.
     assert_eq!(renderer.streaming_printed_len, 0, "nothing printed yet");
@@ -87,10 +86,13 @@ fn normal_mode_prints_each_chunk_new_suffix() -> Result<()> {
     // -- Exec & Check: every chunk advances the printed length by its own
     // suffix and the sink holds exactly the accumulated text so far.
     for (index, (delta, aggregated)) in chunks.iter().enumerate() {
-        renderer.emit(&SystemEvent::InferenceChunk {
-            delta: delta.to_string(),
-            aggregated: aggregated.to_string(),
-        });
+        narrate(
+            &mut renderer,
+            NarrationEvent::InferenceChunk {
+                delta: delta.to_string(),
+                aggregated: aggregated.to_string(),
+            },
+        );
         assert_eq!(
             renderer.streaming_printed_len,
             aggregated.len(),
@@ -100,7 +102,7 @@ fn normal_mode_prints_each_chunk_new_suffix() -> Result<()> {
     }
 
     // -- Exec: the turn closes.
-    renderer.emit(&turn_completed_event());
+    draw(&mut renderer, turn_completed_record());
     renderer.flush();
 
     // -- Check: the accumulated text is emitted once and closed by the
@@ -118,12 +120,18 @@ fn quiet_mode_suppresses_streaming() {
     let mut renderer = renderer_with_policy(&sink, true, Verbosity::Quiet, false);
 
     // -- Exec
-    renderer.emit(&SystemEvent::InferenceStarted);
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: "hello world".to_string(),
-        aggregated: "hello world".to_string(),
-    });
-    renderer.emit(&turn_completed_event());
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: "hello world".to_string(),
+            aggregated: "hello world".to_string(),
+        },
+    );
+    draw(&mut renderer, turn_completed_record());
     renderer.flush();
 
     // -- Check
@@ -141,23 +149,35 @@ fn streaming_completed_resets_state() -> Result<()> {
     let mut renderer = renderer_with_policy(&sink, false, Verbosity::Normal, false);
 
     // -- Exec: first streaming sequence.
-    renderer.emit(&SystemEvent::InferenceStarted);
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: "first".to_string(),
-        aggregated: "first".to_string(),
-    });
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: "first".to_string(),
+            aggregated: "first".to_string(),
+        },
+    );
 
     // -- Check: the first sequence printed its text and advanced its length.
     assert_eq!(sink.snapshot(), "first");
     assert_eq!(renderer.streaming_printed_len, "first".len());
 
     // -- Exec: close the sequence, then start a second one.
-    renderer.emit(&turn_completed_event());
-    renderer.emit(&SystemEvent::InferenceStarted);
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: "second".to_string(),
-        aggregated: "second".to_string(),
-    });
+    draw(&mut renderer, turn_completed_record());
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: "second".to_string(),
+            aggregated: "second".to_string(),
+        },
+    );
 
     // -- Check: the reset makes the second sequence print from its own first
     // byte instead of being sliced against the first sequence's length.
@@ -169,7 +189,7 @@ fn streaming_completed_resets_state() -> Result<()> {
     );
 
     // -- Exec
-    renderer.emit(&turn_completed_event());
+    draw(&mut renderer, turn_completed_record());
     renderer.flush();
 
     // -- Check: both sequences landed on their own lines.
@@ -193,7 +213,10 @@ fn normal_mode_incremental_streaming() -> Result<()> {
     let chunks = [("a", "a"), ("b", "ab"), ("c", "abc")];
 
     // -- Exec
-    renderer.emit(&SystemEvent::InferenceStarted);
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
 
     // -- Check: nothing printed before the first chunk.
     assert_eq!(renderer.streaming_printed_len, 0, "nothing printed yet");
@@ -201,10 +224,13 @@ fn normal_mode_incremental_streaming() -> Result<()> {
     // -- Exec & Check: every chunk advances the printed length to its own
     // accumulated text and the sink holds exactly that text so far.
     for (index, (delta, aggregated)) in chunks.iter().enumerate() {
-        renderer.emit(&SystemEvent::InferenceChunk {
-            delta: delta.to_string(),
-            aggregated: aggregated.to_string(),
-        });
+        narrate(
+            &mut renderer,
+            NarrationEvent::InferenceChunk {
+                delta: delta.to_string(),
+                aggregated: aggregated.to_string(),
+            },
+        );
         assert_eq!(
             renderer.streaming_printed_len,
             aggregated.len(),
@@ -214,7 +240,7 @@ fn normal_mode_incremental_streaming() -> Result<()> {
     }
 
     // -- Exec: the inference closes.
-    renderer.emit(&inference_completed_event());
+    draw(&mut renderer, inference_completed_record());
     renderer.flush();
 
     // -- Check: the accumulated text printed once — no repetition, no lost
@@ -236,27 +262,36 @@ fn spinner_stops_when_streaming_starts() -> Result<()> {
     let mut renderer = renderer_with_policy(&sink, false, Verbosity::Normal, true);
 
     // -- Exec: the spinner starts with the inference call.
-    renderer.emit(&SystemEvent::InferenceStarted);
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
 
     // -- Check: the spinner owns the line before the first chunk.
     assert_eq!(renderer.streaming_printed_len, 0);
 
     // -- Exec: the first chunk stops the spinner and prints the text.
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: "streaming text".to_string(),
-        aggregated: "streaming text".to_string(),
-    });
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: "streaming text".to_string(),
+            aggregated: "streaming text".to_string(),
+        },
+    );
 
     // -- Check
     assert_eq!(renderer.streaming_printed_len, "streaming text".len());
     assert!(sink.snapshot().contains("streaming text"));
 
     // -- Exec: the second chunk appends its suffix only.
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: " continues".to_string(),
-        aggregated: "streaming text continues".to_string(),
-    });
-    renderer.emit(&turn_completed_event());
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: " continues".to_string(),
+            aggregated: "streaming text continues".to_string(),
+        },
+    );
+    draw(&mut renderer, turn_completed_record());
     renderer.flush();
 
     // -- Check
@@ -273,12 +308,18 @@ fn streaming_adds_newline_on_completion() {
     let mut renderer = renderer_with_policy(&sink, false, Verbosity::Normal, false);
 
     // -- Exec
-    renderer.emit(&SystemEvent::InferenceStarted);
-    renderer.emit(&SystemEvent::InferenceChunk {
-        delta: "no newline yet".to_string(),
-        aggregated: "no newline yet".to_string(),
-    });
-    renderer.emit(&turn_completed_event());
+    draw(
+        &mut renderer,
+        SessionRecord::Inference(InferenceRecord::Started),
+    );
+    narrate(
+        &mut renderer,
+        NarrationEvent::InferenceChunk {
+            delta: "no newline yet".to_string(),
+            aggregated: "no newline yet".to_string(),
+        },
+    );
+    draw(&mut renderer, turn_completed_record());
     renderer.flush();
 
     // -- Check: the text is un-terminated while streaming, terminated after.

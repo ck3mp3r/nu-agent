@@ -7,12 +7,10 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1::{
     PermissionOption, RequestPermissionOutcome, SelectedPermissionOutcome, ToolCallUpdate,
 };
-use agnt_core::bus::{OneshotRx, OneshotTx};
-use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection,
-};
-use agnt_core::transcript::ir::ContentKind;
+use agnt_kernel::{PermissionRecord, RequestId, ToolCallId};
+use agnt_runtime::bus::{OneshotRx, OneshotTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use crate::permission::PermissionRequestSink;
 
@@ -46,7 +44,10 @@ impl RecordingPermissionSink {
     }
 
     pub fn requests(&self) -> Vec<RecordedRequest> {
-        self.requests.lock().unwrap().clone()
+        self.requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -57,11 +58,14 @@ impl PermissionRequestSink for RecordingPermissionSink {
         tool_call: ToolCallUpdate,
         options: Vec<PermissionOption>,
     ) -> impl Future<Output = RequestPermissionOutcome> + Send {
-        self.requests.lock().unwrap().push(RecordedRequest {
-            session_id: session_id.to_string(),
-            tool_call,
-            options,
-        });
+        self.requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(RecordedRequest {
+                session_id: session_id.to_string(),
+                tool_call,
+                options,
+            });
         let outcome = self.outcome.clone();
         async move { outcome }
     }
@@ -71,44 +75,52 @@ pub fn selected(option_id: &'static str) -> RequestPermissionOutcome {
     RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id))
 }
 
-pub fn context() -> PermissionRequestContext {
-    context_for(TOOL_KEY)
+/// The card request `REQUEST` opens for `TOOL_KEY`, with no preview.
+pub fn card() -> PermissionRecord {
+    card_with_request(REQUEST)
 }
 
-pub fn context_for(tool_key: &str) -> PermissionRequestContext {
-    PermissionRequestContext {
+/// The same card under another request id, for tests that open two cards.
+pub fn card_with_request(request_id: &str) -> PermissionRecord {
+    card_with_request_for(request_id, TOOL_KEY)
+}
+
+/// The same card for another call key, for tests that scope a deny set.
+pub fn card_with_request_for(request_id: &str, call_key: &str) -> PermissionRecord {
+    PermissionRecord::Requested {
+        request_id: RequestId::from_minted(request_id),
+        call_id: ToolCallId::from_key(call_key),
         tool: "edit".to_string(),
-        tool_key: tool_key.to_string(),
         source: "builtin".to_string(),
-        mode: None,
-        matched_rule_identity: "rule".to_string(),
+        rule_identity: "rule".to_string(),
         scope: "global".to_string(),
         target_field: None,
+        mode: None,
         pattern: "*".to_string(),
         summary: "→ edit src/lib.rs".to_string(),
-        pre_authorize_display: None,
+        shows_preview: false,
+        preview: None,
     }
 }
 
-pub fn context_with_display(display: ToolDisplay) -> PermissionRequestContext {
-    let mut context = context();
-    context.pre_authorize_display = Some(display);
-    context
+/// A card whose preview carries the producer-computed content.
+pub fn card_with_preview(content: &str) -> PermissionRecord {
+    let mut card = card();
+    if let PermissionRecord::Requested {
+        shows_preview,
+        preview,
+        ..
+    } = &mut card
+    {
+        *shows_preview = true;
+        *preview = Some(content.to_string());
+    }
+    card
 }
 
-pub fn diff_display() -> ToolDisplay {
-    ToolDisplay {
-        title: None,
-        sections: vec![ToolDisplaySection {
-            label: Some("src/lib.rs".to_string()),
-            kind: ContentKind::Diff {
-                language: "rust".to_string(),
-                path: "src/lib.rs".to_string(),
-            },
-            content: "@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n".to_string(),
-            stats: None,
-        }],
-    }
+/// The preview content an `edit` gate supplies: the diff it would make.
+pub fn diff_content() -> String {
+    "@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n".to_string()
 }
 
 pub fn empty_pending() -> PendingPermissions {
@@ -120,6 +132,9 @@ pub fn register_pending(
     request_id: &str,
 ) -> OneshotRx<PermissionDecision> {
     let (tx, rx) = OneshotTx::<PermissionDecision>::channel("permission");
-    pending.lock().unwrap().insert(request_id.to_string(), tx);
+    pending
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(request_id.to_string(), tx);
     rx
 }

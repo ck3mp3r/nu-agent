@@ -1,5 +1,5 @@
-use agnt_core::config::Paths;
-use agnt_core::utils::env_map::EnvMap;
+use agnt_runtime::config::Paths;
+use agnt_runtime::utils::env_map::EnvMap;
 
 use super::*;
 

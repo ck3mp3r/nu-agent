@@ -1,19 +1,7 @@
 use super::*;
 
 pub(super) fn open_permission_prompt(state: &mut AppState) {
-    state
-        .permission
-        .open_prompt(crate::state::PermissionPrompt {
-            request_id: "ask-0000000000000001".to_string(),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            tool: "nu".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            scope: "nested".to_string(),
-            pattern: "*".to_string(),
-            target_field: Some("command".to_string()),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-        });
+    state.permission.open_prompt("ask-0000000000000001");
 }
 
 pub(super) fn busy_state_with_controller() -> (AppState, CancelController) {
@@ -42,19 +30,19 @@ pub(super) fn setup_agent_picker_open() -> AppState {
     state.set_picker_options(
         ActivePicker::Agent,
         vec![
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "alpha".into(),
                 description: Some("Alpha agent".into()),
                 display: "alpha — Alpha agent".into(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "beta".into(),
                 description: None,
                 display: "beta".into(),
                 builtin: false,
             },
-            agnt_core::protocol::picker::AgentPickerOption {
+            agnt_runtime::protocol::picker::AgentPickerOption {
                 name: "gamma".into(),
                 description: Some("Gamma agent".into()),
                 display: "gamma — Gamma agent".into(),

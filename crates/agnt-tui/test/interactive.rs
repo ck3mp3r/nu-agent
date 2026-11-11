@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use agnt_core::bus::Bus;
-use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::bus::Bus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::protocol::events::{PermissionRecord, RequestId, SessionRecord, TurnRecord};
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
@@ -155,22 +155,23 @@ fn hydrate_transcript_with_no_messages_leaves_the_transcript_empty() {
 #[test]
 fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let mut ui = make_ui();
-    let event = SystemEvent::PermissionRequested {
-        request_id: agnt_core::protocol::events::RequestId::new("ask-0000000000000001"),
-        context: agnt_core::protocol::event::PermissionRequestContext {
-            tool: "nu(command=echo hi)".to_string(),
-            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            scope: "nested".to_string(),
-            target_field: Some("command".to_string()),
-            pattern: "*".to_string(),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
-        },
-    };
-    assert!(ui.renderer.coordinator.reduce_system_event(event));
+    let event = SessionRecord::Permission(PermissionRecord::Requested {
+        request_id: RequestId::from_minted("ask-0000000000000001"),
+        call_id: agnt_runtime::protocol::events::ToolCallId::from_key(
+            "nu\n{\"command\":\"echo hi\"}",
+        ),
+        tool: "nu(command=echo hi)".to_string(),
+        source: "closure".to_string(),
+        mode: Some("apply".to_string()),
+        rule_identity: "nested:nu.command:*".to_string(),
+        scope: "nested".to_string(),
+        target_field: Some("command".to_string()),
+        pattern: "*".to_string(),
+        summary: "→ {\"command\":\"echo hi\"}".to_string(),
+        shows_preview: true,
+        preview: None,
+    });
+    assert!(ui.renderer.coordinator.fold_record(&event));
     assert!(ui.renderer.coordinator.state.permission.has_prompt());
     Ok(())
 }
@@ -191,7 +192,6 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     let loop_handle = tokio::spawn(async move {
         run_render_loop(
             &mut coordinator,
-            &bus_for_loop,
             &cancel_controller,
             event_tx,
             terminal_rx,
@@ -199,6 +199,11 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
             crate::interactive::RenderLoopChannels {
                 branch_rx,
                 theme_persist_tx: None,
+                stream: bus_for_loop.stream(),
+                narration: bus_for_loop.narration(),
+                control: bus_for_loop.control(),
+                lifecycle: bus_for_loop.lifecycle(),
+                facts: bus_for_loop.facts(),
             },
         )
         .await;
@@ -220,7 +225,7 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
         .await
         .ok_or("should receive first PromptSubmitted")?;
     assert!(
-        matches!(&first, OrchestratorEvent::PromptSubmitted { text } if text == "hi"),
+        matches!(&first, OrchestratorEvent::PromptSubmitted { text, .. } if text == "hi"),
         "first submitted prompt must be 'hi'"
     );
 
@@ -247,24 +252,17 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
 
     // Complete the turn. The turn-completion branch must drain the stacked
     // prompt into a PromptSubmitted event without any further terminal input.
-    bus.ui_event()
-        .send(SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
+    bus.stream()
+        .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 0,
-        })
-        .await
-        .map_err(|_| "should publish SystemEvent::TurnCompleted")?;
+        }))
+        .map_err(|_| "should publish TurnCompleted")?;
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
         .await
         .map_err(|_| "should receive second PromptSubmitted before timeout")?
         .ok_or("should receive second PromptSubmitted")?;
     assert!(
-        matches!(&second, OrchestratorEvent::PromptSubmitted { text } if text == "x"),
+        matches!(&second, OrchestratorEvent::PromptSubmitted { text, .. } if text == "x"),
         "stacked prompt must be drained on turn completion"
     );
 

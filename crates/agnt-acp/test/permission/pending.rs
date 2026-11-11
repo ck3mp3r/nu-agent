@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -18,7 +18,7 @@ async fn test_permission_bridge_resolves_pending_oneshot_with_decision() -> Resu
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, pending);
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
     let resolved = rx.await?;
 
     // -- Check
@@ -36,7 +36,7 @@ async fn test_permission_bridge_resolves_pending_oneshot_with_deny_on_reject() -
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, pending);
 
     // -- Exec
-    let decision = bridge.handle_permission_request(REQUEST, context()).await?;
+    let decision = bridge.handle_permission_request(&card()).await?;
     let resolved = rx.await?;
 
     // -- Check
@@ -53,7 +53,7 @@ async fn test_permission_bridge_without_pending_entry_still_returns_decision() -
 
     // -- Exec
     let decision = bridge
-        .handle_permission_request("unregistered", context())
+        .handle_permission_request(&card_with_request("unregistered"))
         .await?;
 
     // -- Check
@@ -67,12 +67,14 @@ async fn test_permission_bridge_denied_key_resolves_pending_oneshot_with_deny() 
     let sink = RecordingPermissionSink::new(selected("reject-always"));
     let pending = empty_pending();
     let mut bridge = AcpPermissionBridge::new(sink, SESSION, Arc::clone(&pending));
-    let first = bridge.handle_permission_request(REQUEST, context()).await?;
+    let first = bridge.handle_permission_request(&card()).await?;
     assert_eq!(first, PermissionDecision::Deny);
     let rx = register_pending(&pending, "req-2");
 
     // -- Exec
-    let second = bridge.handle_permission_request("req-2", context()).await?;
+    let second = bridge
+        .handle_permission_request(&card_with_request("req-2"))
+        .await?;
     let resolved = rx.await?;
 
     // -- Check

@@ -1,0 +1,637 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use nu_protocol::{LabeledError, Span};
+
+use crate::bus::Bus;
+use crate::config::CompactionConfig;
+use crate::protocol::persona::PersonaSummary;
+use crate::tools::audit::AuditLogger;
+use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use crate::tools::executor::ToolExecutor;
+use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
+use rig::tool::server::ToolServerHandle;
+use serde_json::json;
+
+// ── Compaction helpers (moved from binary runtime_build.rs) ─────────────────
+
+/// Merge two `CompactionConfig`s with `override_cfg` taking precedence.
+///
+/// For each field, if `override_cfg` has `Some`, use it; otherwise keep `base`.
+/// Both inputs are `Option<&CompactionConfig>` — `None` means "no config from this source".
+pub fn merge_compaction_configs(
+    base: Option<&CompactionConfig>,
+    override_cfg: &CompactionConfig,
+) -> CompactionConfig {
+    let base = base.cloned().unwrap_or_default();
+    CompactionConfig {
+        proactive_threshold_pct: override_cfg
+            .proactive_threshold_pct
+            .or(base.proactive_threshold_pct),
+        reserve: override_cfg.reserve.or(base.reserve),
+        summary_tokens: override_cfg.summary_tokens.or(base.summary_tokens),
+        snippet_chars: override_cfg.snippet_chars.or(base.snippet_chars),
+        unknown_window_chars: override_cfg
+            .unknown_window_chars
+            .or(base.unknown_window_chars),
+        keep_recent: override_cfg.keep_recent.or(base.keep_recent),
+        keep_asked: override_cfg.keep_asked.or(base.keep_asked),
+        clearing: override_cfg.clearing.clone().or(base.clearing),
+        tracked: override_cfg.tracked.clone().or(base.tracked),
+        prompts: override_cfg.prompts.clone().or(base.prompts),
+    }
+}
+
+// ── Tool definitions (moved from binary tool_defs.rs) ───────────────────────
+
+/// Built-in tool definitions for file system and HTTP operations.
+pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    Ok(vec![
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("read")?,
+            description: "Read file content with optional line windowing and return content/version metadata".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
+                    "offset": { "type": "integer", "minimum": 0 },
+                    "limit": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("edit")?,
+            description: "Edit or create files. Use operation.type = 'search_replace' with 'search' and 'replacement' string fields (no line numbers needed). Or use operation.type = 'create' with 'content' field. Requires expected_version from a prior read for existing files.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
+                    "mode": { "type": "string", "enum": ["preview", "apply"], "default": "apply" },
+                    "expected_version": { "type": "string", "description": "CAS version from prior read (required for search_replace on existing files)" },
+                    "operation": {
+                        "type": "object",
+                        "properties": {
+                            "type": { "type": "string", "enum": ["search_replace", "create"], "default": "search_replace" },
+                            "search": { "type": "string", "description": "Required when type is 'search_replace'" },
+                            "replacement": { "type": "string", "description": "Required when type is 'search_replace'" },
+                            "match_mode": { "type": "string", "enum": ["literal", "regex"], "default": "literal" },
+                            "occurrence": { "type": "string", "enum": ["first", "all"], "default": "first" },
+                            "content": { "type": "string", "description": "Full file content (required when type is 'create')" }
+                        },
+                        "required": ["type"]
+                    }
+                },
+                "required": ["path", "operation"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("skill")?,
+            description: "Load skill content by explicit name from local or home skill roots".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                },
+                "required": ["name"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("http")?,
+            description: "Fetch content from a URL. Returns markdown extracted from HTML pages, \
+                preserving structure (headings, lists, links, code blocks, tables). \
+                Raw mode returns the unmodified response body. \
+                Respects max_length to avoid context overflow.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to fetch"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["markdown", "raw"],
+                        "description": "Response format. markdown (default): converts HTML to markdown. raw: returns body as-is."
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "Maximum response length in characters (default: 12000). Responses are truncated if longer."
+                    }
+                },
+                "required": ["url"]
+            }),
+        },        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("grep")?,
+            description: "Search file contents recursively using a regex pattern. Respects .gitignore. Returns structured matches with file path, line number, and line content.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file to search, relative to the working directory. Defaults to the working directory."
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Optional file glob filter, e.g. '*.rs' or '*.{ts,tsx}'"
+                    },
+                    "case_insensitive": {
+                        "type": "boolean",
+                        "description": "If true, match case-insensitively. Default false."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of matches to return. Default 200."
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("glob")?,
+            description: "Find files matching a glob pattern. Respects .gitignore. Returns matching file paths relative to the search root. Use patterns like '**/*.rs' or 'src/**/*.{ts,tsx}'.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern, e.g. '**/*.rs' or 'src/**/*.{ts,tsx}'"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search, relative to the working directory. Defaults to the working directory."
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("tmux_session")?,
+            description: "Manage tmux sessions. List all sessions, get info about a specific session, create a new session (in a directory), or kill a session. Killing requires force=true.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "info", "create", "kill"] },
+                    "session": { "type": "string", "description": "Session name (required for info/kill)" },
+                    "name": { "type": "string", "description": "Name for the new session (required for create)" },
+                    "directory": { "type": "string", "description": "Starting directory for the new session, relative to the working directory (optional, for create)" },
+                    "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("tmux_window")?,
+            description: "Manage tmux windows within a session. Create a new window (optionally with a name, directory, and target index) or kill a window. Create returns the new window's window_id (e.g. @5) and window_index. Killing requires force=true.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["create", "kill"] },
+                    "session": { "type": "string", "description": "Session name" },
+                    "name": { "type": "string", "description": "Name for the new window (optional, for create)" },
+                    "directory": { "type": "string", "description": "Working directory for the new window, relative to the working directory (optional, for create)" },
+                    "index": { "type": "integer", "description": "Target window index (optional, for create)" },
+                    "window": { "type": "string", "description": "Window name or index to kill (required for kill action)" },
+                    "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
+                },
+                "required": ["action", "session"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("tmux_pane")?,
+            description: "Control tmux panes within a session. List panes, find a pane by name or context, inspect the running process, capture visible output, send a command, split a pane (horizontally or vertically with a size percentage and optional directory), or kill a pane. Panes are addressed as session:window.pane; list/find responses include a target field (session:window_index.pane_index) to copy verbatim. Killing requires force=true.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "find", "process", "capture", "send", "split", "kill"] },
+                    "session": { "type": "string", "description": "Session name" },
+                    "window": { "type": "string", "description": "Window index or name (optional; defaults to the session's current window)" },
+                    "pane": { "type": "string", "description": "Pane ID (optional, for capture/send/split/kill/process)" },
+                    "command": { "type": "string", "description": "Command to send to the pane (required for send)" },
+                    "direction": { "type": "string", "enum": ["horizontal", "vertical"], "description": "Split direction (optional, for split)" },
+                    "size": { "type": "integer", "description": "Size of new pane as percentage (optional, for split)" },
+                    "directory": { "type": "string", "description": "Working directory for the new pane, relative to the working directory (optional, for split)" },
+                    "name": { "type": "string", "description": "Pane name to find (optional, for find)" },
+                    "context": { "type": "string", "description": "Context to search for, e.g. directory name or command (optional, for find)" },
+                    "lines": { "type": "integer", "description": "Number of lines to capture (optional, for capture)" },
+                    "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
+                },
+                "required": ["action", "session"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("tmux_layout")?,
+            description: "Select a layout for arranging panes in a tmux window. Non-destructive operation that only changes visual arrangement. Layouts: even-horizontal (equal width columns), even-vertical (equal height rows), main-horizontal (large top pane), main-vertical (large left pane), tiled (grid).".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["select"] },
+                    "session": { "type": "string", "description": "Session name" },
+                    "window": { "type": "string", "description": "Window name or ID" },
+                    "layout": { "type": "string", "enum": ["even-horizontal", "even-vertical", "main-horizontal", "main-vertical", "tiled"] }
+                },
+                "required": ["action", "session", "window", "layout"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("nu")?,
+            description: "Execute a Nushell command in a stateless one-shot process. Returns stdout and stderr as text. Use Nushell syntax ONLY (NOT bash/sh/zsh). Each call is independent — no state preserved between calls. Use pipes to chain commands within a single call. The working directory is already set to the project directory; `cd` has no effect and is never needed.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Nushell command to execute. Use Nushell syntax ONLY (NOT bash/sh/zsh). Example: 'ls | where type == file | get name'"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Timeout in seconds. Default 120."
+                    }
+                },
+                "required": ["command"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("ast_query")?,
+            description: "Run an S-expression tree-sitter query against source code. Returns matching captures with positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "query": { "type": "string", "description": "Tree-sitter S-expression query string." },
+                    "captures": { "type": "array", "items": { "type": "string" }, "description": "Optional list of capture names to filter results by." },
+                    "max_matches": { "type": "integer", "description": "Maximum number of matches to return. Default 100." },
+                    "include_text": { "type": "boolean", "description": "Include node text in results. Default true." }
+                },
+                "required": ["path", "language", "query"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("ast_nodes")?,
+            description: "List AST nodes of a given type in source code. Returns node positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "node_type": { "type": "string", "description": "Tree-sitter node type to find (e.g., 'function_item', 'match_arm'). Use ast_tree to discover valid node types." },
+                    "max_matches": { "type": "integer", "description": "Maximum number of nodes to return. Default 200." },
+                    "include_text": { "type": "boolean", "description": "Include node text in results. Default false." }
+                },
+                "required": ["path", "language", "node_type"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("ast_refs")?,
+            description: "Find references to a named symbol in source code. Returns positions of matching identifiers. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "name": { "type": "string", "description": "Symbol name to search for (e.g., 'Config', 'parse')." },
+                    "max_matches": { "type": "integer", "description": "Maximum number of matches to return. Default 100." }
+                },
+                "required": ["path", "language", "name"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("ast_tree")?,
+            description: "Dump the full S-expression parse tree of source code. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
+                    "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
+                    "max_depth": { "type": "integer", "description": "Maximum tree depth to dump. Nodes beyond this depth are shown as '...'." }
+                },
+                "required": ["path", "language"]
+            }),
+        },
+    ])
+}
+/// Tool definitions available to any agent that can send messages.
+pub fn messaging_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    Ok(vec![ToolDefinition {
+        annotations: ToolAnnotations::default(),
+        name: ToolName::new("send_message")?,
+        description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
+                       Use the agent names provided in your task instructions — you know your own name and your \
+                       --parent-name at birth. The response comes back asynchronously as a new conversation turn.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "to": { "type": "string", "description": "Target agent name" },
+                "message": { "type": "string", "description": "Message content" },
+                "kind": {
+                    "type": "string",
+                    "description": "Message type: 'message' (generic/informational, default), 'task' (task assignment), 'completion' (task results), 'question' (blocked, needs decision)",
+                    "enum": ["message", "task", "completion", "question"],
+                    "default": "message"
+                }
+            },
+            "required": ["to", "message"]
+        }),
+    }])
+}
+
+/// Tool definitions for orchestrator agents that can spawn sub-agents.
+pub fn orchestrator_tool_definitions(
+    available_agents: &[PersonaSummary],
+) -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    let description = if available_agents.is_empty() {
+        "Spawn a new agent in a tmux pane. No agent personas found. Create .agents/<name>.md files to define agents.".to_string()
+    } else {
+        let mut desc = String::from(
+            "Spawn a new agent in a tmux pane (in a window called \"agents\"). \
+             Communicate with spawned agents via `send_message`. \
+             The user can also interact directly with spawned agent panes.\n\n\
+             Available agents:\n",
+        );
+        for agent in available_agents {
+            desc.push_str(&format!("- {}", agent.name));
+            if let Some(d) = &agent.description {
+                desc.push_str(&format!(": {d}"));
+            }
+            desc.push('\n');
+        }
+        desc
+    };
+
+    Ok(vec![
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("spawn_agent")?,
+            description,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "agent": { "type": "string", "description": "Persona name (loads .agents/<name>.md)" },
+                    "name": { "type": "string", "description": "Instance identity (optional, defaults to agent-N)" }
+                },
+                "required": ["agent"]
+            }),
+        },
+        ToolDefinition {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new("terminate_agent")?,
+            description:
+                "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it."
+                    .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Agent name to terminate" }
+                },
+                "required": ["name"]
+            }),
+        },
+    ])
+}
+
+/// Tool definitions available only to orchestrator agents that can list peers.
+pub fn list_agents_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    Ok(vec![ToolDefinition {
+        annotations: ToolAnnotations::default(),
+        name: ToolName::new("list_agents")?,
+        description: "List all connected agents and their names".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {},
+        }),
+    }])
+}
+
+/// Result of assembling the full tool definition set.
+pub struct ToolAssembly {
+    pub tool_definitions: Vec<ToolDefinition>,
+    pub baseline_tool_definitions: Vec<ToolDefinition>,
+    pub available_agents: Vec<PersonaSummary>,
+}
+
+/// Assemble the complete set of tool definitions from all sources.
+///
+/// All tool groups are always registered unconditionally. The permission system
+/// (allow/ask/deny) gates actual use at call time — there is no reason to
+/// suppress tool registration based on agent topology.
+///
+/// `peer_tool_definitions` carries the definitions of peer-facing tools the
+/// caller has already registered on the tool server; the assembly only appends
+/// them.
+///
+/// Order: closures → builtins → peer tools → MCP
+pub fn assemble_tool_definitions(
+    closure_registry: &ClosureRegistry,
+    agents_config: &crate::config::AgentsConfig,
+    discovered_mcp_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    cwd: &std::path::Path,
+    agents_dir: &std::path::Path,
+    peer_tool_definitions: Vec<ToolDefinition>,
+) -> Result<ToolAssembly, EmptyToolName> {
+    let mut tool_definitions: Vec<ToolDefinition> = closure_registry
+        .names()
+        .filter_map(|name| {
+            let resolved = closure_registry.get(name)?;
+            Some(crate::tools::closure::closure_to_tool_definition(
+                name.clone(),
+                &resolved.params,
+                None,
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    tool_definitions.extend(builtin_tool_definitions()?);
+    // Old mailbox tools removed in favour of A2A:
+    // tool_definitions.extend(messaging_tool_definitions());    // send_message
+    // tool_definitions.extend(list_agents_tool_definitions());  // list_agents
+    tool_definitions.extend(peer_tool_definitions);
+
+    let available_agents = {
+        use crate::protocol::persona::{FsPersonaResolver, PersonaLister};
+        let resolver = FsPersonaResolver::new(
+            cwd.to_path_buf(),
+            agents_dir.to_path_buf(),
+            agents_config.clone(),
+        );
+        resolver.list_available()
+    };
+    // Old orchestrator tools removed in favour of A2A:
+    // tool_definitions.extend(orchestrator_tool_definitions(&available_agents));  // spawn_agent, terminate_agent
+
+    let mcp_definitions = discovered_mcp_tools
+        .iter()
+        .map(|tool| {
+            Ok(ToolDefinition {
+                annotations: ToolAnnotations::default(),
+                name: ToolName::new(tool.name.clone())?,
+                description: tool
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("MCP tool from server '{}'", tool.server)),
+                parameters: tool.parameters.clone().unwrap_or_else(|| {
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "args": {
+                                "type": "array",
+                                "items": {}
+                            }
+                        },
+                        "required": ["args"]
+                    })
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, EmptyToolName>>()?;
+    tool_definitions.extend(mcp_definitions);
+
+    // Store baseline for agent switching
+    let baseline_tool_definitions = tool_definitions.clone();
+
+    Ok(ToolAssembly {
+        tool_definitions,
+        baseline_tool_definitions,
+        available_agents,
+    })
+}
+
+// ── Builder ──────────────────────────────────────────────────────────────────
+
+/// Input required to build and register agent tools.
+///
+/// All binary-level extraction (CLI flags, EvaluatedCall parsing) must be
+/// completed before constructing this struct. The builder operates entirely on
+/// pre-extracted values so that `nu_plugin::EvaluatedCall` never enters core.
+pub struct BuildInput<'a> {
+    pub tool_server_handle: &'a ToolServerHandle,
+    pub closure_registry: &'a ClosureRegistry,
+    pub cwd: PathBuf,
+    pub engine: Arc<dyn EngineInterfaceLike>,
+    /// Span used for error labels (call.head in the binary).
+    pub span: Span,
+    pub tool_timeout: std::time::Duration,
+    pub session: Option<&'a mut crate::session::Session>,
+    pub max_tool_result_bytes: usize,
+    /// Signal bus for tool cancellation and events.
+    pub bus: Bus,
+    /// Already-merged compaction config (defaults ← plugin config ← CLI flags).
+    pub merged_compaction: CompactionConfig,
+    /// The resolved tool audit log file
+    /// ([`Paths::audit_log_path`](crate::config::Paths::audit_log_path)).
+    pub audit_log_path: PathBuf,
+}
+
+/// Artifacts produced by the builder's `build()` call.
+pub struct BuildArtifacts {
+    pub merged_compaction: CompactionConfig,
+}
+
+/// Builder that registers all agent tools and wires multi-agent infrastructure.
+///
+/// Absorbs the registration logic that was previously in the binary's
+/// `register_tools` function, eliminating the layering violation where the
+/// binary directly constructed `OrchestratorState` and called `adapt_closures`.
+pub struct AgentRuntimeBuilder<'a> {
+    input: BuildInput<'a>,
+}
+
+impl<'a> AgentRuntimeBuilder<'a> {
+    pub fn new(input: BuildInput<'a>) -> Self {
+        Self { input }
+    }
+
+    /// Register all tools and wire multi-agent infrastructure.
+    ///
+    /// Returns `BuildArtifacts` containing the merged compaction config and
+    /// the per-tool render registry.
+    pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
+        use crate::hook::adapter::closure::adapt_closures;
+
+        let BuildInput {
+            tool_server_handle,
+            closure_registry,
+            cwd,
+            engine,
+            span,
+            tool_timeout,
+            session: _,
+            max_tool_result_bytes,
+            bus,
+            merged_compaction,
+            audit_log_path,
+        } = self.input;
+
+        // Create the audit log directory ONCE before the prompt loop
+        if let Some(log_dir) = audit_log_path.parent() {
+            std::fs::create_dir_all(log_dir).map_err(|e| {
+                LabeledError::new(format!("Failed to create audit log directory: {e}"))
+            })?;
+        }
+
+        let audit_logger = Arc::new(AuditLogger::new(audit_log_path));
+        let tool_executor = ToolExecutor::new(engine, audit_logger, tool_timeout);
+
+        // Register closure tools with the ToolServer
+        let closure_tools = adapt_closures(
+            closure_registry,
+            Arc::new(tool_executor.clone()),
+            span,
+            max_tool_result_bytes,
+        )
+        .map_err(|e| {
+            LabeledError::new("Invalid closure tool name").with_label(e.to_string(), span)
+        })?;
+
+        for tool in closure_tools {
+            tool_server_handle.add_dynamic_tool(tool);
+        }
+
+        // All tool groups are always registered. The permission system gates actual use.
+        let builtin_defs = builtin_tool_definitions().map_err(|e| {
+            LabeledError::new("Invalid builtin tool name").with_label(e.to_string(), span)
+        })?;
+
+        // Validate the merged compaction config
+        merged_compaction.validate().map_err(|msg| {
+            LabeledError::new("Compaction config validation failed").with_label(msg, span)
+        })?;
+
+        for def in builtin_defs {
+            crate::tools::handler::builtin_tool::register_builtin(
+                def,
+                cwd.clone(),
+                max_tool_result_bytes,
+                bus.cancel(),
+                tool_server_handle,
+            )
+            .await;
+        }
+
+        Ok(BuildArtifacts { merged_compaction })
+    }
+}
+
+#[cfg(test)]
+#[path = "../../test/conversation/builder.rs"]
+mod builder_test;

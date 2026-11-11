@@ -13,10 +13,9 @@
 
 use std::time::Duration;
 
-use agnt_core::bus::Bus;
-use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::tool_args::CallLine;
+use agnt_runtime::bus::{Bus, ControlCommand};
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::events::{NarrationEvent, SessionRecord};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -27,22 +26,37 @@ use crate::interaction::input::TerminalEvent;
 use crate::interactive::run_render_loop;
 use crate::runtime::RuntimeCoordinator;
 use crate::state::AppState;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+// region:    --- Modules
+
+// The file's tests live beside it: driving the loop and testing it would
+// otherwise push one file past the test-file size limit.
+#[path = "driver/tests.rs"]
+mod tests;
+
+// endregion: --- Modules
+
 // region:    --- Types
 
-/// One scripted input to the render loop: a terminal event or a bus event.
+/// One scripted input to the render loop: a terminal event or a bus datum.
 pub(crate) enum DriveEvent {
     /// Routed through the loop's terminal arm, like a real keypress.
     Key(TerminalEvent),
-    /// Published on the bus ui_event channel like a production stage does.
+    /// Published on the bus stream, like a production stage does.
     ///
-    /// Boxed because `SystemEvent` is much larger than `TerminalEvent`; clippy's
+    /// Boxed because a record is much larger than `TerminalEvent`; clippy's
     /// `large_enum_variant` requires the indirection.
-    SystemEvent(Box<SystemEvent>),
+    Record(Box<SessionRecord>),
+    /// Published on the bus narration channel, like a production stage does.
+    Narration(Box<NarrationEvent>),
+    /// Published on the bus control channel, like a production stage does.
+    ///
+    /// Boxed for the same reason as `Record`: the enum stays small.
+    Control(Box<ControlCommand>),
 }
 
 /// A cell from the last rendered frame: where it sits, its glyph, and its
@@ -246,7 +260,6 @@ impl RenderLoopDriver {
             let mut live = Some(&mut terminal);
             run_render_loop(
                 &mut coordinator,
-                &bus_for_loop,
                 &cancel_controller,
                 event_tx,
                 terminal_rx,
@@ -254,6 +267,11 @@ impl RenderLoopDriver {
                 crate::interactive::RenderLoopChannels {
                     branch_rx,
                     theme_persist_tx: None,
+                    stream: bus_for_loop.stream(),
+                    narration: bus_for_loop.narration(),
+                    control: bus_for_loop.control(),
+                    lifecycle: bus_for_loop.lifecycle(),
+                    facts: bus_for_loop.facts(),
                 },
             )
             .await;
@@ -267,8 +285,12 @@ impl RenderLoopDriver {
         for event in events {
             let delivered = match event {
                 DriveEvent::Key(key) => terminal_tx.send(key.clone()).await.is_ok(),
-                DriveEvent::SystemEvent(event) => {
-                    self.bus.ui_event().send((**event).clone()).await.is_ok()
+                DriveEvent::Record(record) => self.bus.stream().publish((**record).clone()).is_ok(),
+                DriveEvent::Narration(event) => {
+                    self.bus.narration().publish((**event).clone()).is_ok()
+                }
+                DriveEvent::Control(command) => {
+                    self.bus.control().publish((**command).clone()).is_ok()
                 }
             };
             if !delivered {
@@ -323,140 +345,3 @@ fn test_terminal(columns: u16, rows: u16) -> Terminal<TestBackend> {
 }
 
 // endregion: --- Support
-
-// region:    --- Tests
-
-#[tokio::test]
-async fn render_loop_driver_test_backend_buffer_observes_sentinel_after_event() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut driver = RenderLoopDriver::new(120, 30);
-
-    // -- Exec & Check: before any scripted event the buffer must not contain
-    // the sentinel.
-    driver.advance(&[]).await?;
-    let before = driver.buffer_text();
-    assert!(
-        !before.contains("SENTINEL"),
-        "sentinel must be absent before the event, got:\n{before}"
-    );
-
-    // -- Exec: type + submit the sentinel through the real terminal arm.
-    let mut script: Vec<DriveEvent> = "SENTINEL"
-        .chars()
-        .map(|c| {
-            DriveEvent::Key(TerminalEvent::Key(
-                crate::interaction::input::TerminalKey::Char(c),
-            ))
-        })
-        .collect();
-    script.push(DriveEvent::Key(TerminalEvent::Key(
-        crate::interaction::input::TerminalKey::Enter,
-    )));
-    driver.advance_with_frame(&script).await?;
-
-    // -- Check: the rendered frame produced by the real loop must contain the
-    // sentinel user prompt.
-    let after = driver.buffer_text();
-    assert!(
-        after.contains("SENTINEL"),
-        "TestBackend buffer must contain the sentinel after the loop renders it, got:\n{after}"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut driver = RenderLoopDriver::new(120, 30);
-
-    // -- Exec: publish a SystemEvent on the bus like production stages do.
-    driver
-        .advance(&[DriveEvent::SystemEvent(Box::new(
-            SystemEvent::ToolStarted {
-                call: agnt_core::protocol::events::ToolCall::new(
-                    agnt_core::transcript::ir::ToolName("sentinel_tool".to_string()),
-                    "mcp",
-                    "{}",
-                    CallLine::from_json_summary("{}"),
-                ),
-            },
-        ))])
-        .await?;
-
-    // -- Check: the loop's ui_event arm reduced the event (the transcript
-    // records the tool entry). The entry carries the call line, not the tool
-    // name, so assert a Tool entry materialized with in-progress status.
-    assert!(
-        driver
-            .state()
-            .transcript
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry, TranscriptEntry::Tool(tool) if tool.status == ItemStatus::InProgress)),
-        "tool event must reach the coordinator through the real bus arm"
-    );
-    Ok(())
-}
-
-/// Every popup renders its navigation keys in the title, with " · " between
-/// hint items: scroll panels advertise ↑/↓ · PgUp/PgDn · Esc, pickers advertise
-/// ↑/↓ · Enter · Esc.
-#[tokio::test]
-async fn every_popup_title_shows_its_navigation_keys() -> Result<()> {
-    // -- Setup & Fixtures: one popup per case, opened through the real state.
-    let cases: [(&str, &str); 9] = [
-        ("status", "Status (↑/↓ · PgUp/PgDn · Esc)"),
-        ("skills", "Skills (↑/↓ · PgUp/PgDn · Esc)"),
-        ("help", "Help (↑/↓ · PgUp/PgDn · Esc"),
-        ("palette", "Command Palette (↑/↓ · Enter · Esc"),
-        ("models", "Models (↑/↓ · Enter · Esc)"),
-        ("agent", "Agent (↑/↓ · Enter · Esc)"),
-        ("sessions", "Sessions (↑/↓ · Enter · Esc"),
-        ("theme", "Theme (↑/↓ · Enter · Esc)"),
-        ("inline_slash", "Commands (↑/↓ · Enter · Esc)"),
-    ];
-
-    for (label, expected) in cases {
-        // -- Setup & Fixtures: a fresh driver per popup.
-        let mut driver = RenderLoopDriver::new(160, 40);
-        {
-            let state = &mut driver.coordinator_mut().state;
-            match label {
-                "status" => state.open_info_panel(crate::state::InfoPanel::Status),
-                "skills" => state.open_info_panel(crate::state::InfoPanel::Skills),
-                "help" => state.open_info_panel(crate::state::InfoPanel::Help),
-                "palette" => {
-                    state
-                        .picker
-                        .open(crate::state::ActivePicker::CommandPalette);
-                }
-                "models" => {
-                    state.picker.open(crate::state::ActivePicker::Model);
-                }
-                "agent" => {
-                    state.picker.open(crate::state::ActivePicker::Agent);
-                }
-                "sessions" => {
-                    state.picker.open(crate::state::ActivePicker::Session);
-                }
-                "inline_slash" => state.check_inline_slash("/"),
-                _ => {
-                    state.picker.open(crate::state::ActivePicker::Theme);
-                }
-            }
-        }
-
-        // -- Exec: settle past the render throttle so a frame lands.
-        driver.advance_with_frame(&[]).await?;
-
-        // -- Check: the rendered title carries the keys, never a bare " | ".
-        let buffer = driver.buffer_text();
-        assert!(
-            buffer.contains(expected),
-            "{label}: expected title fragment {expected:?} in:\n{buffer}"
-        );
-    }
-    Ok(())
-}
-
-// endregion: --- Tests

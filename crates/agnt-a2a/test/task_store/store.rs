@@ -23,6 +23,12 @@ mod list;
 #[path = "store/push_configs.rs"]
 mod push_configs;
 
+// Binds a loopback webhook stub, so it belongs to the integration set even
+// though it lives beside the pure store suites.
+#[cfg(feature = "integration")]
+#[path = "store/push_delivery.rs"]
+mod push_delivery;
+
 #[path = "store/push_payload.rs"]
 mod push_payload;
 

@@ -10,8 +10,8 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn fixed_time() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
+fn fixed_time() -> Result<DateTime<Utc>> {
+    Ok(DateTime::from_timestamp(1_700_000_000, 0).ok_or("valid timestamp")?)
 }
 
 // ---------------------------------------------------------------------------
@@ -19,10 +19,10 @@ fn fixed_time() -> DateTime<Utc> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn task_status_roundtrip_with_message() {
+fn task_status_roundtrip_with_message() -> Result<()> {
     let status = TaskStatus {
         state: TaskState::Completed,
-        timestamp: fixed_time(),
+        timestamp: fixed_time()?,
         message: Some(Message {
             role: Role::Agent,
             parts: vec![Part::Text {
@@ -34,30 +34,32 @@ fn task_status_roundtrip_with_message() {
         }),
     };
 
-    let json = serde_json::to_value(&status).expect("serialize");
+    let json = serde_json::to_value(&status)?;
     assert_eq!(json["state"], "TASK_STATE_COMPLETED");
     assert!(json.get("timestamp").is_some());
 
-    let back: TaskStatus = serde_json::from_value(json).expect("deserialize");
+    let back: TaskStatus = serde_json::from_value(json)?;
     assert_eq!(back, status);
+    Ok(())
 }
 
 #[test]
-fn task_status_without_message() {
+fn task_status_without_message() -> Result<()> {
     let status = TaskStatus {
         state: TaskState::Working,
-        timestamp: fixed_time(),
+        timestamp: fixed_time()?,
         message: None,
     };
 
-    let json = serde_json::to_value(&status).expect("serialize");
+    let json = serde_json::to_value(&status)?;
     assert!(
         json.get("message").is_none(),
         "message should be absent when None"
     );
 
-    let back: TaskStatus = serde_json::from_value(json).expect("deserialize");
+    let back: TaskStatus = serde_json::from_value(json)?;
     assert_eq!(back, status);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ fn task_status_timestamp_serializes_with_z_suffix() -> Result<()> {
     // -- Setup & Fixtures
     let status = TaskStatus {
         state: TaskState::Working,
-        timestamp: fixed_time(),
+        timestamp: fixed_time()?,
         message: None,
     };
 
@@ -99,7 +101,7 @@ fn task_status_timestamp_deserializes_from_z_suffix() -> Result<()> {
     let status: TaskStatus = serde_json::from_value(json)?;
 
     // -- Check
-    assert_eq!(status.timestamp, fixed_time());
+    assert_eq!(status.timestamp, fixed_time()?);
     Ok(())
 }
 
@@ -115,7 +117,7 @@ fn task_status_timestamp_deserializes_from_offset() -> Result<()> {
     let status: TaskStatus = serde_json::from_value(json)?;
 
     // -- Check
-    assert_eq!(status.timestamp, fixed_time());
+    assert_eq!(status.timestamp, fixed_time()?);
     Ok(())
 }
 
@@ -124,7 +126,7 @@ fn task_status_timestamp_roundtrip_preserves_value() -> Result<()> {
     // -- Setup & Fixtures
     let status = TaskStatus {
         state: TaskState::Completed,
-        timestamp: fixed_time(),
+        timestamp: fixed_time()?,
         message: None,
     };
 
@@ -138,7 +140,7 @@ fn task_status_timestamp_roundtrip_preserves_value() -> Result<()> {
 }
 
 #[test]
-fn artifact_full_roundtrip() {
+fn artifact_full_roundtrip() -> Result<()> {
     let artifact = Artifact {
         artifact_id: "art-1".to_string(),
         name: Some("Report".to_string()),
@@ -151,17 +153,18 @@ fn artifact_full_roundtrip() {
         ])),
     };
 
-    let json = serde_json::to_value(&artifact).expect("serialize");
+    let json = serde_json::to_value(&artifact)?;
     assert_eq!(json["artifactId"], "art-1");
     assert_eq!(json["name"], "Report");
     assert!(json.get("metadata").is_some());
 
-    let back: Artifact = serde_json::from_value(json).expect("deserialize");
+    let back: Artifact = serde_json::from_value(json)?;
     assert_eq!(back, artifact);
+    Ok(())
 }
 
 #[test]
-fn artifact_minimal() {
+fn artifact_minimal() -> Result<()> {
     let artifact = Artifact {
         artifact_id: "art-2".to_string(),
         name: None,
@@ -169,7 +172,7 @@ fn artifact_minimal() {
         metadata: None,
     };
 
-    let json = serde_json::to_value(&artifact).expect("serialize");
+    let json = serde_json::to_value(&artifact)?;
     assert_eq!(json["artifactId"], "art-2");
     assert!(
         json.get("name").is_none(),
@@ -181,8 +184,9 @@ fn artifact_minimal() {
         "metadata should be absent when None"
     );
 
-    let back: Artifact = serde_json::from_value(json).expect("deserialize");
+    let back: Artifact = serde_json::from_value(json)?;
     assert_eq!(back, artifact);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -190,14 +194,14 @@ fn artifact_minimal() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn task_full_roundtrip() {
+fn task_full_roundtrip() -> Result<()> {
     let task = Task {
         id: "task-1".to_string(),
         context_id: Some("ctx-1".to_string()),
         parent_task_id: Some("parent-1".to_string()),
         status: TaskStatus {
             state: TaskState::Completed,
-            timestamp: fixed_time(),
+            timestamp: fixed_time()?,
             message: Some(Message {
                 role: Role::Agent,
                 parts: vec![Part::Text {
@@ -227,7 +231,7 @@ fn task_full_roundtrip() {
         metadata: Some(HashMap::from([("source".to_string(), json!("test"))])),
     };
 
-    let json = serde_json::to_value(&task).expect("serialize");
+    let json = serde_json::to_value(&task)?;
     assert_eq!(json["id"], "task-1");
     assert_eq!(json["contextId"], "ctx-1");
     assert_eq!(json["parentTaskId"], "parent-1");
@@ -236,19 +240,20 @@ fn task_full_roundtrip() {
     assert_eq!(json["artifacts"][0]["artifactId"], "art-1");
     assert!(json.get("metadata").is_some());
 
-    let back: Task = serde_json::from_value(json).expect("deserialize");
+    let back: Task = serde_json::from_value(json)?;
     assert_eq!(back, task);
+    Ok(())
 }
 
 #[test]
-fn task_minimal() {
+fn task_minimal() -> Result<()> {
     let task = Task {
         id: "task-2".to_string(),
         context_id: None,
         parent_task_id: None,
         status: TaskStatus {
             state: TaskState::Submitted,
-            timestamp: fixed_time(),
+            timestamp: fixed_time()?,
             message: None,
         },
         history: None,
@@ -257,7 +262,7 @@ fn task_minimal() {
         metadata: None,
     };
 
-    let json = serde_json::to_value(&task).expect("serialize");
+    let json = serde_json::to_value(&task)?;
     assert!(
         json.get("contextId").is_none(),
         "contextId should be absent when None"
@@ -269,6 +274,7 @@ fn task_minimal() {
     assert!(json.get("history").is_none());
     assert!(json.get("metadata").is_none());
 
-    let back: Task = serde_json::from_value(json).expect("deserialize");
+    let back: Task = serde_json::from_value(json)?;
     assert_eq!(back, task);
+    Ok(())
 }

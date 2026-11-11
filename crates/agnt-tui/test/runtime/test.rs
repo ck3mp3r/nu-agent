@@ -21,6 +21,7 @@ mod pickers;
 mod render_animation;
 mod render_misc;
 mod renderer_events;
+mod replay_preview;
 mod status_bar;
 mod submit_cancel;
 mod support;
@@ -48,7 +49,11 @@ use std::{
 use crate::rendering::theme::TuiTheme;
 use crate::runtime::status::test::{init_repo_with_branch, run_git};
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
-use crate::test_support::{entry_text, markdown_fixture, open_command_palette_for_test};
+use crate::test_support::{
+    compaction_completed, compaction_started, entry_text, inference_chunk, inference_started,
+    markdown_fixture, open_command_palette_for_test, system_message, tool_completed, tool_started,
+    turn_completed,
+};
 use crate::{
     interaction::{
         input::{TerminalEvent, TerminalKey},
@@ -67,18 +72,19 @@ use crate::{
         status_panel_lines,
     },
     state::{
-        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PermissionPrompt,
-        PickerOption, PickerPayload, PickerRenderKind, PromptStatus, TranscriptRole, UiPhase,
+        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PickerOption,
+        PickerPayload, PickerRenderKind, PromptStatus, TranscriptRole, UiPhase,
     },
 };
-use agnt_core::orchestrator::{OrchestratorEvent, UiStateEvent};
-use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
-use agnt_core::protocol::events::{RequestId, SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::ir::ToolName;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::MessageRole;
+use agnt_render::transcript::ir::ToolName;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
+use agnt_runtime::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
+use agnt_runtime::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::events::{
+    CompactionRecord, CompactionSource, SessionRecord, ToolCall, ToolOutcome,
+};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

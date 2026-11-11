@@ -18,6 +18,9 @@ mod single_turn;
 #[path = "spawn.rs"]
 mod spawn;
 
+#[path = "stderr.rs"]
+mod stderr;
+
 #[path = "support.rs"]
 mod support;
 
@@ -26,8 +29,8 @@ mod support;
 use super::*;
 
 use agnt_a2a::{InMemoryTaskStore, Task, TaskState};
-use agnt_core::bus::{AgentEvent, AgentTx};
-use agnt_core::config::{HookEvent, ResolvedHook};
-use nu_protocol::Span;
+use agnt_runtime::bus::{AgentEvent, AgentTx, LifecycleEvent};
+use agnt_runtime::config::{HookEvent, ResolvedHook};
+use nu_protocol::{Span, Value};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

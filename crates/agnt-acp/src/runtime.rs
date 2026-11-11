@@ -9,31 +9,27 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
 };
-use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
-use agnt_core::conversation::builder::builtin_tool_definitions;
-use agnt_core::conversation::compaction::compactor::NuCompactor;
-use agnt_core::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
-use agnt_core::conversation::runtime_build::build_compaction_policy;
-use agnt_core::conversation::state::{
-    McpState, MemoryState, MultiAgentState, PermissionState, PersonaState, ProviderState, ToolState,
-};
-use agnt_core::hook::DoomLoopState;
-use agnt_core::hook::output_repetition::RepetitionState;
-use agnt_core::hooks::HookAgentContext;
-use agnt_core::protocol::model_switching::ModelSwitching;
-use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
-use agnt_core::session::RigStoreConfig;
-use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
-use agnt_core::tools::closure::{ClosureRegistry, EngineInterfaceLike};
-use agnt_core::tools::handler::McpToolRegistry;
-use agnt_core::tools::handler::builtin_tool::{BuiltinTool, ToolRenderRegistry, register_builtin};
-use agnt_core::tools::handler::edit::EditTool;
-use agnt_core::tools::handler::read::ReadTool;
-use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use agnt_core::tools::mcp::client::McpToolDefinition;
-use agnt_core::tools::mcp::config::{McpConfig, McpServerConfig};
-use agnt_core::tools::mcp::runtime::connect_servers;
-use agnt_core::types::{
+use agnt_kernel::{BuiltinKind, ToolKind};
+use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
+use agnt_runtime::conversation::builder::builtin_tool_definitions;
+use agnt_runtime::conversation::contracts::DecisionSource;
+use agnt_runtime::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
+use agnt_runtime::conversation::runtime_build::RuntimeBuildParams;
+use agnt_runtime::conversation::runtime_parts::RuntimeParts;
+use agnt_runtime::conversation::state::memory::MemoryState;
+use agnt_runtime::conversation::state::{MultiAgentState, PersonaState, ProviderState, ToolState};
+use agnt_runtime::hooks::HookAgentContext;
+use agnt_runtime::protocol::model_switching::ModelSwitching;
+use agnt_runtime::protocol::persona::{FsPersonaResolver, PersonaLister};
+use agnt_runtime::session::RigStoreConfig;
+use agnt_runtime::tools::authz::PermissionsConfig;
+use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::handler::builtin_tool::register_builtin;
+use agnt_runtime::tools::mcp::client::McpToolDefinition;
+use agnt_runtime::tools::mcp::config::{McpConfig, McpServerConfig};
+use agnt_runtime::tools::mcp::runtime::connect_servers;
+use agnt_runtime::types::{
     Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
 };
 
@@ -61,7 +57,7 @@ pub struct AcpRuntimeParams {
     ///
     /// Carries the config file and the persona directory, so the runtime and the
     /// agent selector read them instead of deriving them.
-    pub paths: agnt_core::config::Paths,
+    pub paths: agnt_runtime::config::Paths,
     /// Handle to the process tokio runtime.
     pub runtime_handle: tokio::runtime::Handle,
     /// The rig-memory store config the session's store is made from.
@@ -210,26 +206,16 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     // The hook envelopes stamp the model the session starts on. The startup
     // `switch_agent` below then writes the persona slug and the model the
     // persona resolves to.
-    hook_context.set_model(agnt_core::protocol::picker::format_active_model_identity(
-        &config.provider,
-        &config.model,
-    ));
+    hook_context.set_model(
+        agnt_runtime::protocol::picker::format_active_model_identity(
+            &config.provider,
+            &config.model,
+        ),
+    );
 
     let max_tool_result_bytes = config
         .max_tool_result_bytes
         .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
-    let max_context_tokens = config
-        .model_context_tokens
-        .or_else(|| config.max_context_tokens.map(|t| t as usize))
-        .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
-    let repetition_guard = config
-        .repetition_guard
-        .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
-    // The compaction model spec is built once, from the resolved config: the
-    // helper maps the provider key through its rig impl and sizes the window
-    // from the config's limits.
-    let compaction_spec =
-        agnt_core::conversation::compaction::compactor::resolve_model_spec_for(&config);
 
     // -- MCP servers: config.toml merged with the ACP client's list
     let config_mcp = McpConfig::from_toml_config(&plugin_config)
@@ -237,8 +223,8 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let merged_mcp = merge_mcp_servers(config_mcp.mcp, mcp_servers);
 
     // -- Tool server: built-ins only, no closure tools
-    let tool_server_handle = agnt_core::types::ToolServer::new().run();
-    let bus = agnt_core::bus::create_bus();
+    let tool_server_handle = agnt_runtime::types::ToolServer::new().run();
+    let bus = agnt_runtime::bus::Bus::default();
 
     // -- Built-in tools. When the client advertises both filesystem
     // capabilities, the `read` and `edit` tools route through the client's
@@ -259,17 +245,26 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             .is_some_and(|s| s.capabilities.write_text_file),
     );
 
-    let mut render_registry = ToolRenderRegistry::default();
     let mut acp_read_def: Option<ToolDefinition> = None;
     let mut acp_edit_def: Option<ToolDefinition> = None;
     for def in builtin_tool_definitions()
         .map_err(|e| AcpError::Runtime(format!("invalid builtin tool name: {e}")))?
     {
-        if client_fs_supported && def.name == "read" {
+        if client_fs_supported
+            && matches!(
+                ToolKind::of_name(&def.name),
+                ToolKind::Builtin(BuiltinKind::Read)
+            )
+        {
             acp_read_def = Some(def);
             continue;
         }
-        if client_fs_supported && def.name == "edit" {
+        if client_fs_supported
+            && matches!(
+                ToolKind::of_name(&def.name),
+                ToolKind::Builtin(BuiltinKind::Edit)
+            )
+        {
             acp_edit_def = Some(def);
             continue;
         }
@@ -277,15 +272,13 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             def,
             cwd.clone(),
             max_tool_result_bytes,
-            bus.clone(),
+            bus.cancel(),
             &tool_server_handle,
-            &mut render_registry,
         )
         .await;
     }
 
     if let (Some(def), Some(state)) = (acp_read_def, client_fs.as_ref()) {
-        render_registry.register(&def.name, ReadTool::call_line_render);
         let tool = make_acp_read_tool(
             def,
             cwd.clone(),
@@ -297,7 +290,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     }
 
     if let (Some(def), Some(state)) = (acp_edit_def, client_fs.as_ref()) {
-        render_registry.register(&def.name, EditTool::call_line_render);
         let tool = make_acp_edit_tool(
             def,
             cwd.clone(),
@@ -361,111 +353,104 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
 
     // -- Preamble cache: AGENTS.md chain and available skills
     let agents_load =
-        agnt_core::protocol::agents::load_agents_chain_for_cwd(&cwd, Some(&paths.agents_dir));
+        agnt_runtime::protocol::agents::load_agents_chain_for_cwd(&cwd, Some(&paths.agents_dir));
     for warning in &agents_load.warnings {
         log::warn!("AGENTS.md load warning: {warning}");
     }
     let cached_agents_chain = agents_load.merged_chain;
     let cached_available_skills =
-        agnt_core::protocol::skills::render_available_skills_preamble(&cwd);
+        agnt_runtime::protocol::skills::render_available_skills_preamble(&cwd);
 
-    // -- Compaction from config.toml
+    // -- Compaction from config.toml. The policy and the threshold ride the
+    // composition's configuration record; the compactor's own model is built
+    // below from the active model.
     let merged_compaction = plugin_config.compaction.clone().unwrap_or_default();
     merged_compaction
         .validate()
         .map_err(|msg| AcpError::Config(format!("compaction config invalid: {msg}")))?;
-    let threshold_pct = merged_compaction
-        .proactive_threshold_pct
-        .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
-    let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
-    let compaction_policy = build_compaction_policy(&merged_compaction);
 
     // -- Model and compactor share one erased model per consumer
-    let mut provider = ProviderState::new(config, Some(plugin_config.clone()));
-    let dyn_model = provider
-        .build_dyn_model()
-        .await
-        .map_err(|e| AcpError::Runtime(format!("failed to build model: {e}")))?;
-    let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
+    let mut provider = ProviderState::new(config.clone(), Some(plugin_config.clone()));
     let compactor_model = provider
         .build_dyn_model()
         .await
         .map_err(|e| AcpError::Runtime(format!("failed to build compactor model: {e}")))?;
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
-    let compactor = NuCompactor::from_shared_model(
-        Arc::clone(&compactor_model),
-        bus.clone(),
-        compaction_policy,
-        compaction_spec,
-    );
 
     let engine: Arc<dyn EngineInterfaceLike> =
         Arc::new(AcpEngineStub::new(cwd.to_string_lossy().to_string()));
 
     // -- Interactive permission bridge: ACP prompts the client, so the runtime
-    // must publish `SystemEvent::PermissionRequested` and await the bridge's decision.
+    // must publish `PermissionRecord::Requested` and await the bridge's decision.
     let pending: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
 
-    let mut runtime = AgentConversationRuntime {
-        runtime: runtime_handle,
-        tool_server_handle,
-        store_latch: Default::default(),
+    let parts = RuntimeParts {
         provider,
         tools: ToolState::new(
-            tool_definitions,
-            baseline_tool_definitions,
+            tool_definitions.clone(),
+            baseline_tool_definitions.clone(),
             ClosureRegistry::default(),
         ),
-        mcp_state: McpState::new(
-            mcp_runtime,
-            mcp_lifecycle_projection,
-            merged_mcp,
-            Some(cwd.clone()),
-            mcp_registry,
-            max_tool_result_bytes,
-            plugin_config.vault.clone(),
-        ),
-        engine,
-        final_session_id: session_id,
-        permission_state: PermissionState::new(
-            base_permissions,
-            effective_permissions,
-            None,
-            SessionGrantCache::default(),
-            permissions_startup_summary,
-        ),
-        session: MemoryState::new(rig),
+        session: MemoryState::new(rig.clone()),
         persona: PersonaState::new(
             None,
             None,
             None,
             None,
+            cached_agents_chain.clone(),
+            cached_available_skills.clone(),
+        ),
+        multi: MultiAgentState::new(Vec::new(), plugin_config.agents.clone()),
+        engine: Arc::clone(&engine),
+        bus: bus.clone(),
+    };
+
+    // ACP has no preview phase: the translator drops `ToolPreview`, so the
+    // completion display must reach the client for the diff to appear. The card
+    // content rides `PermissionRecord` (the resolver mints it, the record names
+    // the call), and only the decision source is the interactive bridge here.
+    let mut runtime = AgentConversationRuntime::compose(
+        parts,
+        RuntimeBuildParams {
+            runtime: runtime_handle,
+            config,
+            plugin_config: Some(plugin_config.clone()),
+            tool_definitions,
+            baseline_tool_definitions,
+            closure_registry: ClosureRegistry::default(),
+            mcp_runtime,
+            tool_server_handle,
+            mcp_lifecycle_projection,
+            mcp_server_configs: merged_mcp,
+            mcp_caller_cwd: Some(cwd.clone()),
+            vault: plugin_config.vault.clone(),
+            mcp_registry,
+            engine,
+            rig,
+            final_session_id: session_id,
+            proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
+            base_permissions,
+            effective_permissions,
+            cli_permissions_overlay: None,
+            permissions_startup_summary,
+            persona_body: None,
+            agent_identity: None,
+            agent_description: None,
+            agent_icon: None,
             cached_agents_chain,
             cached_available_skills,
-        ),
-        multi_agent: MultiAgentState::new(Vec::new(), plugin_config.agents.clone()),
-        cwd,
-        paths,
-        interactive_pending: Some(pending),
-        // ACP has no preview phase: the translator drops `ToolPreview`, so the
-        // completion display must reach the client for the diff to appear.
-        renders_tool_previews: false,
-        circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
-        doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-        output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-        repetition_guard,
-        last_total_tokens: Arc::new(Mutex::new(None)),
-        bus,
-        render_registry,
-        hook_context,
-        session_usage: agnt_core::hook::TurnUsage::default(),
-        dyn_model,
-        compaction: agnt_core::conversation::compaction::CompactionConfig {
-            compactor,
-            threshold_tokens,
-            threshold_pct,
+            available_agents: Vec::new(),
+            agents_config: plugin_config.agents.clone(),
+            cwd,
+            paths,
+            bus,
+            hook_context,
+            compactor_model: Some(compactor_model),
         },
-    };
+    )
+    .await
+    .map_err(|e| AcpError::Runtime(e.msg))?
+    .with_decision_source(Some(pending));
 
     // -- Populate the persona state for the effective agent by running the core
     // switch flow once. This resolves the persona body, applies the persona's
@@ -541,8 +526,8 @@ fn mcp_tool_definition(
 }
 
 /// Map a shared config-load error to an ACP error.
-fn map_config_load_error(err: agnt_core::config::ConfigLoadError) -> AcpError {
-    use agnt_core::config::ConfigLoadError;
+fn map_config_load_error(err: agnt_runtime::config::ConfigLoadError) -> AcpError {
+    use agnt_runtime::config::ConfigLoadError;
     match err {
         ConfigLoadError::NotFound(path) => {
             AcpError::Config(format!("config not found at {}", path.display()))

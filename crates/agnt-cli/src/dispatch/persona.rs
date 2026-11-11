@@ -1,11 +1,11 @@
 //! clap-based persona resolution for the CLI.
 
-use agnt_core::config::AgentsConfig;
-use agnt_core::protocol::persona::{
+use agnt_runtime::config::AgentsConfig;
+use agnt_runtime::protocol::persona::{
     FrontMatterParser, FsPersonaResolver, ParsedPersona, PersonaFileResolver,
     PulldownCmarkFrontMatterParser, interpret_front_matter,
 };
-use agnt_core::tools::authz::PermissionsOverlay;
+use agnt_runtime::tools::authz::PermissionsOverlay;
 use nu_protocol::{LabeledError, Span};
 
 use crate::error::{Error, Result};
@@ -43,7 +43,7 @@ pub fn resolve_persona_from_clap(
     let span = Span::unknown();
 
     let effective_agent_name = if let Some(name) = agent_name {
-        if agnt_core::protocol::persona::builtins::is_builtin_persona(&name)
+        if agnt_runtime::protocol::persona::builtins::is_builtin_persona(&name)
             && !agents_config.is_builtin_enabled(&name)
         {
             return Err(Error::Runtime(

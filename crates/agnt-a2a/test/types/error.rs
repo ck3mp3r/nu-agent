@@ -1,6 +1,8 @@
 use super::*;
 use serde_json::json;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ---------------------------------------------------------------------------
 // JsonRpcError
 // ---------------------------------------------------------------------------
@@ -39,35 +41,37 @@ fn json_rpc_error_new_constructors() {
 }
 
 #[test]
-fn json_rpc_error_roundtrip_with_data() {
+fn json_rpc_error_roundtrip_with_data() -> Result<()> {
     let err = JsonRpcError {
         code: -32_000,
         message: "task not found".to_string(),
         data: Some(json!({"taskId": "t-123"})),
     };
 
-    let json = serde_json::to_value(&err).expect("serialize");
+    let json = serde_json::to_value(&err)?;
     assert_eq!(json["code"], -32_000);
     assert_eq!(json["message"], "task not found");
     assert_eq!(json["data"]["taskId"], "t-123");
 
-    let back: JsonRpcError = serde_json::from_value(json).expect("deserialize");
+    let back: JsonRpcError = serde_json::from_value(json)?;
     assert_eq!(back, err);
+    Ok(())
 }
 
 #[test]
-fn json_rpc_error_roundtrip_without_data() {
+fn json_rpc_error_roundtrip_without_data() -> Result<()> {
     let err = JsonRpcError {
         code: -32_601,
         message: "method not found".to_string(),
         data: None,
     };
 
-    let json = serde_json::to_value(&err).expect("serialize");
+    let json = serde_json::to_value(&err)?;
     assert!(json.get("data").is_none());
 
-    let back: JsonRpcError = serde_json::from_value(json).expect("deserialize");
+    let back: JsonRpcError = serde_json::from_value(json)?;
     assert_eq!(back, err);
+    Ok(())
 }
 
 #[test]

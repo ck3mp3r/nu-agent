@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_send_task() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     let msg = Message {
         role: Role::User,
@@ -224,7 +224,7 @@ async fn test_send_task_without_configuration_omits_configuration_from_body() ->
 
 #[tokio::test]
 async fn test_send_task_with_sender_url() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     let msg = Message {
         role: Role::User,
@@ -253,7 +253,7 @@ async fn test_send_task_with_sender_url() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_task_connection_refused() {
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let msg = Message {
         role: Role::User,
         parts: vec![Part::Text {

@@ -12,19 +12,17 @@ fn enqueue_and_activate_prompt_transcript_bookkeeping() -> Result<()> {
     state.enqueue_prompt("second".to_string());
     assert_eq!(state.transcript.len(), before);
 
-    // -- Exec & Check: an external prompt queues without growing the transcript.
+    // -- Exec & Check: an external prompt shows its row without queueing:
+    // the loop owns the external intake, so the surface submits nothing.
     let mut external = AppState::default();
     let before = external.transcript.len();
-    external.reduce_ui_state_event(UiStateEvent::EnqueueExternalPrompt {
-        text: "mailbox message".to_string(),
-    });
-    assert_eq!(external.phase, UiPhase::Busy);
-    assert_eq!(external.prompt_items().len(), 1);
-    assert_eq!(external.prompt_items()[0].status, PromptStatus::Queued);
-    assert_eq!(external.prompt_items()[0].prompt_text, "mailbox message");
-    assert_eq!(pending_prompt_ids(&external), vec![1]);
+    enqueue_external(&mut external, "task-1", "mailbox message");
+    assert_eq!(external.transcript.len(), before + 1);
+    assert_eq!(user_rows(&external), vec!["mailbox message"]);
+    assert!(external.prompt_items().is_empty());
+    assert!(pending_prompt_ids(&external).is_empty());
     assert_eq!(active_prompt_id(&external), None);
-    assert_eq!(external.transcript.len(), before);
+    assert_eq!(external.phase, UiPhase::Idle);
 
     // -- Exec & Check: activating the next prompt appends one user block.
     let mut activating = AppState::default();

@@ -11,9 +11,9 @@ use crate::error::{Error, Result};
 /// The config file path is resolved once here, from the [`Paths`] the
 /// environment ladder selects, and handed to the subcommand.
 ///
-/// [`Paths`]: agnt_core::config::Paths
+/// [`Paths`]: agnt_runtime::config::Paths
 pub fn run_config_command(command: &ConfigCommand) -> Result<()> {
-    let paths = agnt_core::config::Paths::resolve_for_process(None)
+    let paths = agnt_runtime::config::Paths::resolve_for_process(None)
         .map_err(|e| Error::Custom(format!("Cannot determine config path: {e}")))?;
     match command {
         ConfigCommand::Init(args) => run_config_init(args, &paths.config_path),
@@ -57,7 +57,7 @@ fn run_config_init(args: &ConfigInitArgs, path: &std::path::Path) -> Result<()> 
 const TEMPLATE: &str = include_str!("../../../../agnt-plugin/src/command/config/template.toml");
 
 fn generate_config_content() -> String {
-    let env = agnt_core::utils::env_map::process_env();
+    let env = agnt_runtime::utils::env_map::process_env();
     let env_provider = env.get("AGENT_PROVIDER").cloned().unwrap_or_default();
     let env_model = env.get("AGENT_MODEL").cloned().unwrap_or_default();
 

@@ -8,7 +8,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     let mut idle = AppState::default();
 
     // -- Exec
-    reduce_llm(&mut idle, SystemEvent::InferenceStarted);
+    reduce_llm(&mut idle, inference_started());
 
     // -- Check
     assert_eq!(idle.phase, UiPhase::Busy);
@@ -19,7 +19,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     busy.status.message.set_message("Tool: prior");
 
     // -- Exec
-    reduce_llm(&mut busy, SystemEvent::InferenceStarted);
+    reduce_llm(&mut busy, inference_started());
 
     // -- Check
     assert_eq!(busy.phase, UiPhase::Busy);
@@ -32,17 +32,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     // -- Exec
     reduce_llm(
         &mut state,
-        SystemEvent::InferenceCompleted {
-            usage: Usage {
-                response_chars: 6,
-                tool_calls: 0,
-                input_tokens: 20,
-                output_tokens: 10,
-                total_tokens: Some(30),
-                cost: Some(0.001),
-                cost_complete: true,
-            },
-        },
+        inference_completed(20, 10, Some(30), Some(0.001), true),
     );
 
     // -- Check: latest values and the session total.
@@ -54,17 +44,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     // -- Exec: a second completion accumulates the session total.
     reduce_llm(
         &mut state,
-        SystemEvent::InferenceCompleted {
-            usage: Usage {
-                response_chars: 4,
-                tool_calls: 0,
-                input_tokens: 5,
-                output_tokens: 7,
-                total_tokens: Some(12),
-                cost: Some(0.002),
-                cost_complete: true,
-            },
-        },
+        inference_completed(5, 7, Some(12), Some(0.002), true),
     );
 
     // -- Check
@@ -77,20 +57,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     let mut busy = busy_state_with_clean_transcript();
 
     // -- Exec
-    reduce_llm(
-        &mut busy,
-        SystemEvent::InferenceCompleted {
-            usage: Usage {
-                response_chars: 12,
-                tool_calls: 0,
-                input_tokens: 4,
-                output_tokens: 8,
-                total_tokens: Some(12),
-                cost: None,
-                cost_complete: false,
-            },
-        },
-    );
+    reduce_llm(&mut busy, inference_completed(4, 8, Some(12), None, false));
 
     // -- Check: tokens recorded, status line untouched.
     assert_eq!(busy.status.tokens.latest_input_tokens, Some(4));

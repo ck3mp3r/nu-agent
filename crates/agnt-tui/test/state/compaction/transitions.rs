@@ -7,16 +7,16 @@ use super::*;
 fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce_compaction(&mut state, started("slash_compact"));
+    reduce_compaction(&mut state, started(CompactionSource::Manual));
     reduce_compaction(
         &mut state,
-        completed("slash_compact", "preview", "persisted summary body"),
+        completed(CompactionSource::Manual, "persisted summary body"),
     );
 
     // -- Check
     assert_eq!(
         entry_text(&state.transcript.entries()[0]),
-        "Compaction · slash_compact",
+        "Compaction · slash",
         "metadata is transcript UI chrome, not session system summary payload"
     );
     assert!(
@@ -29,10 +29,10 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
 
     // -- Setup & Fixtures: an empty summary must not claim a persisted summary.
     let mut noop = AppState::default();
-    reduce_compaction(&mut noop, started("auto_threshold"));
+    reduce_compaction(&mut noop, started(CompactionSource::Auto));
     reduce_compaction(
         &mut noop,
-        completed("auto_threshold", "preview", "(empty summary)"),
+        completed(CompactionSource::Auto, "(empty summary)"),
     );
 
     // -- Check
@@ -53,11 +53,14 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
 
     // -- Setup & Fixtures: both triggers render a block.
     let mut triggers = AppState::default();
-    for source in ["slash_compact", "auto_threshold"] {
+    for (source, label) in [
+        (CompactionSource::Manual, "slash"),
+        (CompactionSource::Auto, "auto"),
+    ] {
         reduce_compaction(&mut triggers, started(source));
         reduce_compaction(
             &mut triggers,
-            completed(source, "preview", &format!("summary from {source}")),
+            completed(source, &format!("summary from {label}")),
         );
     }
 
@@ -68,8 +71,8 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
         .iter()
         .map(entry_text)
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"summary from slash_compact".to_string()));
-    assert!(lines.contains(&"summary from auto_threshold".to_string()));
+    assert!(lines.contains(&"summary from slash".to_string()));
+    assert!(lines.contains(&"summary from auto".to_string()));
     Ok(())
 }
 
@@ -83,7 +86,10 @@ fn compaction_completion_and_failure_bookkeeping() -> Result<()> {
     completed_state.status.tokens.latest_total_tokens = Some(50_000);
 
     // -- Exec
-    reduce_compaction(&mut completed_state, completed("test", "...", "summary"));
+    reduce_compaction(
+        &mut completed_state,
+        completed(CompactionSource::Auto, "summary"),
+    );
 
     // -- Check
     assert!(completed_state.status.message.status_line().is_empty());
@@ -94,13 +100,7 @@ fn compaction_completion_and_failure_bookkeeping() -> Result<()> {
     failed_state.status.message.set_message("Thinking...");
 
     // -- Exec
-    reduce_compaction(
-        &mut failed_state,
-        SystemEvent::CompactionFailed {
-            source: "test".to_string(),
-            message: "err".to_string(),
-        },
-    );
+    reduce_compaction(&mut failed_state, failed(CompactionSource::Auto, "err"));
 
     // -- Check
     assert!(failed_state.status.message.status_line().is_empty());
@@ -114,21 +114,33 @@ fn compaction_completion_and_failure_bookkeeping() -> Result<()> {
 fn compaction_streaming_lifecycle() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
 
     // -- Exec & Check: chunks render progressively.
-    reduce_compaction(&mut state, chunk("auto", "Hello", "Hello"));
+    reduce_compaction(&mut state, chunk(CompactionSource::Auto, "Hello", "Hello"));
     assert!(state.transcript.len() > 1, "should have header + content");
-    reduce_compaction(&mut state, chunk("auto", " world", "Hello world"));
-    reduce_compaction(&mut state, chunk("auto", " done", "Hello world done"));
+    reduce_compaction(
+        &mut state,
+        chunk(CompactionSource::Auto, " world", "Hello world"),
+    );
+    reduce_compaction(
+        &mut state,
+        chunk(CompactionSource::Auto, " done", "Hello world done"),
+    );
     let lines: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
     assert!(lines.iter().any(|l| l.contains("Hello world done")));
 
     // -- Exec & Check: a later chunk reprojects, replacing the old partial.
     let mut reproject = AppState::default();
-    reduce_compaction(&mut reproject, started("auto"));
-    reduce_compaction(&mut reproject, chunk("auto", "First", "First"));
-    reduce_compaction(&mut reproject, chunk("auto", " Second", "First Second"));
+    reduce_compaction(&mut reproject, started(CompactionSource::Auto));
+    reduce_compaction(
+        &mut reproject,
+        chunk(CompactionSource::Auto, "First", "First"),
+    );
+    reduce_compaction(
+        &mut reproject,
+        chunk(CompactionSource::Auto, " Second", "First Second"),
+    );
     let lines: Vec<String> = reproject
         .transcript
         .entries()
@@ -143,24 +155,27 @@ fn compaction_streaming_lifecycle() -> Result<()> {
 
     // -- Exec & Check: empty chunks are ignored.
     let mut empty = AppState::default();
-    reduce_compaction(&mut empty, started("auto"));
+    reduce_compaction(&mut empty, started(CompactionSource::Auto));
     let after_start = empty.transcript.len();
-    reduce_compaction(&mut empty, chunk("auto", "", ""));
+    reduce_compaction(&mut empty, chunk(CompactionSource::Auto, "", ""));
     assert_eq!(empty.transcript.len(), after_start);
     assert!(empty.transcript.summary_stream_start.is_none());
 
     // -- Exec & Check: completion clears the streaming state.
     let mut finishing = AppState::default();
-    reduce_compaction(&mut finishing, started("auto"));
-    reduce_compaction(&mut finishing, chunk("auto", "text", "text"));
+    reduce_compaction(&mut finishing, started(CompactionSource::Auto));
+    reduce_compaction(
+        &mut finishing,
+        chunk(CompactionSource::Auto, "text", "text"),
+    );
     assert!(finishing.transcript.summary_stream_start.is_some());
-    reduce_compaction(&mut finishing, completed("auto", "text", "text"));
+    reduce_compaction(&mut finishing, completed(CompactionSource::Auto, "text"));
     assert!(finishing.transcript.summary_stream_start.is_none());
 
     // -- Exec & Check: finalize the progressive stream.
     reduce_compaction(
         &mut state,
-        completed("auto", "Hello world done", "Hello world done"),
+        completed(CompactionSource::Auto, "Hello world done"),
     );
     let lines: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
     assert!(lines.iter().any(|l| l.contains("Hello world done")));

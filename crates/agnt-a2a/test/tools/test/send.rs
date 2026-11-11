@@ -4,7 +4,7 @@ use super::*;
 async fn test_handle_tasks_send_missing_param() {
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::default()),
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         own_card: AgentCard::default(),
         task_store: None,
         completion_tx: None,
@@ -18,7 +18,7 @@ async fn test_handle_tasks_send_missing_param() {
 #[tokio::test]
 async fn test_handle_tasks_send_to_real_server() -> Result<()> {
     // Start real server, add to cache, send task via handler
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
 
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
@@ -38,7 +38,7 @@ async fn test_handle_tasks_send_to_real_server() -> Result<()> {
 
 #[tokio::test]
 async fn test_handle_tasks_send_with_context_id_returns_context_id() -> Result<()> {
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
 
     // -- Exec
@@ -64,7 +64,7 @@ async fn test_handle_tasks_send_with_context_id_returns_context_id() -> Result<(
 
 #[tokio::test]
 async fn test_handle_tasks_send_without_context_id_returns_uuid() -> Result<()> {
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
 
     // -- Exec
@@ -97,8 +97,48 @@ async fn test_handle_tasks_send_without_context_id_returns_uuid() -> Result<()> 
 }
 
 #[tokio::test]
+async fn test_handle_tasks_send_omitted_contexts_mint_two_distinct_lineages() -> Result<()> {
+    let server = test_server().await?;
+    let ctx = tool_ctx(&server);
+
+    // -- Exec: two sends that omit the param.
+    let first = Tool::Send
+        .handle(
+            ctx.clone(),
+            serde_json::json!({"target": "test-agent", "text": "ALPHA"}),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    let second = Tool::Send
+        .handle(
+            ctx,
+            serde_json::json!({"target": "test-agent", "text": "BRAVO"}),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check: the boundary minted one fresh context per send, so no two
+    // sends share a lineage.
+    let first_id = first["contextId"]
+        .as_str()
+        .ok_or("an omitted contextId must echo the minted one")?;
+    let second_id = second["contextId"]
+        .as_str()
+        .ok_or("an omitted contextId must echo the minted one")?;
+    assert_ne!(
+        first_id, second_id,
+        "two omitted sends must mint two distinct lineages"
+    );
+    assert!(uuid::Uuid::parse_str(first_id).is_ok());
+    assert!(uuid::Uuid::parse_str(second_id).is_ok());
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_handle_tasks_send_with_own_card_url() -> Result<()> {
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx_with(
         &server,
         AgentCard {
@@ -121,7 +161,7 @@ async fn test_handle_tasks_send_with_own_card_url() -> Result<()> {
 
 #[tokio::test]
 async fn test_handle_tasks_get_to_real_server() -> Result<()> {
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
 
     // First send a task

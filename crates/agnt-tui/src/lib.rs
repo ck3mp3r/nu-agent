@@ -27,7 +27,8 @@ pub(crate) mod test_support;
 pub use interactive::TuiInteractiveUi;
 pub use widgets::RatatuiBackend;
 
-// Re-export runtime types needed by the plugin crate
+// Re-export the runtime pieces the CLI's TUI mode drives (terminal backend and
+// runtime renderer)
 pub use runtime::{
     AnsiTerminalBackend, HybridTerminalEvents, RuntimeRunError, TuiRuntimeRenderer,
     run_with_terminal_restore,

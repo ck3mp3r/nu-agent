@@ -64,7 +64,7 @@ pub async fn a2a_version_middleware(
                 .collect();
 
             let unsupported: Vec<&str> = {
-                let card = state.agent_card.read().expect("agent_card lock");
+                let card = state.read_agent_card();
                 declared
                     .iter()
                     .copied()

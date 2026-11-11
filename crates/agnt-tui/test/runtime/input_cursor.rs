@@ -235,7 +235,7 @@ async fn render_loop_driver_wrapped_prompt_round_trips_exactly_on_submit() -> Re
         .orchestrator_events()
         .iter()
         .filter_map(|event| match event {
-            OrchestratorEvent::PromptSubmitted { text } => Some(text.as_str()),
+            OrchestratorEvent::PromptSubmitted { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>();

@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::session::tool_status::ToolStatus;
+use agnt_runtime::session::tool_status::ToolStatus;
 
 /// An assistant message is appended to the transcript before the turn
 /// completes; turn completion then unlocks input.
@@ -8,16 +8,7 @@ use agnt_core::session::tool_status::ToolStatus;
 fn assistant_message_is_appended_to_transcript_before_completed_unlock() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce(
-        &mut state,
-        SystemEvent::PromptSubmitted {
-            text: "ping".to_string(),
-            stamp_millis: None,
-            stamp_model: None,
-            stamp_agent: None,
-        },
-        None,
-    );
+    reduce_llm(&mut state, prompt_record("ping", None, None, None));
     let _ = state.activate_next_prompt();
     assert!(!state.input_locked);
 
@@ -42,19 +33,7 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() -> Resu
     assert!(is_assistant_entry(&state.transcript.entries()[1]));
 
     // -- Exec: turn completion unlocks via the reducer.
-    reduce(
-        &mut state,
-        agnt_core::protocol::events::SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-        None,
-    );
+    reduce_llm(&mut state, turn_completed(0));
     state.finalize_cycle();
 
     // -- Check
@@ -98,7 +77,7 @@ fn assistant_streaming_append_and_replace() -> Result<()> {
         .ok_or("should have assistant_stream_start")?;
     reduce_llm(
         &mut stream,
-        SystemEvent::InferenceChunk {
+        agnt_runtime::protocol::events::NarrationEvent::InferenceChunk {
             delta: " world".to_string(),
             aggregated: "hello world".to_string(),
         },
@@ -118,7 +97,7 @@ fn assistant_streaming_append_and_replace() -> Result<()> {
     );
 
     // -- Exec & Check: InferenceStarted resets the stream cursor.
-    reduce_llm(&mut stream, SystemEvent::InferenceStarted);
+    reduce_llm(&mut stream, inference_started());
     assert!(stream.transcript.assistant_stream_start.is_none());
 
     // -- Exec & Check: a fresh state pushes one assistant entry, no spacer.
@@ -161,7 +140,7 @@ fn assistant_diff_regurgitation_is_suppressed_after_an_intervening_message() -> 
     let mut state = AppState::default();
     completed_edit_with_diff(&mut state);
     reduce_llm(&mut state, assistant_message("Applying the change now."));
-    reduce_llm(&mut state, SystemEvent::InferenceStarted);
+    reduce_llm(&mut state, inference_started());
     assert_eq!(
         state.transcript.len(),
         2,
@@ -304,43 +283,25 @@ const REGURGITATED_DIFF: &str =
 fn completed_edit_with_diff(state: &mut AppState) {
     let edit_arguments = r#"{"path":"sample.txt"}"#;
     let edit_call = || {
-        agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("edit".to_string()),
-            "closure",
+        agnt_runtime::protocol::events::ToolCall::new(
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Closure,
             edit_arguments,
-            CallLine::from_json_summary(edit_arguments),
         )
     };
-    reduce(
+    reduce_llm(state, tool_started(edit_call()));
+    reduce_llm(
         state,
-        agnt_core::protocol::events::SystemEvent::ToolStarted { call: edit_call() },
-        None,
-    );
-    reduce(
-        state,
-        agnt_core::protocol::events::SystemEvent::ToolCompleted {
-            call: edit_call(),
-            outcome: agnt_core::protocol::events::ToolOutcome {
-                success: true,
+        tool_completed(
+            edit_call(),
+            agnt_runtime::protocol::events::ToolOutcome {
                 status: ToolStatus::Success,
-                result: "{}".to_string(),
-                display: Some(ToolDisplay {
-                    title: Some("edit sample.txt".to_string()),
-                    sections: vec![ToolDisplaySection {
-                        label: Some("sample.txt".to_string()),
-                        kind: agnt_core::transcript::ir::ContentKind::Diff {
-                            language: "diff".to_string(),
-                            path: "test.rs".to_string(),
-                        },
-                        content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
-                            .to_string(),
-                        stats: None,
-                    }],
-                }),
-                error_kind: None,
+                payload: None,
+                text: r#"{"path":"sample.txt","diff":"--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"}"#
+                    .to_string(),
                 message: None,
+                kind: None,
             },
-        },
-        None,
+        ),
     );
 }

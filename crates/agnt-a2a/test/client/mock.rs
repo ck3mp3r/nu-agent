@@ -184,7 +184,7 @@ async fn test_get_task_with_mock() -> Result<()> {
             "artifacts": []
         }
     });
-    let bytes = serde_json::to_vec(&response).unwrap();
+    let bytes = serde_json::to_vec(&response)?;
     mock.expect_get_ok("http://example.com/tasks/task-1", bytes);
 
     let task = get_task(&mock, "http://example.com", "task-1")
@@ -205,7 +205,7 @@ async fn test_get_agent_card_with_mock() -> Result<()> {
         skills: vec![],
         ..Default::default()
     };
-    let card_json = serde_json::to_vec(&card).unwrap();
+    let card_json = serde_json::to_vec(&card)?;
     mock.expect_get_ok("http://example.com/.well-known/agent-card.json", card_json);
 
     let result = get_agent_card(&mock, "http://example.com")

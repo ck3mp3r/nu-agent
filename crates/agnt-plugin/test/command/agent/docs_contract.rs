@@ -1,26 +1,26 @@
 use std::fs;
 use std::path::Path;
 
-fn read_help_markdown() -> String {
-    fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../agnt-tui/src/runtime/help/help.md"),
-    )
-    .expect("help markdown")
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+fn read_help_markdown() -> Result<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../agnt-tui/src/runtime/help/help.md");
+    Ok(fs::read_to_string(path)?)
 }
 
-fn read_usage_docs() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md"))
-        .expect("usage docs")
+fn read_usage_docs() -> Result<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
+    Ok(fs::read_to_string(path)?)
 }
 
-fn read_configuration_docs() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/configuration.md"))
-        .expect("configuration docs")
+fn read_configuration_docs() -> Result<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/configuration.md");
+    Ok(fs::read_to_string(path)?)
 }
 
 #[test]
-fn docs_describe_the_paths_ladder_and_its_rules() {
-    let docs = read_configuration_docs();
+fn docs_describe_the_paths_ladder_and_its_rules() -> Result<()> {
+    let docs = read_configuration_docs()?;
     for env_var in [
         "NU_AGENT_CONFIG_HOME",
         "NU_AGENT_DATA_HOME",
@@ -82,11 +82,12 @@ fn docs_describe_the_paths_ladder_and_its_rules() {
         docs.contains("The cache base follows the cache ladder"),
         "the cache-path section states the cache ladder"
     );
+    Ok(())
 }
 
 #[test]
-fn docs_describe_the_log_target_and_its_post_load_swap() {
-    let docs = read_usage_docs();
+fn docs_describe_the_log_target_and_its_post_load_swap() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(
         docs.contains("`NU_AGENT_STATE_HOME` applies from process start"),
         "the docs state that the env level applies from process start"
@@ -99,21 +100,23 @@ fn docs_describe_the_log_target_and_its_post_load_swap() {
         docs.contains("pre-load window") && docs.contains("the log goes to the derived default"),
         "the docs state where the pre-load window logs"
     );
+    Ok(())
 }
 
 #[test]
-fn help_includes_compact_mcp_help_status_slash_commands() {
-    let help = read_help_markdown();
+fn help_includes_compact_mcp_help_status_slash_commands() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("`/compact`"));
     assert!(help.contains("`/mcp`"));
     assert!(help.contains("`/help`"));
     assert!(help.contains("`/status`"));
     assert!(help.contains("`/models`"));
+    Ok(())
 }
 
 #[test]
-fn help_lists_the_wired_compaction_policy_fields() {
-    let help = read_help_markdown();
+fn help_lists_the_wired_compaction_policy_fields() -> Result<()> {
+    let help = read_help_markdown()?;
     for key in [
         "`proactive_threshold_pct`",
         "`keep_recent`",
@@ -137,11 +140,12 @@ fn help_lists_the_wired_compaction_policy_fields() {
         help.contains("reserved for a future focus option"),
         "the help states that /compact args are reserved"
     );
+    Ok(())
 }
 
 #[test]
-fn usage_docs_list_the_wired_compaction_policy_fields() {
-    let docs = read_usage_docs();
+fn usage_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
+    let docs = read_usage_docs()?;
     for key in [
         "`proactive_threshold_pct`",
         "`reserve`",
@@ -161,11 +165,12 @@ fn usage_docs_list_the_wired_compaction_policy_fields() {
         docs.contains("a key left out keeps the rig default"),
         "the usage docs state that an unset knob keeps the rig default"
     );
+    Ok(())
 }
 
 #[test]
-fn configuration_docs_list_the_wired_compaction_policy_fields() {
-    let docs = read_configuration_docs();
+fn configuration_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
+    let docs = read_configuration_docs()?;
     for key in [
         "`proactive_threshold_pct`",
         "`reserve`",
@@ -191,83 +196,94 @@ fn configuration_docs_list_the_wired_compaction_policy_fields() {
         docs.contains("Not yet configurable: `near_window`"),
         "the configuration docs carry the deferred `near_window` note"
     );
+    Ok(())
 }
 
 #[test]
-fn help_describes_force_compact_behavior() {
-    let help = read_help_markdown();
+fn help_describes_force_compact_behavior() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("force compaction"));
     assert!(help.contains("bypasses threshold gating"));
+    Ok(())
 }
 
 #[test]
-fn docs_do_not_claim_skills_listing_tool_for_slash_commands() {
-    let docs = read_usage_docs();
+fn docs_do_not_claim_skills_listing_tool_for_slash_commands() -> Result<()> {
+    let docs = read_usage_docs()?;
     let lowered = docs.to_ascii_lowercase();
     assert!(lowered.contains("/compact"));
     assert!(!lowered.contains("skills listing tool"));
+    Ok(())
 }
 
 #[test]
-fn docs_describe_session_memory_persistence_after_compaction() {
-    let docs = read_usage_docs();
+fn docs_describe_session_memory_persistence_after_compaction() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("rig-memory log"));
+    Ok(())
 }
 
 #[test]
-fn help_describes_inline_slash_suggestions_behavior() {
-    let help = read_help_markdown();
+fn help_describes_inline_slash_suggestions_behavior() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("Inline slash suggestions"));
     assert!(help.contains("open when input starts with `/`"));
     assert!(help.contains("filters incrementally"));
     assert!(help.contains("independent of the command palette"));
+    Ok(())
 }
 
 #[test]
-fn docs_describe_transcript_visible_compaction_summary() {
-    let docs = read_usage_docs();
+fn docs_describe_transcript_visible_compaction_summary() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("transcript-visible compaction summary"));
     assert!(docs.contains("source + summarized counts"));
+    Ok(())
 }
 
 #[test]
-fn help_describes_no_transcript_echo_for_slash_commands() {
-    let help = read_help_markdown();
+fn help_describes_no_transcript_echo_for_slash_commands() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("not echoed into the transcript"));
     assert!(help.contains("only resulting artifacts"));
+    Ok(())
 }
 
 #[test]
-fn help_includes_models_slash_command() {
-    let help = read_help_markdown();
+fn help_includes_models_slash_command() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("`/models`"));
     assert!(help.contains("opens the inline model picker"));
+    Ok(())
 }
 
 #[test]
-fn help_describes_models_launcher_via_command_palette() {
-    let help = read_help_markdown();
+fn help_describes_models_launcher_via_command_palette() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("Ctrl-P `Models`"));
     assert!(help.contains("same picker path"));
+    Ok(())
 }
 
 #[test]
-fn help_describes_model_switch_uses_cached_startup_config() {
-    let help = read_help_markdown();
+fn help_describes_model_switch_uses_cached_startup_config() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("cached startup `PluginConfig`"));
     assert!(help.contains("no per-switch plugin config re-read"));
+    Ok(())
 }
 
 #[test]
-fn help_describes_modal_rounded_border_and_dim_backdrop() {
-    let help = read_help_markdown();
+fn help_describes_modal_rounded_border_and_dim_backdrop() -> Result<()> {
+    let help = read_help_markdown()?;
     assert!(help.contains("rounded borders"));
     assert!(help.contains("dimmed backdrop"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_edit_mode_preview_apply_contract_and_envelope_fields() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_edit_mode_preview_apply_contract_and_envelope_fields() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("canonical contract (preview/apply)"));
     assert!(docs.contains("\"mode\": \"preview\""));
     assert!(docs.contains("`mode: \"apply\"`"));
@@ -291,31 +307,34 @@ fn usage_docs_describe_edit_mode_preview_apply_contract_and_envelope_fields() {
     assert!(docs.contains("bypasses the orchestrator loop"));
     assert!(docs.contains("session-load failure"));
     assert!(docs.contains("runs it post-turn"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_switch_event_payloads_and_the_double_fire() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_switch_event_payloads_and_the_double_fire() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("`agent_switched`"));
     assert!(docs.contains("`model_switched`"));
     assert!(docs.contains("emits `agent_switched` before `model_switched`"));
     assert!(docs.contains("The switch events are session-class"));
     assert!(docs.contains("model override takes effect"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_list_deterministic_edit_error_taxonomy_classes() {
-    let docs = read_usage_docs();
+fn usage_docs_list_deterministic_edit_error_taxonomy_classes() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("validation"));
     assert!(docs.contains("stale"));
     assert!(docs.contains("permission"));
     assert!(docs.contains("conflict"));
     assert!(docs.contains("internal"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_permissions_dsl_canonical_shape_and_precedence() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_permissions_dsl_canonical_shape_and_precedence() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("Only CLI surface for policy override is `--permissions`"));
     assert!(!docs.contains("--permission "));
     assert!(docs.contains("map-style"));
@@ -330,29 +349,32 @@ fn usage_docs_describe_permissions_dsl_canonical_shape_and_precedence() {
     assert!(docs.contains("global baseline"));
     assert!(docs.contains("tool override"));
     assert!(docs.contains("nested `nu.command` override"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_permissions_overlay_startup_diagnostics() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_permissions_overlay_startup_diagnostics() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("overlay_active=true|false"));
     assert!(docs.contains("permissions policy:"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_permissions_ask_choices_and_session_grants() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_permissions_ask_choices_and_session_grants() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("allow_once"));
     assert!(docs.contains("allow_always"));
     assert!(docs.contains("session-only"));
     assert!(docs.contains("reset on restart"));
     assert!(docs.contains("not global across unrelated tools"));
     assert!(docs.contains("same scoped tool context"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("Interactive permission prompt behavior"));
     assert!(docs.contains("`a` => `allow_once`"));
     assert!(docs.contains("`A` => `allow_always`"));
@@ -364,13 +386,15 @@ fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() {
     assert!(docs.contains("PermissionDecisionIgnored"));
     assert!(docs.contains("PermissionRequestCancelled"));
     assert!(docs.contains("PermissionAutoResolved"));
+    Ok(())
 }
 
 #[test]
-fn usage_docs_describe_non_interactive_ask_default_and_override() {
-    let docs = read_usage_docs();
+fn usage_docs_describe_non_interactive_ask_default_and_override() -> Result<()> {
+    let docs = read_usage_docs()?;
     assert!(docs.contains("Non-interactive ask fallback"));
     assert!(docs.contains("non_interactive_ask"));
     assert!(docs.contains("default (missing): `deny`"));
     assert!(docs.contains("supported values: `deny`, `allow`"));
+    Ok(())
 }

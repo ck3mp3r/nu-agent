@@ -1,0 +1,402 @@
+use super::*;
+
+// ── StartupHydrationRuntime ─────────────────────────────────────────────
+
+struct StartupHydrationRuntime {
+    names_by_server: Vec<(String, Vec<String>)>,
+    bus: crate::bus::Bus,
+}
+
+impl CoreRuntime for StartupHydrationRuntime {
+    async fn execute_turn(
+        &mut self,
+        _prompt: String,
+        _context: Option<String>,
+        span: Span,
+        _task_id: Option<String>,
+    ) -> TurnEnd {
+        let _ = self.bus.lifecycle().publish(LifecycleEvent::TurnCompleted {
+            task_id: None,
+            duration_ms: 0,
+        });
+        TurnEnd::Completed {
+            value: Value::nothing(span),
+        }
+    }
+}
+
+impl McpManagement for StartupHydrationRuntime {
+    async fn set_mcp_server_enabled(
+        &mut self,
+        _name: &str,
+        _enabled: bool,
+    ) -> Result<McpUsabilityState, String> {
+        Ok(McpUsabilityState::Disabled)
+    }
+
+    fn llm_visible_mcp_tool_count(&self) -> usize {
+        self.names_by_server
+            .iter()
+            .map(|(_, names)| names.len())
+            .sum()
+    }
+
+    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
+        0
+    }
+
+    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
+        self.names_by_server.clone()
+    }
+}
+
+impl ModelSwitching for StartupHydrationRuntime {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+crate::default_session!(StartupHydrationRuntime);
+
+#[tokio::test]
+async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResult {
+    let bus = Bus::default();
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
+    let active_pump_count = Arc::new(AtomicUsize::new(0));
+    let ui = ResponsiveInteractiveUi::new(
+        &["first"],
+        &["second"],
+        &[],
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+        2,
+        Arc::clone(&active_pump_count),
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
+
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let _runtime = handed_back(_runtime)?;
+    let value = result.map_err(|e| format!("interactive loop should stay responsive: {e}"))?;
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        _runtime
+            .prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_slice(),
+        ["first", "second"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TResult {
+    let bus = Bus::default();
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
+    let active_pump_count = Arc::new(AtomicUsize::new(0));
+    let ui = ResponsiveInteractiveUi::new(
+        &["first"],
+        &["second", "third"],
+        &[],
+        Arc::clone(&runtime.active),
+        Arc::clone(&block_first_turn),
+        3,
+        Arc::clone(&active_pump_count),
+    )
+    .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
+
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (_runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let _runtime = handed_back(_runtime)?;
+    result.map_err(|e| format!("interactive loop should complete queued prompts: {e}"))?;
+
+    assert_eq!(
+        _runtime
+            .prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_slice(),
+        ["first", "second", "third"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt() -> TResult {
+    let bus = Bus::default();
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
+    let ui = FakeInteractiveUi::with_prompts(&["first"])
+        .with_min_bus_events(2)
+        .with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
+
+    // Unblock the turn once the fixture signals that it has started.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        let _ = turn_started_rx.changed().await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let (rt, result) = drive_loop(
+        runtime,
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let rt = handed_back(rt)?;
+    let value = result
+        .map_err(|e| format!("interactive loop should treat cancellation as non-fatal: {e}"))?;
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        rt.prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_slice(),
+        ["first"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_before_toggles()
+-> TResult {
+    let bus = Bus::default();
+    let runtime = StartupHydrationRuntime {
+        names_by_server: vec![
+            (
+                "gh".to_string(),
+                vec!["gh__issues".to_string(), "gh__prs".to_string()],
+            ),
+            ("k8s".to_string(), vec!["k8s__pods".to_string()]),
+        ],
+        bus: bus.clone(),
+    };
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let spawner = ui.make_event_spawner();
+
+    let (_runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let _runtime = handed_back(_runtime)?;
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
+
+    assert!(value.is_nothing());
+    assert_eq!(
+        ui.mcp_visible_tool_count_updates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
+        vec![("gh".to_string(), 2), ("k8s".to_string(), 1)]
+    );
+    Ok(())
+}
+// ── LifecycleEvent::SessionStarted session id ────────────────────────────────────
+
+/// Run the interactive loop with `runtime` and return the session events it
+/// published.
+async fn run_loop_session_events(
+    runtime: FakeRuntime,
+    bus: crate::bus::Bus,
+) -> Result<Vec<crate::bus::LifecycleEvent>, String> {
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let mut session_rx = bus.lifecycle().subscribe();
+    let spawner = ui.make_event_spawner();
+    let (_runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let _runtime = handed_back(_runtime).map_err(|e| e.to_string())?;
+    result.map_err(|e| format!("interactive loop: {e}"))?;
+    let mut events = Vec::new();
+    while let Ok(event) = session_rx.try_recv() {
+        events.push(event);
+    }
+    Ok(events)
+}
+
+/// The `LifecycleEvent::SessionStarted` the loop published, if any.
+fn started_event(events: &[crate::bus::LifecycleEvent]) -> Option<(&str, bool)> {
+    events.iter().find_map(|event| match event {
+        crate::bus::LifecycleEvent::SessionStarted {
+            session_id,
+            hydrated,
+        } => Some((session_id.as_str(), *hydrated)),
+        _ => None,
+    })
+}
+
+#[tokio::test]
+async fn interactive_loop_started_carries_the_runtime_session_id() -> TResult {
+    // -- Setup & Fixtures
+    let bus = Bus::default();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        session_id: Some("sess-1".to_string()),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let events = run_loop_session_events(runtime, bus).await?;
+
+    // -- Check
+    let (session_id, hydrated) =
+        started_event(&events).ok_or("the loop must publish LifecycleEvent::SessionStarted")?;
+    assert_eq!(
+        session_id, "sess-1",
+        "Started must carry the runtime's current session id"
+    );
+    assert!(
+        !hydrated,
+        "a loop without hydration publishes hydrated=false"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn hydrated_interactive_loop_started_carries_the_runtime_session_id() -> TResult {
+    // -- Setup & Fixtures
+    let bus = Bus::default();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        session_id: Some("sess-2".to_string()),
+        ..Default::default()
+    };
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let mut session_rx = bus.lifecycle().subscribe();
+    let spawner = ui.make_event_spawner();
+    let messages = vec![UiMessageSnapshot::new("user", "from history")];
+
+    // -- Exec
+    let (_runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default()
+            .with_hydration(messages, None)
+            .with_bus(bus)
+            .with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    result.map_err(|e| format!("interactive loop with hydration: {e}"))?;
+
+    // -- Check
+    let mut events = Vec::new();
+    while let Ok(event) = session_rx.try_recv() {
+        events.push(event);
+    }
+    let (session_id, hydrated) =
+        started_event(&events).ok_or("the loop must publish LifecycleEvent::SessionStarted")?;
+    assert_eq!(
+        session_id, "sess-2",
+        "the hydrated Started must carry the runtime's current session id"
+    );
+    assert!(hydrated, "a hydrated loop publishes hydrated=true");
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_started_without_a_session_publishes_an_empty_id() -> TResult {
+    // -- Setup & Fixtures
+    let bus = Bus::default();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let events = run_loop_session_events(runtime, bus).await?;
+
+    // -- Check
+    let (session_id, _) =
+        started_event(&events).ok_or("the loop must publish LifecycleEvent::SessionStarted")?;
+    assert_eq!(
+        session_id, "",
+        "a runtime without an active session publishes an empty id"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_publishes_ended_on_exit() -> TResult {
+    // -- Setup & Fixtures
+    let bus = Bus::default();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        session_id: Some("sess-3".to_string()),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let events = run_loop_session_events(runtime, bus).await?;
+
+    // -- Check
+    let ended = events
+        .iter()
+        .find_map(|event| match event {
+            crate::bus::LifecycleEvent::SessionEnded { session_id, .. } => {
+                Some(session_id.as_str())
+            }
+            _ => None,
+        })
+        .ok_or("the loop must publish LifecycleEvent::SessionEnded on exit")?;
+    assert_eq!(
+        ended, "sess-3",
+        "Ended must carry the runtime's current session id"
+    );
+    Ok(())
+}

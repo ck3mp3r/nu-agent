@@ -1,7 +1,7 @@
 use super::list::{AgentSessionList, CwdInterface};
-use agnt_core::session::prefix::dir_prefix;
-use agnt_core::session::{RigStoreConfig, StoreType};
-use agnt_core::types::Message;
+use agnt_runtime::session::prefix::dir_prefix;
+use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
 use tempfile::TempDir;
@@ -32,7 +32,7 @@ fn make_call() -> EvaluatedCall {
 #[tokio::test]
 async fn test_agent_session_list_returns_table_with_session_stats() -> Result<()> {
     // -- Setup & Fixtures
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
     let session1 = format!("{prefix}-session1");
@@ -78,7 +78,7 @@ async fn test_agent_session_list_returns_table_with_session_stats() -> Result<()
 #[tokio::test]
 async fn test_agent_session_list_returns_empty_list_when_no_sessions() -> Result<()> {
     // -- Setup & Fixtures
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let rig = rig_at(&temp_dir);
 
     // -- Exec
@@ -115,7 +115,7 @@ fn test_agent_session_list_command_signature() {
 #[tokio::test]
 async fn list_returns_only_prefixed_sessions() -> Result<()> {
     // -- Setup & Fixtures
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
 
@@ -185,11 +185,11 @@ fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
 async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
     let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
-        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+        agnt_runtime::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);
-    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+    agnt_runtime::rig_memory::save(&*store, session_id, &mut conversation)
         .map_err(|e| format!("{e:?}"))?;
-    agnt_core::session::rig_state::write_state_records(
+    agnt_runtime::session::rig_state::write_state_records(
         std::sync::Arc::clone(&store),
         "test/model".to_string(),
         Some("hello".to_string()),

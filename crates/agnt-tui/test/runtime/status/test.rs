@@ -248,6 +248,21 @@ fn status_bar_uses_persona_icon_when_set() {
         !joined.contains("🪸"),
         "status bar must NOT use hardcoded emoji pool"
     );
+
+    let contents: Vec<&str> = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let agent_at = contents.iter().position(|span| span.contains("test-agent"));
+    let model_at = contents
+        .iter()
+        .position(|span| span.contains("openai/gpt-4o-mini"));
+    assert!(
+        matches!((agent_at, model_at), (Some(agent), Some(model)) if agent < model),
+        "the agent leads the identity pair, spans={contents:?}"
+    );
+
+    assert!(
+        joined.contains("test-agent 🧠"),
+        "the persona glyph follows the agent name, got: {joined:?}"
+    );
 }
 
 #[test]

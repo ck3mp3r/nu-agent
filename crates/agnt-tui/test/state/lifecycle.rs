@@ -9,6 +9,9 @@
 #[path = "lifecycle/cancel_restore.rs"]
 mod cancel_restore;
 
+#[path = "lifecycle/external_display.rs"]
+mod external_display;
+
 #[path = "lifecycle/history.rs"]
 mod history;
 

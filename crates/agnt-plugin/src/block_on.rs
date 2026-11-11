@@ -6,7 +6,7 @@
 ///    (preferred for commands that receive an `AgentPlugin` reference).
 ///
 /// 2. `block_on!(future)` — creates a new multi-threaded tokio runtime
-///    (fallback for contexts without a shared runtime, e.g. `CardFetcher`).
+///    (fallback for a context that owns no shared runtime).
 ///
 /// This is the only place `block_on` should appear — at the sync/async boundary
 /// of the nu-plugin API.

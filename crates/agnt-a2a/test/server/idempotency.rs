@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_tasks_send_with_idempotency_key() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // First request with idempotencyKey
     let resp1 = client
@@ -12,10 +12,9 @@ async fn test_tasks_send_with_idempotency_key() -> Result<()> {
             "idempotencyKey": "idem-1"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp1.status(), 200);
-    let body1: serde_json::Value = resp1.json().await.unwrap();
+    let body1: serde_json::Value = resp1.json().await?;
     let task_id1 = body1["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -29,10 +28,9 @@ async fn test_tasks_send_with_idempotency_key() -> Result<()> {
             "idempotencyKey": "idem-1"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp2.status(), 200);
-    let body2: serde_json::Value = resp2.json().await.unwrap();
+    let body2: serde_json::Value = resp2.json().await?;
     let task_id2 = body2["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -49,7 +47,7 @@ async fn test_tasks_send_with_idempotency_key() -> Result<()> {
 
 #[tokio::test]
 async fn test_tasks_send_with_different_idempotency_keys() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp1 = client
         .post(format!("{}/message:send", server.local_url))
@@ -58,9 +56,8 @@ async fn test_tasks_send_with_different_idempotency_keys() -> Result<()> {
             "idempotencyKey": "key-a"
         }))
         .send()
-        .await
-        .unwrap();
-    let body1: serde_json::Value = resp1.json().await.unwrap();
+        .await?;
+    let body1: serde_json::Value = resp1.json().await?;
     let task_id1 = body1["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -73,9 +70,8 @@ async fn test_tasks_send_with_different_idempotency_keys() -> Result<()> {
             "idempotencyKey": "key-b"
         }))
         .send()
-        .await
-        .unwrap();
-    let body2: serde_json::Value = resp2.json().await.unwrap();
+        .await?;
+    let body2: serde_json::Value = resp2.json().await?;
     let task_id2 = body2["task"]["id"]
         .as_str()
         .ok_or("should have task id")?

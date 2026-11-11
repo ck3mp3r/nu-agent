@@ -16,7 +16,7 @@ pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
 
     let model_line = match state.status.identity.active_agent_identity() {
         Some(agent) => format!(
-            "Model: {} ({model_phase}) | agent: {agent}",
+            "agent: {agent} | Model: {} ({model_phase})",
             ellipsize(active_model_identity, 60)
         ),
         None => format!(
@@ -80,7 +80,7 @@ pub(crate) fn status_left_content(
         .filter(|a| !a.is_empty());
     let agent_str: Option<String> = agent_opt.map(|agent| {
         if let Some(icon) = &state.status.identity.active_persona_icon {
-            format!("{icon} {agent}")
+            format!("{agent} {icon}")
         } else {
             agent.to_string()
         }
@@ -89,42 +89,35 @@ pub(crate) fn status_left_content(
     let token_str = token_string_for_state(state).unwrap_or_default();
     let token_segment_width = SEP_WIDTH + UnicodeWidthStr::width(token_str.as_str());
 
-    let agent_width = agent_str
-        .as_ref()
-        .map(|s| SEP_WIDTH + UnicodeWidthStr::width(s.as_str()));
+    let after_tokens = budget.saturating_sub(token_segment_width);
 
-    let model_budget = {
-        let after_tokens = budget.saturating_sub(token_segment_width);
-        if let Some(aw) = agent_width {
-            let min_model = 1usize;
-            if after_tokens.saturating_sub(aw) >= min_model {
-                after_tokens.saturating_sub(aw)
-            } else {
-                after_tokens
-            }
-        } else {
-            after_tokens
+    // The agent leads the identity pair, so its budget is derived first and the
+    // model takes the flexible remainder — the mirror of the arithmetic the
+    // model owned while it led. Both segments are tail-ellipsized, so neither
+    // can exceed its budget.
+    let agent_display = agent_str.map(|agent| {
+        let min_model_width = 1usize;
+        let agent_budget = after_tokens.saturating_sub(SEP_WIDTH + min_model_width);
+        tail_ellipsize(&agent, agent_budget)
+    });
+    let model_budget = match &agent_display {
+        Some(agent) => {
+            after_tokens.saturating_sub(UnicodeWidthStr::width(agent.as_str()) + SEP_WIDTH)
         }
+        None => after_tokens,
     };
     let model_display = tail_ellipsize(model, model_budget);
-    let model_len_used = UnicodeWidthStr::width(model_display.as_str());
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::styled(indicator.to_string(), indicator_style));
     spans.push(Span::raw(" "));
-    spans.push(Span::styled(model_display, theme.subtle_meta));
 
-    if let Some(agent_display) = agent_str {
-        let needed = prefix_width
-            + model_len_used
-            + SEP_WIDTH
-            + UnicodeWidthStr::width(agent_display.as_str());
-        if needed + token_segment_width <= available_width {
-            spans.push(Span::styled(SEP.to_string(), theme.role_separator));
-            spans.push(Span::styled(agent_display, theme.role_assistant));
-        }
+    if let Some(agent_display) = agent_display {
+        spans.push(Span::styled(agent_display, theme.role_assistant));
+        spans.push(Span::styled(SEP.to_string(), theme.role_separator));
     }
 
+    spans.push(Span::styled(model_display, theme.subtle_meta));
     spans.push(Span::styled(SEP.to_string(), theme.role_separator));
     spans.push(Span::styled(token_str, theme.subtle_meta));
 

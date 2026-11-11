@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_send_stream_without_accepted_output_modes_succeeds() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -11,8 +11,7 @@ async fn test_send_stream_without_accepted_output_modes_succeeds() -> Result<()>
             "configuration": {"returnImmediately": true}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     let content_type = resp
         .headers()
@@ -30,7 +29,7 @@ async fn test_send_stream_without_accepted_output_modes_succeeds() -> Result<()>
 
 #[tokio::test]
 async fn test_send_stream_accepts_matching_accepted_output_modes() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -42,8 +41,7 @@ async fn test_send_stream_accepts_matching_accepted_output_modes() -> Result<()>
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     let content_type = resp
         .headers()
@@ -61,7 +59,7 @@ async fn test_send_stream_accepts_matching_accepted_output_modes() -> Result<()>
 
 #[tokio::test]
 async fn test_send_stream_rejects_unsupported_accepted_output_modes() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -73,15 +71,14 @@ async fn test_send_stream_rejects_unsupported_accepted_output_modes() -> Result<
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         resp.status(),
         400,
         "acceptedOutputModes with no intersection must be rejected"
     );
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(
         body["error"]["details"][0]["reason"],
@@ -94,7 +91,7 @@ async fn test_send_stream_rejects_unsupported_accepted_output_modes() -> Result<
 
 #[tokio::test]
 async fn test_send_stream_accepts_configuration() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -103,8 +100,7 @@ async fn test_send_stream_accepts_configuration() -> Result<()> {
             "configuration": {"returnImmediately": true}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     let content_type = resp
         .headers()
@@ -122,7 +118,7 @@ async fn test_send_stream_accepts_configuration() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_stream_malformed_configuration_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -131,15 +127,14 @@ async fn test_send_stream_malformed_configuration_returns_400() -> Result<()> {
             "configuration": {"returnImmediately": "yes"}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(
         resp.status(),
         400,
         "malformed configuration must be rejected, not silently ignored"
     );
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
     assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
@@ -150,7 +145,7 @@ async fn test_send_stream_malformed_configuration_returns_400() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_stream_returns_sse() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -159,8 +154,7 @@ async fn test_send_stream_returns_sse() -> Result<()> {
             "contextId": "ctx-abc"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // Verify SSE content type
     let content_type = resp
@@ -186,8 +180,7 @@ async fn test_send_stream_returns_sse() -> Result<()> {
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     // Read the SSE body (stream should close after the cancel event)
     let body = tokio::time::timeout(Duration::from_secs(5), resp.bytes())
@@ -236,20 +229,19 @@ async fn test_send_stream_returns_sse() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_send_stream_invalid_body() {
-    let (server, client) = test_server().await;
+async fn test_send_stream_invalid_body() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
         .json(&json!({})) // missing message
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 400);
 
     // Read the response body and check for error
-    let body = resp.bytes().await.unwrap();
+    let body = resp.bytes().await?;
     let text = String::from_utf8_lossy(&body);
     assert!(
         text.contains("400") || text.contains("BAD_REQUEST"),
@@ -257,4 +249,5 @@ async fn test_send_stream_invalid_body() {
     );
 
     server.shutdown().await;
+    Ok(())
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// Idle startup does not show a spinner; a submit handoff keeps input editable
 /// and preserves the transcript preview.
@@ -32,11 +32,9 @@ async fn idle_startup_and_submit_handoff() -> Result<()> {
     // -- Check: busy, input editable, prompt handed off, transcript preview.
     assert_eq!(driver.state().phase, UiPhase::Busy);
     assert!(!driver.state().input_locked);
-    assert!(
-        driver.orchestrator_events().iter().any(
-            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "x")
-        )
-    );
+    assert!(driver.orchestrator_events().iter().any(
+        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "x")
+    ));
     assert_eq!(
         driver
             .coordinator_mut()
@@ -67,7 +65,7 @@ async fn slash_commands_handoff() -> Result<()> {
 
     // -- Check: the command is handed off; no transcript echo.
     assert!(driver.orchestrator_events().iter().any(
-        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "/help")
+        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "/help")
     ));
     assert_eq!(
         driver
@@ -94,7 +92,7 @@ async fn slash_commands_handoff() -> Result<()> {
 
     // -- Check: the command is handed off; no transcript echo.
     assert!(compact.orchestrator_events().iter().any(
-        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "/compact")
+        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "/compact")
     ));
     assert_eq!(
         compact
@@ -108,16 +106,11 @@ async fn slash_commands_handoff() -> Result<()> {
     // -- Exec: the compaction artifact.
     compact
         .coordinator_mut()
-        .reduce_system_event(SystemEvent::CompactionStarted {
-            source: "slash_compact".to_string(),
-        });
-    compact
-        .coordinator_mut()
-        .reduce_system_event(SystemEvent::CompactionCompleted {
-            source: "slash_compact".to_string(),
-            summary_preview: "preview".to_string(),
-            summary_body: "summary body".to_string(),
-        });
+        .fold_record(&compaction_started(CompactionSource::Manual));
+    compact.coordinator_mut().fold_record(&compaction_completed(
+        CompactionSource::Manual,
+        "summary body",
+    ));
 
     // -- Check: the artifact is visible without a slash echo.
     let lines = compact
@@ -127,7 +120,7 @@ async fn slash_commands_handoff() -> Result<()> {
         .iter()
         .map(entry_text)
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction · slash_compact".to_string()));
+    assert!(lines.contains(&"Compaction · slash".to_string()));
     assert!(lines.contains(&"summary body".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));
@@ -179,7 +172,7 @@ async fn immediate_slash_commands_do_not_set_busy_or_spinner() -> Result<()> {
         assert!(
             driver.orchestrator_events().iter().any(|event| matches!(
                 event,
-                OrchestratorEvent::PromptSubmitted { text } if text == command
+                OrchestratorEvent::PromptSubmitted { text, .. } if text == command
             )),
             "loop must hand the slash command to the orchestrator channel"
         );

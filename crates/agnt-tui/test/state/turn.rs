@@ -3,45 +3,23 @@
 //! `interaction/reducer_test.rs` `reduce_ui_event_impl` effect tests, driven
 //! through `dispatch_turn_event` (the single turn dispatch seam).
 
-use crate::interaction::reducer::reduce;
 use crate::state::{AppState, StatusMessageKind, UiPhase};
-use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use crate::test_support::{fold_record, turn_completed};
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
+use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn finalize_turn(state: &mut AppState) {
-    reduce(
-        state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-        None,
-    );
+    fold_record(state, turn_completed(0));
 }
 
 #[test]
 fn finalize_cycle_effects() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce(
-        &mut state,
-        SystemEvent::PromptSubmitted {
-            text: "prompt".to_string(),
-            stamp_millis: None,
-            stamp_model: None,
-            stamp_agent: None,
-        },
-        None,
-    );
+    state.enqueue_prompt("prompt".to_string());
     let _ = state.activate_next_prompt();
     state
         .transcript
@@ -81,22 +59,10 @@ fn turn_started_and_task_outcomes_are_render_noops() {
     };
     state.transcript.assistant_stream_start = Some(0);
 
-    // `SystemEvent` carries only `TurnCompleted`: a turn start and an A2A task
-    // outcome have no event, so they cannot reach the reducer at all. The
-    // completed turn is the one turn fact that changes state.
-    assert!(reduce(
-        &mut state,
-        SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        },
-        None,
-    ));
+    // The record vocabulary carries only `TurnRecord::Completed`: a turn start
+    // and an A2A task outcome have no record, so they cannot reach the reducer
+    // at all. The completed turn is the one turn fact that changes state.
+    assert!(fold_record(&mut state, turn_completed(0)));
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(state.transcript.assistant_stream_start.is_none());
@@ -104,7 +70,7 @@ fn turn_started_and_task_outcomes_are_render_noops() {
 
 /// Fix 1 (deterministic): `finalize` clears only Neutral-kind status messages.
 /// A warning-kind message survives turn completion and expires via its own
-/// TTL — the repetition-stop warning arrives just before `TurnEvent::Completed`
+/// TTL — the repetition-stop warning arrives just before `TurnRecord::Completed`
 /// and must not be wiped by it.
 #[test]
 fn finalize_preserves_warning_and_clears_neutral_status() -> Result<()> {
@@ -147,7 +113,7 @@ fn finalize_preserves_warning_and_clears_neutral_status() -> Result<()> {
 }
 
 /// A `Notice`-kind status message survives turn finalize. The stop marker is
-/// set by `SystemEvent::InferenceStopped` and `SystemEvent::TurnCompleted` arrives right after,
+/// set by `InferenceRecord::Stopped` and `TurnRecord::Completed` arrives right after,
 /// so finalize must not wipe the marker before it renders.
 #[test]
 fn finalize_preserves_notice_status() -> Result<()> {

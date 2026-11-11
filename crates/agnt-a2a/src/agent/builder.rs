@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentHandle;
+use crate::discovery::mdns_discovery::MdnsPeerDiscovery;
 use crate::discovery::{PeerDiscoveryImpl, PeerEvent};
 use crate::*;
 
@@ -25,6 +26,7 @@ pub struct AgentBuilder {
     card: Option<AgentCard>,
     discovery_impl: Option<PeerDiscoveryImpl>,
     blocking_timeout: Duration,
+    transport: Option<reqwest::Client>,
 }
 
 impl AgentBuilder {
@@ -40,6 +42,7 @@ impl AgentBuilder {
             card: None,
             discovery_impl: None,
             blocking_timeout: DEFAULT_BLOCKING_TIMEOUT,
+            transport: None,
         }
     }
 
@@ -90,6 +93,16 @@ impl AgentBuilder {
         self
     }
 
+    /// Inject the HTTP transport every A2A call and push delivery rides.
+    ///
+    /// The transport is a composition-root property: the assembly never builds
+    /// a `reqwest::Client` of its own. [`build`](AgentBuilder::build) fails
+    /// without it.
+    pub fn with_transport(mut self, http: reqwest::Client) -> Self {
+        self.transport = Some(http);
+        self
+    }
+
     /// Inject a custom `PeerDiscoveryImpl`. Defaults to `Mdns` when not set.
     ///
     /// Use `PeerDiscoveryImpl::Noop` to run without mDNS (e.g. behind a load
@@ -109,6 +122,13 @@ impl AgentBuilder {
     /// Returns an error tuple with the [`A2aError`] and an optional
     /// [`A2aServer`] that the caller may choose to shut down.
     pub async fn build(mut self) -> Result<AgentHandle, (A2aError, Option<Box<A2aServer>>)> {
+        let transport = self.transport.take().ok_or((
+            A2aError::Internal(
+                "AgentBuilder requires with_transport — transport is composition-root property"
+                    .to_string(),
+            ),
+            None,
+        ))?;
         let mut card = match self.card {
             Some(c) => c,
             None => AgentCard {
@@ -139,11 +159,12 @@ impl AgentBuilder {
         // ── A2A completion event channel ──────────────────────────────────
         let (completion_tx, completion_rx) = mpsc::channel::<A2aCompletionEvent>(64);
 
-        let server = match A2aServer::start_with_blocking_timeout(
+        let server = match A2aServer::start_with_transport(
             card.clone(),
             cache.clone(),
             self.port,
             self.blocking_timeout,
+            Some(transport.clone()),
         )
         .await
         {
@@ -168,10 +189,19 @@ impl AgentBuilder {
         }
 
         // ── mDNS discovery ────────────────────────────────────────────────
-        let mut discovery = self
-            .discovery_impl
-            .take()
-            .unwrap_or_else(|| PeerDiscoveryImpl::Mdns(Box::default()));
+        // One A2A client for the whole agent, over the injected transport: the
+        // browse thread's card fetch and the peer health sweep share it. The
+        // runtime handle is what the bare browse thread enters to fetch — this
+        // method runs inside the owning runtime, so it is available here.
+        let client = A2aClient::new(transport.clone());
+        let runtime_handle = tokio::runtime::Handle::current();
+
+        let mut discovery = self.discovery_impl.take().unwrap_or_else(|| {
+            PeerDiscoveryImpl::Mdns(Box::new(MdnsPeerDiscovery::new(
+                client.clone(),
+                runtime_handle,
+            )))
+        });
         discovery.start(&card.name, actual_port, &card, &self.mesh_key);
 
         // Feed peer events into the cache.
@@ -202,7 +232,6 @@ impl AgentBuilder {
         // mdns-sd 0.20 expires an instance once its SRV record TTL lapses (SRV/A
         // records 120s, PTR/TXT records 4500s).
 
-        let client = A2aClient::new().map_err(|e| (e, None))?;
         let card_handle = Some(server.agent_card_handle());
 
         // ── Periodic mDNS re-registration ──────────────────────────────────────
@@ -221,10 +250,10 @@ impl AgentBuilder {
                     }
                     _ = interval.tick() => {
                         let card = match &card_handle_clone {
-                            Some(handle) => handle.read().expect("card lock").clone(),
+                            Some(handle) => read_card(handle).clone(),
                             None => return,
                         };
-                        let mut discovery = discovery_clone.lock().expect("discovery lock");
+                        let mut discovery = lock_discovery(&discovery_clone);
                         discovery.reregister(&card);
                     }
                 }
@@ -313,6 +342,16 @@ impl AgentBuilder {
 }
 
 // region:    --- Support
+
+/// The server's live card, recovered if a writer panicked mid-swap.
+fn read_card(handle: &Arc<RwLock<AgentCard>>) -> RwLockReadGuard<'_, AgentCard> {
+    handle.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The discovery backend, recovered if a caller panicked mid-restart.
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+    discovery.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Interval between peer health sweeps.
 pub(crate) const SWEEP_INTERVAL: Duration = Duration::from_secs(30);

@@ -1,6 +1,6 @@
 //! Agent flag override tests for `build_acp_runtime()`.
 
-use agnt_core::tools::authz::PermissionAction;
+use agnt_runtime::tools::authz::PermissionAction;
 
 use super::runtime_support::*;
 use super::*;
@@ -43,7 +43,6 @@ async fn test_runtime_build_acp_runtime_agent_flag_overrides_default_agent() -> 
         .await
         .map_err(|e| format!("should build runtime: {e:?}"))?;
     let decision = runtime
-        .permission_state
         .permissions()
         .evaluate("http", &serde_json::Map::new());
 

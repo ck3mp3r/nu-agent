@@ -3,18 +3,23 @@
 //! Holds the imports and the helper functions every topical picker test file
 //! needs. Sub-files pull them in with `use super::*;`.
 
-pub(super) use crate::interaction::cancel::CancelController;
 pub(super) use crate::interaction::dispatch::dispatch_terminal_event;
 pub(super) use crate::interaction::input::{TerminalEvent, TerminalKey};
+pub(super) use crate::interaction::reducer::{RenderInput, reduce};
 pub(super) use crate::state::*;
 pub(super) use crate::test_support::open_command_palette_for_test;
-pub(super) use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
-pub(super) use agnt_core::protocol::contracts::SharedUiAction;
-pub(super) use agnt_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
+pub(super) use agnt_runtime::bus::ControlCommand;
+pub(super) use agnt_runtime::protocol::contracts::SharedUiAction;
+pub(super) use agnt_runtime::protocol::picker::{AgentPickerOption, ModelPickerOption};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Test Support
+
+/// Fold one control command through the reducer, as the render loop does.
+pub(super) fn fold_control(state: &mut AppState, command: &ControlCommand) -> bool {
+    reduce(state, RenderInput::Control(command), None)
+}
 
 pub(super) fn palette_ids(state: &AppState) -> Result<Vec<String>> {
     Ok(state

@@ -1,8 +1,7 @@
 use std::time::{Duration, Instant};
 
-use agnt_core::llm::SessionCost;
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::McpUsabilityState;
+use agnt_runtime::bus::{FactRecord, McpServerUsability};
+use agnt_runtime::llm::SessionCost;
 
 use super::*;
 
@@ -21,7 +20,7 @@ pub enum StatusMessageKind {
     Warning,
     /// A marker that survives turn finalize and does not expire on a timer.
     /// `TurnState::finalize` clears only `Neutral` messages, so a marker set
-    /// just before `SystemEvent::TurnCompleted` is not wiped before it renders. It
+    /// just before `TurnRecord::Completed` is not wiped before it renders. It
     /// stays until the next turn start clears it (`LlmState::handle_start`):
     /// a stop marker that self-expires is invisible.
     Notice,
@@ -160,46 +159,56 @@ impl IdentityState {
 }
 
 impl StatusState {
-    pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) -> bool {
-        match event {
-            UiStateEvent::SetActiveModelIdentity(s) => {
-                self.identity.set_active_model_identity(&s);
+    /// Fold one kernel-state snapshot. Returns whether it changed the display.
+    pub fn reduce_fact_record(&mut self, fact: FactRecord) -> bool {
+        match fact {
+            FactRecord::ActiveModelIdentity(identity) => {
+                self.identity.set_active_model_identity(&identity);
                 true
             }
-            UiStateEvent::SetActivePersonaIcon(icon) => {
+            FactRecord::ActiveAgentIdentity(identity) => {
+                self.identity.active_agent_identity = Some(identity);
+                true
+            }
+            FactRecord::ActivePersonaIcon(icon) => {
                 self.identity.set_active_persona_icon(icon);
                 true
             }
-            UiStateEvent::SetContextWindowMaxTokens(tokens) => {
+            FactRecord::ContextWindowMaxTokens(tokens) => {
                 self.tokens.set_context_window_max_tokens(tokens);
                 true
             }
-            UiStateEvent::SetMcpServerState {
+            FactRecord::McpServerState {
                 server,
                 state,
                 error,
-                total,
             } => {
                 let mapped = match state {
-                    McpUsabilityState::Enabled => McpServerUsabilityState::Enabled,
-                    McpUsabilityState::Disabled => McpServerUsabilityState::Disabled,
-                    McpUsabilityState::Failed => McpServerUsabilityState::Failed,
+                    McpServerUsability::Enabled => McpServerUsabilityState::Enabled,
+                    McpServerUsability::Disabled => McpServerUsabilityState::Disabled,
+                    McpServerUsability::Failed => McpServerUsabilityState::Failed,
                 };
                 self.mcp
-                    .set_mcp_server_state_with_details(&server, mapped, error, total);
+                    .set_mcp_server_state_by_name_with_reason(&server, mapped, error);
                 true
             }
-            UiStateEvent::SetMcpVisibleToolCount { server, count } => {
+            FactRecord::McpVisibleToolTotal(total) => {
+                self.mcp.set_llm_visible_mcp_tool_count(total);
+                true
+            }
+            FactRecord::McpVisibleToolCount { server, count } => {
                 self.mcp
                     .set_mcp_visible_tool_count_by_server_name(&server, count);
                 true
             }
-            UiStateEvent::SetMcpVisibleToolNames { server, names } => {
+            FactRecord::McpVisibleToolNames { server, names } => {
                 self.mcp
                     .set_mcp_visible_tool_names_by_server_name(&server, names);
                 true
             }
-            _ => false,
+            FactRecord::WorkerPhase(_)
+            | FactRecord::PermissionGate(_)
+            | FactRecord::SessionUsage(_) => false,
         }
     }
 }

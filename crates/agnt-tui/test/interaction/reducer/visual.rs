@@ -19,7 +19,7 @@ fn visual_mode_entry_table() -> Result<()> {
     state.scroll.total_visual_rows = 5;
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('v'),
         },
         None,
@@ -42,7 +42,7 @@ fn visual_mode_entry_table() -> Result<()> {
     };
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('v'),
         },
         None,
@@ -64,7 +64,7 @@ fn visual_mode_entry_table() -> Result<()> {
     };
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('v'),
         },
         None,
@@ -83,7 +83,7 @@ fn visual_mode_entry_table() -> Result<()> {
     };
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('v'),
         },
         None,
@@ -109,7 +109,7 @@ fn visual_mode_extension_table() -> Result<()> {
     }
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('j'),
         },
         None,
@@ -133,7 +133,7 @@ fn visual_mode_extension_table() -> Result<()> {
     };
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('k'),
         },
         None,
@@ -166,7 +166,7 @@ fn visual_yank_table() {
     state.scroll.selection = Some(TranscriptSelection::new(0));
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('y'),
         },
         None,
@@ -192,7 +192,7 @@ fn visual_yank_table() {
     state.scroll.selection = Some(TranscriptSelection::new(3));
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('y'),
         },
         None,
@@ -224,7 +224,7 @@ fn visual_yank_table() {
     state.scroll.selection = Some(sel);
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('y'),
         },
         None,
@@ -248,7 +248,7 @@ fn visual_yank_table() {
     };
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('y'),
         },
         None,
@@ -262,7 +262,7 @@ fn visual_yank_table() {
     let mut state = AppState::default();
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('y'),
         },
         None,
@@ -281,7 +281,7 @@ fn visual_mode_exit_and_jump_table() -> Result<()> {
         },
         ..Default::default()
     };
-    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
@@ -297,7 +297,7 @@ fn visual_mode_exit_and_jump_table() -> Result<()> {
     for _ in 0..2 {
         reduce(
             &mut state,
-            SystemEvent::KeyPressed {
+            UiInput::KeyPressed {
                 key: Key::Char('g'),
             },
             None,
@@ -323,7 +323,7 @@ fn visual_mode_exit_and_jump_table() -> Result<()> {
     }
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('G'),
         },
         None,

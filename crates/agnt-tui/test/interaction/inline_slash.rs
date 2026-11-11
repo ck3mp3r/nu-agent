@@ -66,6 +66,27 @@ fn inline_slash_command_routing_table() {
         assert!(state.prompt_items().is_empty());
         assert!(state.status.message.status_line() != "Thinking...");
     }
+
+    // Tab on a real inline-slash selection submits the highlighted command.
+    let mut state = AppState::default();
+    state.check_inline_slash("/");
+    for _ in 0..3 {
+        if let Some(s) = state.picker.active_state_mut() {
+            s.move_down();
+        }
+    }
+    assert_eq!(
+        state.picker.selected_slash_label(),
+        Some("/status".to_string())
+    );
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
+    assert!(changed);
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        Some("/status".to_string())
+    );
+    assert_eq!(state.picker.active(), None);
+    assert!(state.transcript.entries().is_empty());
 }
 
 /// WHEN the slash list is open on a running turn, one Esc SHALL close the list

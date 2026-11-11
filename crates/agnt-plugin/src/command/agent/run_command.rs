@@ -11,16 +11,16 @@ use super::{
 };
 
 use crate::plugin::AgentPlugin;
-use agnt_core::{
-    config::defaults,
-    conversation::{
-        builder::BuildInput,
-        runtime_build::{RuntimeBuildParams, build_runtime},
-    },
-    hooks::HookAgentContext,
-    session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
-    tools::{closure::EngineInterfaceLike, handler::McpToolRegistry},
+use agnt_runtime::config::defaults;
+use agnt_runtime::conversation::{
+    builder::BuildInput,
+    runtime_build::{RuntimeBuildParams, build_runtime},
 };
+use agnt_runtime::hooks::HookAgentContext;
+use agnt_runtime::session::resolver::{
+    DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+};
+use agnt_runtime::tools::{closure::EngineInterfaceLike, handler::McpToolRegistry};
 
 /// Run the `agent` command in pipeline mode.
 ///
@@ -63,12 +63,12 @@ pub(super) fn run_command(
 
             // Resolve the log target from the state ladder at process start; a
             // `[paths].state_home` value retargets the sink after config load.
-            let paths = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
+            let paths = agnt_runtime::config::Paths::resolve_for_process(None).map_err(|e| {
                 LabeledError::new(format!("Failed to resolve application paths: {e}"))
             })?;
-            let sink = agnt_core::logging::FileLogSink::open(paths.log_path)
+            let sink = agnt_runtime::logging::FileLogSink::open(paths.log_path)
                 .map_err(|e| LabeledError::new(format!("Failed to open the log file: {e}")))?;
-            agnt_core::logging::install_process_sink(&sink);
+            agnt_runtime::logging::install_process_sink(&sink);
 
             // Initialize env_logger with the file sink target
             let _ = env_logger::Builder::new()
@@ -90,7 +90,7 @@ pub(super) fn run_command(
     // 1. Resolve default role config (--model flag handled here)
     // Discovery comes first: the file the ladder selects carries the `[paths]`
     // values the full resolution below applies.
-    let discovery = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
+    let discovery = agnt_runtime::config::Paths::resolve_for_process(None).map_err(|e| {
         LabeledError::new(format!("Failed to resolve application paths: {e}"))
             .with_label(e.to_string(), call.head)
     })?;
@@ -101,7 +101,7 @@ pub(super) fn run_command(
 
     // The store path `[paths]` and `NU_AGENT_CACHE_HOME` resolve, passed on
     // verbatim: this site never joins the store file name.
-    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+    let paths = agnt_runtime::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
         .map_err(|e| {
             LabeledError::new(format!("Failed to resolve application paths: {e}"))
                 .with_label(e.to_string(), call.head)
@@ -109,9 +109,9 @@ pub(super) fn run_command(
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
-    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
     // Pipeline mode gets a bounded tool-turn budget unless explicitly configured.
@@ -125,18 +125,18 @@ pub(super) fn run_command(
 
     // Extract tools from --tools flag and build ClosureRegistry
     let tools_map = extract_tools_from_call(call)?;
-    let mut closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
+    let mut closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
     for (name, closure) in tools_map {
-        let params = agnt_core::tools::closure::resolve_closure_params(&closure, engine);
+        let params = agnt_runtime::tools::closure::resolve_closure_params(&closure, engine);
         closure_registry.register(
             name,
-            agnt_core::tools::closure::ResolvedClosure { closure, params },
+            agnt_runtime::tools::closure::ResolvedClosure { closure, params },
         );
     }
 
     let agents_config = plugin_config.agents.clone();
 
-    let mcp_config = agnt_core::tools::mcp::config::McpConfig::from_toml_config(&plugin_config)
+    let mcp_config = agnt_runtime::tools::mcp::config::McpConfig::from_toml_config(&plugin_config)
         .map_err(|err| LabeledError::new("Failed to load MCP config").with_label(err, call.head))?;
 
     // Load agent persona and resolve identity
@@ -195,7 +195,7 @@ pub(super) fn run_command(
     let handle = plugin.runtime()?.handle().clone();
     handle.clone().block_on(async move {
         // Create the tool server handle ONCE — both builtins and MCP servers register into it
-        let tool_server_handle = agnt_core::types::ToolServer::new().run();
+        let tool_server_handle = agnt_runtime::types::ToolServer::new().run();
 
         let mcp_runtime = if mcp_config.mcp.is_empty() {
             None
@@ -203,7 +203,7 @@ pub(super) fn run_command(
             let caller_cwd_path = cwd.as_path();
 
             Some(
-                agnt_core::tools::mcp::runtime::connect_servers(
+                agnt_runtime::tools::mcp::runtime::connect_servers(
                     &tool_server_handle,
                     &mcp_config.mcp,
                     Some(caller_cwd_path),
@@ -246,7 +246,7 @@ pub(super) fn run_command(
             &discovered_mcp_tools,
             &cwd,
             &paths.agents_dir,
-            false,
+            Vec::new(),
         )
         .map_err(|e| LabeledError::new("Invalid tool name").with_label(e.to_string(), call.head))?;
 
@@ -260,30 +260,28 @@ pub(super) fn run_command(
             .await?;
 
         // Signal bus shared by tool registration and the runtime.
-        let bus = agnt_core::bus::create_bus();
+        let bus = agnt_runtime::bus::Bus::default();
 
-        let agnt_core::conversation::builder::BuildArtifacts {
-            merged_compaction,
-            render_registry,
-        } = super::setup::register_tools(
-            call,
-            BuildInput {
-                tool_server_handle: &tool_server_handle,
-                closure_registry: &closure_registry,
-                cwd: cwd.clone(),
-                engine: engine_arc.clone(),
-                span: call.head,
-                tool_timeout,
-                session: session_resolution.session.as_mut(),
-                max_tool_result_bytes: config
-                    .max_tool_result_bytes
-                    .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
-                bus: bus.clone(),
-                merged_compaction: agnt_core::config::CompactionConfig::default(),
-                audit_log_path: paths.audit_log_path.clone(),
-            },
-        )
-        .await?;
+        let agnt_runtime::conversation::builder::BuildArtifacts { merged_compaction } =
+            super::setup::register_tools(
+                call,
+                BuildInput {
+                    tool_server_handle: &tool_server_handle,
+                    closure_registry: &closure_registry,
+                    cwd: cwd.clone(),
+                    engine: engine_arc.clone(),
+                    span: call.head,
+                    tool_timeout,
+                    session: session_resolution.session.as_mut(),
+                    max_tool_result_bytes: config
+                        .max_tool_result_bytes
+                        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
+                    bus: bus.clone(),
+                    merged_compaction: agnt_runtime::config::CompactionConfig::default(),
+                    audit_log_path: paths.audit_log_path.clone(),
+                },
+            )
+            .await?;
 
         let mcp_caller_cwd = cwd.clone();
 
@@ -325,8 +323,8 @@ pub(super) fn run_command(
             cwd: cwd.clone(),
             paths,
             bus: bus.clone(),
-            render_registry,
             hook_context,
+            compactor_model: None,
         })
         .await?;
         log::debug!(
@@ -338,9 +336,11 @@ pub(super) fn run_command(
 
         // ── Pipeline turn ──────────────────────────────────────────────────────
         let (prompt, context) = super::input::extract_prompt_and_context(input)?;
-        agnt_core::orchestrator::run_single_turn(
+        agnt_runtime::orchestrator::run_single_turn(
             &mut runtime_impl,
-            &bus,
+            // The one-shot pipeline runs the user's own prompt: it belongs to
+            // no external task, so the turn is unattributed.
+            None,
             prompt,
             context,
             call.head,

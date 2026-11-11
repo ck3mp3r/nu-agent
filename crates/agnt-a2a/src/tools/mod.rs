@@ -4,7 +4,6 @@ mod cancel;
 mod get;
 mod get_card;
 mod list;
-mod register;
 mod registry;
 mod resolve;
 mod send;

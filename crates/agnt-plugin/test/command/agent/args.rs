@@ -2,6 +2,8 @@ use super::args::extract_agent_flags;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{Span, Spanned, Value};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // Helper to create an EvaluatedCall with specific flags
 fn mock_call_with_flags(agent: Option<&str>, name: Option<&str>) -> EvaluatedCall {
     let span = Span::test_data();
@@ -98,15 +100,17 @@ fn mock_call_with_compaction_flags(proactive_pct: Option<f64>) -> EvaluatedCall 
 }
 
 #[test]
-fn extract_compaction_flags_provided() {
+fn extract_compaction_flags_provided() -> Result<()> {
     let call = mock_call_with_compaction_flags(Some(0.75));
-    let result = extract_compaction_flags(&call).unwrap();
+    let result = extract_compaction_flags(&call).map_err(|e| format!("{e:?}"))?;
     assert_eq!(result.proactive_threshold_pct, Some(0.75));
+    Ok(())
 }
 
 #[test]
-fn extract_compaction_flags_none_provided() {
+fn extract_compaction_flags_none_provided() -> Result<()> {
     let call = mock_call_with_compaction_flags(None);
-    let result = extract_compaction_flags(&call).unwrap();
+    let result = extract_compaction_flags(&call).map_err(|e| format!("{e:?}"))?;
     assert!(result.proactive_threshold_pct.is_none());
+    Ok(())
 }

@@ -769,6 +769,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - `/help`, `/status`, `/mcp`, and `/skills` route to the same action handlers as Ctrl-P entries.
 - `/models` and Ctrl-P `Models` route to the same shared model-picker action handler.
 - `/new` clears the transcript, starts a new session, and shows the startup logo.
+- While a turn runs, `/new`, a model switch, and an agent switch apply when that turn finishes, and the status bar says so when the command arrives.
 - Unknown slash commands emit deterministic warning text and the interactive loop continues.
 - Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).

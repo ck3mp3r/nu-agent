@@ -1,1 +1,1 @@
-pub use agnt_core::transcript::markdown::*;
+pub use agnt_render::transcript::markdown::*;

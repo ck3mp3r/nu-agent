@@ -2,8 +2,8 @@
 //! the clipboard request.
 
 use super::*;
+use crate::interaction::input::{Key, UiInput};
 use crate::interaction::reducer::reduce;
-use agnt_core::protocol::events::{Key, SystemEvent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -11,7 +11,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Press one core key through the reducer.
 fn press(state: &mut AppState, key: Key) -> bool {
-    reduce(state, SystemEvent::KeyPressed { key }, None)
+    reduce(state, UiInput::KeyPressed { key }, None)
 }
 
 /// An idle Normal-mode state with a scrollable transcript.

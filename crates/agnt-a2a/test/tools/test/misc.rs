@@ -4,7 +4,7 @@ use super::*;
 async fn agent_list_excludes_self() -> Result<()> {
     let own_url = "http://127.0.0.1:9999".to_string();
     let ctx = A2aToolContext {
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         cache: Arc::new(PeerCache::default()),
         own_card: AgentCard {
             name: "self-agent".into(),
@@ -63,7 +63,7 @@ async fn agent_list_excludes_self() -> Result<()> {
 
 #[tokio::test]
 async fn test_handle_tasks_send_completion_event_carries_context_id() -> Result<()> {
-    let server = test_server().await;
+    let server = test_server().await?;
 
     let (completion_tx, mut completion_rx) = tokio::sync::mpsc::channel::<A2aCompletionEvent>(16);
     let mut ctx = tool_ctx(&server);

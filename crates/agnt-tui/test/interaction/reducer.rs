@@ -37,17 +37,19 @@ use support::*;
 
 // endregion: --- Modules
 
-use crate::test_support::entry_text;
+use crate::interaction::input::{Key, UiInput};
+use crate::test_support::{
+    entry_text, inference_chunk, inference_completed, inference_started, system_message,
+    tool_completed, tool_started, turn_completed,
+};
 use crate::{
     interaction::reducer::{
-        ESC_ABORT_CONFIRM_STATUS, VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, reduce,
+        ESC_ABORT_CONFIRM_STATUS, RenderInput, VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, reduce,
     },
     state::{AppState, InputMode, InputState, PaneFocus, PromptStatus, ScrollState, UiPhase},
 };
-use agnt_core::protocol::event::{PermissionRequestContext, ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::{Key, SystemEvent};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
+use agnt_runtime::protocol::events::{PermissionRecord, SessionRecord};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

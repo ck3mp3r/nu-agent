@@ -1,13 +1,13 @@
 use super::*;
 
 use crate::state::StatusMessageKind;
-use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
+use agnt_runtime::conversation::turn::executor::TURN_STOPPED_NOTICE;
 
 // ---------------------------------------------------------------------------
-// SystemEvent::InferenceStopped — hook-stop notice (Fix 2)
+// InferenceRecord::Stopped — hook-stop notice (Fix 2)
 // ---------------------------------------------------------------------------
 
-/// `SystemEvent::InferenceStopped` APPENDS the reason as a new transcript entry without
+/// `SessionRecord::Inference(InferenceRecord::Stopped { .. })` APPENDS the reason as a new transcript entry without
 /// truncating the streamed assistant block (Fix 2 of the repetition stop UX):
 /// the streamed repeated text stays visible, the reason is added after it,
 /// and `assistant_stream_start` resets so nothing later truncates the block.
@@ -33,9 +33,7 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     // -- Exec
     let changed = reduce_llm(
         &mut state,
-        SystemEvent::InferenceStopped {
-            reason: "Output repetition stopped: the run was stopped.".to_string(),
-        },
+        inference_stopped("Output repetition stopped: the run was stopped.".to_string()),
     );
 
     // -- Check
@@ -73,12 +71,7 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(state.transcript.assistant_stream_start.is_some());
 
     // -- Exec
-    let changed = reduce_llm(
-        &mut state,
-        SystemEvent::InferenceStopped {
-            reason: "  ".to_string(),
-        },
-    );
+    let changed = reduce_llm(&mut state, inference_stopped("  ".to_string()));
 
     // -- Check: nothing renders and the provisional block is discarded.
     assert!(!changed, "an empty reason renders nothing");
@@ -101,12 +94,7 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     );
 
     // -- Exec
-    let changed = reduce_llm(
-        &mut truncating,
-        SystemEvent::InferenceStopped {
-            reason: String::new(),
-        },
-    );
+    let changed = reduce_llm(&mut truncating, inference_stopped(String::new()));
 
     // -- Check
     assert!(!changed, "a silent discard renders nothing");
@@ -125,12 +113,7 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(empty.transcript.entries().is_empty());
 
     // -- Exec
-    let changed = reduce_llm(
-        &mut empty,
-        SystemEvent::InferenceStopped {
-            reason: String::new(),
-        },
-    );
+    let changed = reduce_llm(&mut empty, inference_stopped(String::new()));
 
     // -- Check: no spacer or notice is pushed.
     assert!(!changed, "a silent discard renders nothing");
@@ -138,7 +121,7 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     Ok(())
 }
 
-/// `SystemEvent::InferenceStopped` carrying `TURN_STOPPED_NOTICE` renders a status-bar
+/// `SessionRecord::Inference(InferenceRecord::Stopped { .. })` carrying `TURN_STOPPED_NOTICE` renders a status-bar
 /// marker instead of a transcript block: the streamed blocks stay, the
 /// streaming cursor resets, and the status message holds the marker with
 /// `Notice` kind.
@@ -153,9 +136,7 @@ fn stopped_event_with_turn_stopped_notice_sets_status_marker() -> Result<()> {
     // -- Exec
     let changed = reduce_llm(
         &mut state,
-        SystemEvent::InferenceStopped {
-            reason: TURN_STOPPED_NOTICE.to_string(),
-        },
+        inference_stopped(TURN_STOPPED_NOTICE.to_string()),
     );
 
     // -- Check: the marker is set and no transcript block is appended.
@@ -191,14 +172,12 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
     let mut state = busy_state_with_clean_transcript();
     reduce_llm(
         &mut state,
-        SystemEvent::InferenceStopped {
-            reason: TURN_STOPPED_NOTICE.to_string(),
-        },
+        inference_stopped(TURN_STOPPED_NOTICE.to_string()),
     );
     assert_eq!(state.status.message.kind(), StatusMessageKind::Notice);
 
     // -- Exec: the next turn starts streaming.
-    reduce_llm(&mut state, SystemEvent::InferenceStarted);
+    reduce_llm(&mut state, inference_started());
 
     // -- Check: the marker is gone.
     assert!(
@@ -218,8 +197,8 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
     neutral.status.message.set_message("Tool: prior");
 
     // -- Exec
-    reduce_llm(&mut warning, SystemEvent::InferenceStarted);
-    reduce_llm(&mut neutral, SystemEvent::InferenceStarted);
+    reduce_llm(&mut warning, inference_started());
+    reduce_llm(&mut neutral, inference_started());
 
     // -- Check: turn start leaves the other kinds alone.
     assert_eq!(

@@ -11,17 +11,10 @@ fn coordinator_permission_card_keys_bypass_input_lock() -> Result<()> {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.state.input_locked = true;
     coordinator.textarea.insert_str("seeded");
-    coordinator.state.permission.open_prompt(PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu.command:*".to_string(),
-        tool: "nu".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "nested".to_string(),
-        pattern: "*".to_string(),
-        target_field: Some("command".to_string()),
-        summary: "→ {\"command\":\"echo hi\"}".to_string(),
-    });
+    coordinator
+        .state
+        .permission
+        .open_prompt("ask-0000000000000001");
 
     // -- Exec: a non-card Char key.
     coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::Char('x')));
@@ -81,17 +74,10 @@ fn coordinator_paste_dropped_while_permission_card_up() -> Result<()> {
     // -- Setup & Fixtures: unlocked, card up, seeded textarea.
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.textarea.insert_str("seeded");
-    coordinator.state.permission.open_prompt(PermissionPrompt {
-        request_id: "ask-0000000000000002".to_string(),
-        matched_rule_identity: "nested:nu.command:*".to_string(),
-        tool: "nu".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "nested".to_string(),
-        pattern: "*".to_string(),
-        target_field: Some("command".to_string()),
-        summary: "→ {\"command\":\"echo hi\"}".to_string(),
-    });
+    coordinator
+        .state
+        .permission
+        .open_prompt("ask-0000000000000002");
 
     // -- Exec
     coordinator.handle_terminal_event(TerminalEvent::Paste("pasted".to_string()));

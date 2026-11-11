@@ -7,16 +7,33 @@
 use super::*;
 
 use crate::interaction::cancel::CancelController;
-use crate::interaction::reducer::reduce;
-use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::{ContentKind, MessageRole};
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::interaction::reducer::{RenderInput, reduce};
+use crate::test_support::entry_text;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::{Display, MessageRole};
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::contracts::{
+    UiMessageSnapshot, UiMessageUsageSnapshot, project_snapshots,
+};
+use agnt_runtime::protocol::events::{InferenceRecord, SessionRecord, ToolRecord};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// One display flattened to the text a backend draws, line by line.
+fn display_text(display: &Display) -> String {
+    display
+        .project_lines()
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 // region:    --- Fixtures
 
@@ -34,39 +51,43 @@ fn assistant(text: &str, usage: Option<UiMessageUsageSnapshot>) -> UiMessageSnap
     snapshot
 }
 
-fn tool(name: &str, arguments: &str, success: Option<bool>) -> UiMessageSnapshot {
-    UiMessageSnapshot::new("tool", format!("-> {arguments}"))
+/// One persisted tool row: the call it names, the result the model received,
+/// and the verdict the store recorded. The content IS the tool's data — the
+/// surface derives the body from it, live and on replay alike.
+fn tool(name: &str, arguments: &str, result: &str, success: Option<bool>) -> UiMessageSnapshot {
+    UiMessageSnapshot::new("tool", result.to_string())
         .with_tool_name(name.to_string())
-        .with_tool_details(Some(arguments.to_string()), None, success)
+        .with_tool_details(
+            Some(arguments.to_string()),
+            Some(result.to_string()),
+            success,
+        )
 }
 
-fn diff_display(title: &str, content: &str) -> ToolDisplay {
-    ToolDisplay {
-        title: Some(title.to_string()),
-        sections: vec![ToolDisplaySection {
-            label: Some(title.to_string()),
-            kind: ContentKind::Diff {
-                language: "diff".to_string(),
-                path: "a.rs".to_string(),
-            },
-            content: content.to_string(),
-            stats: None,
-        }],
-    }
+/// The result text an `edit` call leaves in the transcript: the path it changed
+/// and the diff it made, as the handler returned them.
+fn edit_result(path: &str, diff: &str) -> String {
+    // `serde_json` is not a test dependency here: build the handler's own shape.
+    let escaped = diff
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("{{\"path\":\"{path}\",\"diff\":\"{escaped}\"}}")
 }
 
-fn tool_display(display: ToolDisplay) -> UiMessageSnapshot {
-    UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(display)
-}
-
-/// A two-turn persisted session: prose, a finished tool call with its display,
-/// a compaction summary, and prose after it.
+/// A two-turn persisted session: prose, a finished tool call with its result, a
+/// compaction summary, and prose after it.
 fn persisted_session() -> Vec<UiMessageSnapshot> {
+    let diff = "--- a\n+++ b\n";
     vec![
         UiMessageSnapshot::new("user", "first question"),
         assistant("first answer", Some(usage(3, 2, 5))),
-        tool("nu", r#"{"command":"ls"}"#, Some(true)),
-        tool_display(diff_display("ls", "--- a\n+++ b\n")),
+        tool(
+            "edit",
+            r#"{"path":"a.rs"}"#,
+            &edit_result("a.rs", diff),
+            Some(true),
+        ),
         UiMessageSnapshot::new("user", "second question"),
         UiMessageSnapshot::new("compaction", "## Summary\n- alpha"),
         assistant("third answer", None),
@@ -74,35 +95,22 @@ fn persisted_session() -> Vec<UiMessageSnapshot> {
 }
 
 /// Fold the projected log the way the live session folds it: one reduce per
-/// event, the effect queue drained after each, exactly as the coordinator does.
+/// record, the effect queue drained after each, exactly as the coordinator does.
 fn live_reduction(messages: &[UiMessageSnapshot]) -> AppState {
     let cancel_controller = CancelController::default();
     let mut state = AppState::default();
-    for step in project_snapshots(messages.to_vec()) {
-        match step {
-            ReplayStep::Event(event) => {
-                reduce(&mut state, *event, None);
-                let _ = state.take_pending_events(&cancel_controller);
-                let _ = state.take_pending_ui_state_events();
-            }
-            ReplayStep::Notice(text) => {
-                crate::interaction::reducer::push_system_notice(&mut state, text)
-            }
-        }
+    let (records, _total) = project_snapshots(messages.to_vec());
+    for record in records {
+        reduce(&mut state, RenderInput::Record(&record), None);
+        let _ = state.take_pending_events(&cancel_controller);
+        while state.take_next_launch_request().is_some() {}
     }
     state
 }
 
-/// The projection's event half: the steps the reducer folds, without the
-/// persisted system lines that bypass it.
-fn projected_events(messages: Vec<UiMessageSnapshot>) -> Vec<SystemEvent> {
-    project_snapshots(messages)
-        .into_iter()
-        .filter_map(|step| match step {
-            ReplayStep::Event(event) => Some(*event),
-            ReplayStep::Notice(_) => None,
-        })
-        .collect()
+/// The projection's record log.
+fn projected_records(messages: Vec<UiMessageSnapshot>) -> Vec<SessionRecord> {
+    project_snapshots(messages).0
 }
 
 /// The displayed token counters, in the order the status line reads them.
@@ -132,6 +140,19 @@ fn entry_roles(state: &AppState) -> Vec<&'static str> {
         .collect()
 }
 
+/// Every user message row in the transcript, in order.
+fn user_rows(state: &AppState) -> Vec<&MessageEntry> {
+    state
+        .transcript
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            TranscriptEntry::Message(message) if message.role == MessageRole::User => Some(message),
+            _ => None,
+        })
+        .collect()
+}
+
 // endregion: --- Fixtures
 
 // region:    --- Projection
@@ -144,18 +165,15 @@ fn test_state_hydration_projection_maps_user_prompt() {
     let messages = vec![UiMessageSnapshot::new("user", "hi")];
 
     // -- Exec
-    let log = projected_events(messages);
+    let log = projected_records(messages);
 
     // -- Check
     assert_eq!(log.len(), 2, "the prompt plus the turn boundary");
     assert!(matches!(
         log.first(),
-        Some(SystemEvent::PromptSubmitted { text, .. }) if text == "hi"
+        Some(SessionRecord::Prompt(record)) if record.text == "hi"
     ));
-    assert!(matches!(
-        log.get(1),
-        Some(SystemEvent::TurnCompleted { .. })
-    ));
+    assert!(matches!(log.get(1), Some(SessionRecord::Turn(_))));
 }
 
 /// An assistant snapshot is one non-streamed chunk: both chunk fields carry
@@ -166,16 +184,20 @@ fn test_state_hydration_projection_maps_assistant_chunk_and_usage() {
     let messages = vec![assistant("hello", Some(usage(3, 2, 5)))];
 
     // -- Exec
-    let log = projected_events(messages);
+    let log = projected_records(messages);
 
     // -- Check
-    assert!(matches!(log.first(), Some(SystemEvent::InferenceStarted)));
-    let Some(SystemEvent::InferenceChunk { delta, aggregated }) = log.get(1) else {
+    assert!(matches!(
+        log.first(),
+        Some(SessionRecord::Inference(InferenceRecord::Started))
+    ));
+    let Some(SessionRecord::Inference(InferenceRecord::Chunk { delta, aggregated })) = log.get(1)
+    else {
         panic!("expected the chunk");
     };
     assert_eq!(delta, "hello", "delta carries the whole text");
     assert_eq!(aggregated, "hello", "aggregated carries the whole text");
-    let Some(SystemEvent::InferenceCompleted { usage }) = log.get(2) else {
+    let Some(SessionRecord::Inference(InferenceRecord::Completed { usage })) = log.get(2) else {
         panic!("expected the completion");
     };
     assert_eq!(usage.input_tokens, 3);
@@ -183,80 +205,51 @@ fn test_state_hydration_projection_maps_assistant_chunk_and_usage() {
     assert_eq!(usage.total_tokens, Some(5));
 }
 
-/// A tool snapshot and the display snapshot after it become the started call,
-/// its gate preview, and its displayless completion; a later call's display
-/// never lands on the earlier call.
+/// A tool snapshot becomes the started call and its settled outcome; a later
+/// call's data never lands on the earlier call.
 #[test]
-fn test_state_hydration_projection_maps_tool_pair_with_display() {
+fn test_state_hydration_projection_maps_tool_row_to_its_records() {
     // -- Setup & Fixtures
+    let result = r#"{"path":"a.rs","diff":"--- a\\n+++ b\\n"}"#;
     let messages = vec![
-        tool("edit", r#"{"path":"a.rs"}"#, Some(true)),
-        tool_display(diff_display("edit a.rs", "--- a\n+++ b\n")),
-        tool("read_file", r#"{"path":"b.txt"}"#, Some(true)),
+        tool("edit", r#"{"path":"a.rs"}"#, result, Some(true)),
+        tool("read_file", r#"{"path":"b.txt"}"#, "b", Some(true)),
     ];
 
     // -- Exec
-    let log = projected_events(messages);
+    let log = projected_records(messages);
 
-    // -- Check: start, gate preview, displayless completion per call, and the
-    // display rides its OWN call.
-    let Some(SystemEvent::ToolStarted { call: first_start }) = log.first() else {
+    // -- Check: a start and a completion per call, then the turn boundary.
+    let Some(SessionRecord::Tool(ToolRecord::Started { call: first_start })) = log.first() else {
         panic!("expected the first start");
     };
-    let Some(SystemEvent::PreviewRequested {
-        call: first_preview,
-        ..
-    }) = log.get(1)
-    else {
-        panic!("expected the first gate preview");
-    };
-    assert_eq!(
-        first_start.id, first_preview.id,
-        "the preview names the call"
-    );
-    let Some(SystemEvent::ToolCompleted {
+    let Some(SessionRecord::Tool(ToolRecord::Completed {
         call: first_end,
         outcome,
-    }) = log.get(2)
+    })) = log.get(1)
     else {
         panic!("expected the first completion");
     };
-    assert_eq!(first_start.id, first_end.id, "the pair names one call");
-    assert!(
-        outcome.display.is_none(),
-        "the display is the gate preview, not the completion"
+    assert_eq!(first_start.id(), first_end.id(), "the pair names one call");
+    assert_eq!(
+        outcome.text, result,
+        "the completion carries the persisted result text"
     );
-    let Some(SystemEvent::ToolStarted { call: second_start }) = log.get(3) else {
+    let Some(SessionRecord::Tool(ToolRecord::Started { call: second_start })) = log.get(2) else {
         panic!("expected the second start");
     };
-    let Some(SystemEvent::ToolCompleted { outcome, .. }) = log.get(4) else {
+    let Some(SessionRecord::Tool(ToolRecord::Completed { outcome, .. })) = log.get(3) else {
         panic!("expected the second completion");
     };
     assert_eq!(second_start.name.0, "read_file");
-    assert!(outcome.display.is_none(), "no display for the second call");
-    assert_eq!(log.len(), 6, "two pairs, one preview, the turn boundary");
+    assert_eq!(outcome.text, "b", "the second row's own result");
+    assert_eq!(log.len(), 5, "two pairs, and the turn boundary");
 }
 
-/// A hydrated tool display is a GATE PREVIEW, not a completion — for every
-/// outcome. The replayed log carries it through `PreviewRequested` (the event
-/// the live permission gate emits) and completes displayless with the status
-/// semantics only, so the entry keeps the preview slot main's hydration used and
-/// the widget keeps banding the code surface.
+/// Every persisted tool row completes with the status the store recorded.
 #[test]
-fn test_state_hydration_projection_routes_every_tool_display_to_the_gate_preview() -> Result<()> {
-    // -- Setup & Fixtures: one persisted pair per outcome, as a cancelled run,
-    // a failed run, and a successful run leave them behind.
-    let display = ToolDisplay {
-        title: None,
-        sections: vec![ToolDisplaySection {
-            label: None,
-            kind: ContentKind::Code {
-                language: "nu".to_string(),
-            },
-            content: "ls | select name".to_string(),
-            stats: None,
-        }],
-    };
+fn test_state_hydration_projection_routes_every_tool_row_to_a_completed_outcome() -> Result<()> {
+    // -- Setup & Fixtures: one persisted row per outcome.
     let cases: [(&str, ToolStatus); 3] = [
         ("cancelled", ToolStatus::Cancelled),
         ("failed", ToolStatus::Failed),
@@ -265,51 +258,29 @@ fn test_state_hydration_projection_routes_every_tool_display_to_the_gate_preview
 
     for (label, status) in cases {
         let success = Some(matches!(status, ToolStatus::Success));
-        let snapshot =
-            tool("nu", r#"{"command":"ls | select name"}"#, success).with_tool_status(status);
-        let messages = vec![snapshot, tool_display(display.clone())];
+        let snapshot = tool("nu", r#"{"command":"ls | select name"}"#, "out", success)
+            .with_tool_status(status);
+        let messages = vec![snapshot];
 
         // -- Exec
-        let log = projected_events(messages);
+        let log = projected_records(messages);
 
-        // -- Check: start, gate preview, displayless completion, turn boundary.
-        assert_eq!(
-            log.len(),
-            4,
-            "{label}: one pair plus its preview and the boundary"
-        );
-        let Some(SystemEvent::ToolStarted { call: started }) = log.first() else {
+        // -- Check: start, completion, turn boundary.
+        assert_eq!(log.len(), 3, "{label}: one pair plus the boundary");
+        let Some(SessionRecord::Tool(ToolRecord::Started { call: started })) = log.first() else {
             return Err("expected the tool start".into());
         };
-        let Some(SystemEvent::PreviewRequested {
-            call: previewed,
-            display: preview,
-        }) = log.get(1)
-        else {
-            return Err("expected the gate preview".into());
-        };
-        assert_eq!(
-            previewed.id, started.id,
-            "{label}: the preview names the call"
-        );
-        assert_eq!(
-            preview, &display,
-            "{label}: the persisted display rides the preview channel"
-        );
-        let Some(SystemEvent::ToolCompleted {
+        let Some(SessionRecord::Tool(ToolRecord::Completed {
             call: ended,
             outcome,
-        }) = log.get(2)
+        })) = log.get(1)
         else {
             return Err("expected the completion".into());
         };
         assert_eq!(
-            ended.id, started.id,
+            ended.id(),
+            started.id(),
             "{label}: the completion names the call"
-        );
-        assert!(
-            outcome.display.is_none(),
-            "{label}: the completion carries no display"
         );
         assert_eq!(
             outcome.status, status,
@@ -332,24 +303,22 @@ fn test_state_hydration_projection_maps_system_lines_to_notices() {
     ];
 
     // -- Exec
-    let steps = project_snapshots(messages);
+    let log = projected_records(messages);
 
     // -- Check
+    let notices: Vec<&str> = log
+        .iter()
+        .filter_map(|record| match record {
+            SessionRecord::Notice(notice) => Some(notice.text.as_str()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        steps.len(),
-        2,
-        "two non-empty system lines, one notice each"
+        notices,
+        vec!["system fallback", "a system prompt"],
+        "two non-empty system lines, one trimmed notice each"
     );
-    assert_eq!(
-        steps.first(),
-        Some(&ReplayStep::Notice("system fallback".to_string()))
-    );
-    assert_eq!(
-        steps.get(1),
-        Some(&ReplayStep::Notice("a system prompt".to_string())),
-        "the notice carries the trimmed line"
-    );
-    assert!(project_snapshots(Vec::<UiMessageSnapshot>::new()).is_empty());
+    assert!(projected_records(Vec::<UiMessageSnapshot>::new()).is_empty());
 }
 
 // endregion: --- Projection
@@ -370,12 +339,25 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
     // -- Exec
     hydrate_by_replay(&mut replayed, messages, Some(14000));
 
-    // -- Check: the same entries, in the same order.
+    // -- Check: the same entries, in the same order. The one intended
+    // difference is the compaction row's label: a replayed one reads
+    // `history`, a live fold of the same record reads its own source.
     assert_eq!(
-        replayed.transcript.entries(),
-        live.transcript.entries(),
-        "the replayed entries must equal the live entries"
+        replayed.transcript.entries().len(),
+        live.transcript.entries().len(),
+        "the replayed entries must match the live entries one for one"
     );
+    for (replayed_entry, live_entry) in replayed
+        .transcript
+        .entries()
+        .iter()
+        .zip(live.transcript.entries())
+    {
+        if matches!(replayed_entry, TranscriptEntry::Task(_)) {
+            continue;
+        }
+        assert_eq!(entry_text(replayed_entry), entry_text(live_entry));
+    }
     assert_eq!(
         entry_roles(&replayed),
         vec![
@@ -390,9 +372,10 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
         "one entry per persisted fact: the compaction call line plus its summary"
     );
 
-    // -- Check: main's hydrated shape. The hand-builder docked every persisted
-    // display in the tool entry's PREVIEW slot and never set `result`, so a
-    // hydrated row renders banded whatever its verdict.
+    // -- Check: the completion body is derived from the persisted result data,
+    // the same derivation the live path runs — an `edit` row shows its diff —
+    // and the gate-preview slot stays empty, because the gate's diff was never
+    // in the transcript.
     let tool = replayed
         .transcript
         .entries()
@@ -403,19 +386,23 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
         })
         .ok_or("should have the replayed tool entry")?;
     assert_eq!(tool.status, ItemStatus::Done, "the persisted verdict");
+    assert!(tool.preview.is_none(), "the replay carries no gate content");
+    let result = tool.result.as_ref().ok_or("should have the edit body")?;
     assert!(
-        tool.preview.is_some(),
-        "main docked the display in the preview slot"
-    );
-    assert!(
-        tool.result.is_none(),
-        "main's hydration never set a completion display"
+        display_text(result).contains("+++ b"),
+        "the persisted diff is the completion body"
     );
 
-    // -- Check: the compaction bookkeeping is the live bookkeeping.
-    assert_eq!(replayed.compaction.blocks, live.compaction.blocks);
+    // -- Check: the compaction bookkeeping is the live bookkeeping, except the
+    // label the replay owns: a replayed row reads `history`, a live fold of the
+    // same record reads its own source.
+    assert_eq!(
+        replayed.compaction.blocks.len(),
+        live.compaction.blocks.len()
+    );
     assert_eq!(replayed.compaction.blocks.len(), 1);
     assert_eq!(replayed.compaction.blocks[0].source, "history");
+    assert_eq!(live.compaction.blocks[0].source, "auto");
 
     // -- Check: the displayed tokens. Replay applies the persisted total after
     // the fold, exactly where the live status line leaves it.
@@ -433,21 +420,23 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
     Ok(())
 }
 
-/// A replayed tool call holds ONE terminal entry carrying the persisted display
-/// in its gate-preview slot — main's hydrated arrangement, which is also the
-/// live path's shape.
+/// A replayed tool call holds ONE terminal entry whose completion body is
+/// derived from the persisted result data — the same shape the live path leaves.
 #[test]
 fn test_state_hydration_replay_lands_one_terminal_tool_entry() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
+    let diff = "--- a\n+++ b\n";
 
     // -- Exec
     hydrate_by_replay(
         &mut state,
-        vec![
-            tool("edit", r#"{"path":"a.rs"}"#, Some(true)),
-            tool_display(diff_display("edit a.rs", "--- a\n+++ b\n")),
-        ],
+        vec![tool(
+            "edit",
+            r#"{"path":"a.rs"}"#,
+            &edit_result("a.rs", diff),
+            Some(true),
+        )],
         None,
     );
 
@@ -462,27 +451,15 @@ fn test_state_hydration_replay_lands_one_terminal_tool_entry() -> Result<()> {
         return Err("expected a Tool entry".into());
     };
     assert_eq!(tool.status, ItemStatus::Done);
+    assert!(tool.preview.is_none(), "the replay carries no gate content");
+    let result = tool
+        .result
+        .as_ref()
+        .ok_or("should have the completion body")?;
     assert!(
-        tool.preview.is_some(),
-        "the persisted display docks in the gate-preview slot"
+        display_text(result).contains("+++ b"),
+        "the persisted diff is the completion body"
     );
-    assert!(
-        tool.result.is_none(),
-        "a hydrated completion carries no display of its own"
-    );
-    let preview = tool.preview.as_ref().ok_or("should have the preview")?;
-    let text: String = preview
-        .project_lines()
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.text.as_str())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(text.contains("+++ b"), "the persisted diff is the preview");
     Ok(())
 }
 
@@ -512,7 +489,6 @@ fn test_state_hydration_replay_discards_pending_effects() -> Result<()> {
     );
     assert_eq!(state.pending_prompt_count(), 0, "nothing waits to run");
     assert!(state.take_pending_events(&cancel_controller).is_empty());
-    assert!(state.take_pending_ui_state_events().is_empty());
 
     // -- Check: the drain still placed the user row.
     assert_eq!(
@@ -520,6 +496,76 @@ fn test_state_hydration_replay_discards_pending_effects() -> Result<()> {
         vec!["user", "assistant"],
         "the prompt row lands through the drain"
     );
+    Ok(())
+}
+
+/// WHEN the replay folds a stamped prompt row, THE replay lane SHALL place the
+/// row, SHALL drain the submission the placement rode, and SHALL leave no
+/// `OrchestratorEvent` and no launch request for a later drain.
+#[test]
+fn test_state_hydration_replay_places_the_row_and_drains_its_submission() -> Result<()> {
+    // -- Setup & Fixtures: one stamped persisted row.
+    let cancel_controller = CancelController::default();
+    let mut state = AppState::default();
+    let stamped = UiMessageSnapshot::new("user", "replayed question").with_stamp(
+        Some(1_765_000_000_123),
+        Some("openai/gpt-5".to_string()),
+        Some("coder".to_string()),
+    );
+
+    // -- Exec
+    hydrate_by_replay(&mut state, vec![stamped], None);
+
+    // -- Check: the row landed, carrying the record's stored facts.
+    let rows = user_rows(&state);
+    assert_eq!(rows.len(), 1, "one persisted row, one entry");
+    assert_eq!(rows[0].markdown, "replayed question");
+    assert_eq!(rows[0].timestamp_millis, Some(1_765_000_000_123));
+    assert_eq!(rows[0].model.as_deref(), Some("openai/gpt-5"));
+    assert_eq!(rows[0].agent.as_deref(), Some("coder"));
+
+    // -- Check: the submission the placement rode is drained, so the replay
+    // leaves nothing for a later drain to re-execute, and opens no panel.
+    assert_eq!(state.pending_prompt_count(), 0, "nothing waits to run");
+    assert!(
+        state.take_pending_events(&cancel_controller).is_empty(),
+        "the replay's outbound effects are not re-executed"
+    );
+    assert!(
+        state.take_next_launch_request().is_none(),
+        "a persisted row opens no panel"
+    );
+    Ok(())
+}
+
+/// WHEN a run of adjacent replayed prompts folds, THE transcript SHALL carry one
+/// entry per persisted row and the coalesced block shape the live gate pins: a
+/// block whose text is the newline join replays verbatim, so it paints one row
+/// per message (`test_renderer_layout_coalesced_user_turn_paints_one_row_per_prompt`).
+#[test]
+fn test_state_hydration_replay_keeps_the_coalesced_block_shape() -> Result<()> {
+    // -- Setup & Fixtures: a coalesced block, then a later prompt.
+    let mut state = AppState::default();
+
+    // -- Exec
+    hydrate_by_replay(
+        &mut state,
+        vec![
+            UiMessageSnapshot::new("user", "first message\nsecond message"),
+            assistant("answer", None),
+            UiMessageSnapshot::new("user", "third message"),
+        ],
+        None,
+    );
+
+    // -- Check: two entries, and the block stays ONE entry carrying the join.
+    let rows = user_rows(&state);
+    assert_eq!(rows.len(), 2, "one entry per persisted row");
+    assert_eq!(
+        rows[0].markdown, "first message\nsecond message",
+        "the coalesced block replays verbatim"
+    );
+    assert_eq!(rows[1].markdown, "third message");
     Ok(())
 }
 

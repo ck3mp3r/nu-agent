@@ -2,7 +2,7 @@
 
 use super::support::*;
 use crate::widgets::RatatuiBackend;
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::ir::MessageRole;
 use agnt_render::{Gallery, LayoutPlanner, RenderBackend, RowRect};
 
 /// WHEN the backend renders an entry at a non-zero row, THE entry SHALL land on

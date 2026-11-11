@@ -8,6 +8,9 @@
 #[path = "test/agent.rs"]
 mod agent;
 
+#[path = "test/get_card_transport.rs"]
+mod get_card_transport;
+
 #[path = "test/list.rs"]
 mod list;
 

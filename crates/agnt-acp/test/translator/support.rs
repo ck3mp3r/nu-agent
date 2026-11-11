@@ -8,15 +8,14 @@ use agent_client_protocol::schema::v1::{
     PermissionOption, RequestPermissionOutcome, SelectedPermissionOutcome, SessionUpdate,
     ToolCallUpdate,
 };
-use agnt_core::bus::{OneshotRx, OneshotTx};
-use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplaySection,
+use agnt_kernel::{
+    PermissionRecord, RequestId, SessionRecord, ToolCall, ToolCallId, ToolOutcome, ToolRecord,
+    ToolSource, ToolStatus,
 };
-use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::{ContentKind, ToolName};
+use agnt_render::transcript::ir::ToolName as RenderToolName;
+use agnt_runtime::bus::{OneshotRx, OneshotTx};
+use agnt_runtime::conversation::runtime::PendingPermissions;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -28,80 +27,59 @@ pub fn translator() -> EventTranslator {
     EventTranslator::new(SESSION)
 }
 
-pub fn call_line(summary: &str) -> CallLine {
-    CallLine {
-        summary: summary.to_string(),
-    }
+/// The call under test, with its id derived by the one derivation.
+fn call(name: &str, arguments: &str) -> ToolCall {
+    ToolCall::new(
+        RenderToolName(name.to_string()),
+        ToolSource::Builtin,
+        arguments,
+    )
 }
 
-pub fn text_section(label: &str, content: &str) -> ToolDisplaySection {
-    ToolDisplaySection {
-        label: Some(label.to_string()),
-        kind: ContentKind::Plain,
-        content: content.to_string(),
-        stats: None,
-    }
+pub fn tool_started(name: &str, arguments: &str) -> SessionRecord {
+    SessionRecord::Tool(ToolRecord::Started {
+        call: call(name, arguments),
+    })
 }
 
-pub fn diff_section(label: &str, content: &str) -> ToolDisplaySection {
-    ToolDisplaySection {
-        label: Some(label.to_string()),
-        kind: ContentKind::Diff {
-            language: "diff".to_string(),
-            path: label.to_string(),
-        },
-        content: content.to_string(),
-        stats: None,
-    }
-}
-
-pub fn tool_started(name: &str, arguments: &str) -> SystemEvent {
-    SystemEvent::ToolStarted {
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            "builtin",
-            arguments,
-            call_line("→ read src/lib.rs"),
-        ),
-    }
-}
-
-pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent {
-    SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            "builtin",
-            arguments,
-            call_line("→ read src/lib.rs"),
-        ),
+pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SessionRecord {
+    SessionRecord::Tool(ToolRecord::Completed {
+        call: call(name, arguments),
         outcome: ToolOutcome {
-            success,
             status: if success {
                 ToolStatus::Success
             } else {
                 ToolStatus::Failed
             },
-            result: "{}".to_string(),
-            display: None,
-            error_kind: None,
+            payload: None,
+            text: "{}".to_string(),
             message: None,
+            kind: None,
         },
+    })
+}
+
+/// The card a permission gate opens for the `edit` call `arguments` names.
+pub fn permission_requested(request_id: &str, call_key: &str) -> PermissionRecord {
+    PermissionRecord::Requested {
+        request_id: RequestId::from_minted(request_id),
+        call_id: ToolCallId::from_key(call_key),
+        tool: "edit".to_string(),
+        source: "builtin".to_string(),
+        rule_identity: "rule".to_string(),
+        scope: "global".to_string(),
+        pattern: "*".to_string(),
+        target_field: None,
+        mode: None,
+        summary: "→ edit".to_string(),
+        shows_preview: false,
+        preview: None,
     }
 }
 
-pub fn permission_context() -> PermissionRequestContext {
-    PermissionRequestContext {
-        tool: "edit".to_string(),
-        tool_key: "edit\n{}".to_string(),
-        source: "builtin".to_string(),
-        mode: None,
-        matched_rule_identity: "rule".to_string(),
-        scope: "global".to_string(),
-        target_field: None,
-        pattern: "*".to_string(),
-        summary: "→ edit".to_string(),
-        pre_authorize_display: None,
-    }
+/// The default card: request `perm-1` for the `edit` call over `{}`.
+pub fn default_requested() -> PermissionRecord {
+    permission_requested("perm-1", "edit\n{}")
 }
 
 /// One `session/request_permission` call captured by the mock sink.
@@ -129,7 +107,10 @@ impl RecordingPermissionSink {
     }
 
     pub fn requests(&self) -> Vec<RecordedPermissionRequest> {
-        self.requests.lock().unwrap().clone()
+        self.requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -142,7 +123,7 @@ impl PermissionRequestSink for RecordingPermissionSink {
     ) -> impl Future<Output = RequestPermissionOutcome> + Send {
         self.requests
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push(RecordedPermissionRequest {
                 session_id: session_id.to_string(),
                 tool_call,
@@ -173,7 +154,10 @@ pub fn register_pending(
     request_id: &str,
 ) -> OneshotRx<PermissionDecision> {
     let (tx, rx) = OneshotTx::<PermissionDecision>::channel("permission");
-    pending.lock().unwrap().insert(request_id.to_string(), tx);
+    pending
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(request_id.to_string(), tx);
     rx
 }
 

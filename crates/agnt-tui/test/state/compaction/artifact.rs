@@ -11,16 +11,12 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
     // -- Exec
     reduce_compaction(
         &mut state,
-        completed(
-            "slash_compact",
-            "short summary preview",
-            "full summary body",
-        ),
+        completed(CompactionSource::Manual, "full summary body"),
     );
 
     // -- Check
     let raw_texts: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
-    assert!(raw_texts.contains(&"Compaction · slash_compact".to_string()));
+    assert!(raw_texts.contains(&"Compaction · slash".to_string()));
     assert!(raw_texts.contains(&"full summary body".to_string()));
     assert!(!raw_texts.iter().any(|line| line.contains("source=")));
     assert!(
@@ -38,7 +34,7 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
     let mut markdown = AppState::default();
     reduce_compaction(
         &mut markdown,
-        completed("slash_compact", "preview", "## Summary\n- one\n- two"),
+        completed(CompactionSource::Manual, "## Summary\n- one\n- two"),
     );
 
     // -- Check: the heading renders as "Summary" and no raw source leaks.
@@ -62,7 +58,7 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
     let mut copy = AppState::default();
     reduce_compaction(
         &mut copy,
-        completed("auto_threshold", "preview", "## Summary\ncontent line"),
+        completed(CompactionSource::Auto, "## Summary\ncontent line"),
     );
 
     // -- Check
@@ -74,7 +70,7 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
         .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
-    assert!(raw_texts.contains(&"Compaction · auto_threshold".to_string()));
+    assert!(raw_texts.contains(&"Compaction · auto".to_string()));
     assert!(projected_texts.iter().any(|l| l.contains("Summary")));
     assert!(projected_texts.iter().any(|l| l.contains("content line")));
     assert!(!raw_texts.iter().any(|line| line.contains("source=")));
@@ -89,7 +85,7 @@ fn compaction_artifact_does_not_duplicate_summary_content() -> Result<()> {
     let mut heading = AppState::default();
     reduce_compaction(
         &mut heading,
-        completed("slash_compact", "## Summary", "## Summary\n- single"),
+        completed(CompactionSource::Manual, "## Summary\n- single"),
     );
 
     // -- Check: the heading appears exactly once.
@@ -107,7 +103,7 @@ fn compaction_artifact_does_not_duplicate_summary_content() -> Result<()> {
     let mut bullets = AppState::default();
     reduce_compaction(
         &mut bullets,
-        completed("auto_threshold", "preview", "- alpha\n- beta"),
+        completed(CompactionSource::Auto, "- alpha\n- beta"),
     );
 
     // -- Check: each bullet appears exactly once, no doubled markers.
@@ -136,10 +132,10 @@ fn compaction_artifact_does_not_duplicate_summary_content() -> Result<()> {
 
     // -- Setup & Fixtures: start then complete.
     let mut lifecycle = AppState::default();
-    reduce_compaction(&mut lifecycle, started("slash_compact"));
+    reduce_compaction(&mut lifecycle, started(CompactionSource::Manual));
     reduce_compaction(
         &mut lifecycle,
-        completed("slash_compact", "preview", "## Summary\n- alpha\n- beta"),
+        completed(CompactionSource::Manual, "## Summary\n- alpha\n- beta"),
     );
 
     // -- Check
@@ -182,7 +178,7 @@ fn compaction_block_header_is_concise_without_artifact_label() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec
-    reduce_compaction(&mut state, started("auto_threshold"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
 
     // -- Check
     let lines = state
@@ -191,7 +187,7 @@ fn compaction_block_header_is_concise_without_artifact_label() -> Result<()> {
         .iter()
         .map(entry_text)
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction · auto_threshold".to_string()));
+    assert!(lines.contains(&"Compaction · auto".to_string()));
     assert!(!lines.contains(&"Compaction artifact".to_string()));
     Ok(())
 }

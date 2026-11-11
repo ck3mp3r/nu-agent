@@ -1,5 +1,6 @@
 use super::*;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// Coordinator hydration skips blank lines, shows a role outside the persisted
 /// vocabulary as a system notice, reconstructs tool rows matching the live
@@ -60,7 +61,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = tool_entry else {
         return Err("expected Tool variant".into());
     };
-    assert!(tool.call.call_line.summary.contains("namespace"));
+    assert!(tool.call.call_line().contains("namespace"));
     assert_eq!(tool_status_of(tool_entry), Some(ItemStatus::Done));
 
     // -- Setup & Fixtures: a nu tool call.
@@ -86,7 +87,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(tool.call.call_line.summary, "⏱ 120s");
+    assert_eq!(tool.call.call_line(), "⏱ 120s");
 
     // -- Setup & Fixtures: an edit tool call.
     let mut edit = RuntimeCoordinator::new(120, 30, Some(true));
@@ -114,7 +115,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(tool.call.call_line.summary, "→ a.rs (diff)");
+    assert_eq!(tool.call.call_line(), "→ a.rs (diff)");
 
     Ok(())
 }
@@ -240,14 +241,8 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
 
     // -- Exec
-    memoized.reduce_system_event(SystemEvent::InferenceChunk {
-        delta: markdown.clone(),
-        aggregated: markdown.clone(),
-    });
-    memoized.reduce_system_event(SystemEvent::InferenceChunk {
-        delta: markdown.clone(),
-        aggregated: markdown,
-    });
+    memoized.fold_narration(&inference_chunk(markdown.clone(), markdown.clone()));
+    memoized.fold_narration(&inference_chunk(markdown.clone(), markdown.clone()));
 
     // -- Check: the second message replaces the first.
     assert_eq!(
@@ -269,10 +264,7 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
     driver
         .coordinator_mut()
-        .reduce_system_event(SystemEvent::InferenceChunk {
-            delta: markdown.clone(),
-            aggregated: markdown,
-        });
+        .fold_narration(&inference_chunk(markdown.clone(), markdown.clone()));
 
     // -- Exec
     for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
@@ -296,10 +288,7 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     let text = "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix";
 
     // -- Exec
-    coordinator.reduce_system_event(SystemEvent::InferenceChunk {
-        delta: text.to_string(),
-        aggregated: text.to_string(),
-    });
+    coordinator.fold_narration(&inference_chunk(text.to_string(), text.to_string()));
 
     // -- Check
     let projected_lines: Vec<String> = coordinator
@@ -334,59 +323,72 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     Ok(())
 }
 
-/// A tool display snapshot that directly follows its owning tool call lands in
-/// that call's gate-preview slot — no companion display entry is pushed.
+/// A stray persisted display row names no call and adds nothing: each hydrated
+/// row's card comes from its own arguments, and its completion body from its own
+/// result data.
 #[test]
-fn hydration_pairs_tool_display_with_owning_call() -> Result<()> {
+fn hydration_ignores_a_stray_display_row() -> Result<()> {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let display = ToolDisplay {
-        title: None,
-        sections: vec![agnt_core::protocol::event::ToolDisplaySection {
-            label: None,
-            kind: agnt_core::transcript::ir::ContentKind::Code {
-                language: "nu".to_string(),
-            },
-            content: "ls".to_string(),
-            stats: None,
-        }],
-    };
 
     // -- Exec
     coordinator.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "→ \"ls\"")
+            UiMessageSnapshot::new("tool", String::new())
                 .with_tool_name("nu".to_string())
-                .with_tool_details(Some(r#"{"command":"ls"}"#.to_string()), None, Some(true)),
-            UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(display),
-            UiMessageSnapshot::new("tool", "→ \"a.txt\"")
+                .with_tool_details(
+                    Some(r#"{"command":"ls"}"#.to_string()),
+                    Some("out".to_string()),
+                    Some(true),
+                ),
+            UiMessageSnapshot::new("tool_display", String::new()),
+            UiMessageSnapshot::new("tool", String::new())
                 .with_tool_name("read_file".to_string())
-                .with_tool_details(Some(r#"{"path":"a.txt"}"#.to_string()), None, Some(true)),
+                .with_tool_details(
+                    Some(r#"{"path":"a.txt"}"#.to_string()),
+                    Some("a.txt".to_string()),
+                    Some(true),
+                ),
+            UiMessageSnapshot::new("tool", String::new())
+                .with_tool_name("edit".to_string())
+                .with_tool_details(
+                    Some(r#"{"path":"b.rs"}"#.to_string()),
+                    Some(r#"{"path":"b.rs","diff":"--- a\n+++ b\n"}"#.to_string()),
+                    Some(true),
+                ),
         ],
         None,
     );
 
-    // -- Check: two tool entries; the display lands in the FIRST call's
-    // gate-preview slot, and the second call keeps no display.
+    // -- Check: three tool entries; the stray display row adds none.
     let entries = coordinator.state().transcript.entries();
-    assert_eq!(entries.len(), 2, "the display pushes no companion entry");
-    let TranscriptEntry::Tool(first) = &entries[0] else {
+    assert_eq!(
+        entries.len(),
+        3,
+        "the display row pushes no companion entry"
+    );
+    let TranscriptEntry::Tool(nu) = &entries[0] else {
         return Err("expected Tool entry".into());
     };
-    let TranscriptEntry::Tool(second) = &entries[1] else {
+    let TranscriptEntry::Tool(generic) = &entries[1] else {
+        return Err("expected Tool entry".into());
+    };
+    let TranscriptEntry::Tool(edit) = &entries[2] else {
         return Err("expected Tool entry".into());
     };
     assert!(
-        first.preview.is_some(),
-        "the display must attach to its owning call's preview slot"
+        nu.preview.is_some(),
+        "the nu card derives from the call's own arguments"
     );
+    assert!(generic.preview.is_none(), "a generic tool draws no card");
     assert!(
-        first.result.is_none(),
-        "a hydrated completion carries no display of its own"
+        generic.result.is_none(),
+        "a generic tool draws no completion body"
     );
+    assert!(edit.preview.is_none(), "the replay carries no gate content");
     assert!(
-        second.preview.is_none(),
-        "the next call must not receive the display"
+        edit.result.is_some(),
+        "a snapshot riding a result yields the result body"
     );
     Ok(())
 }

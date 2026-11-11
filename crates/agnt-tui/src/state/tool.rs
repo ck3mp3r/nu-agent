@@ -2,12 +2,12 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use agnt_core::protocol::event::ToolDisplay;
-use agnt_core::protocol::events::{ToolCall, ToolCallId, ToolOutcome};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::{ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::Display;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::{ToolEntry, ToolKind, TranscriptEntry};
+use agnt_render::transcript::ir::Display;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::events::{ToolCall, ToolCallId, ToolOutcome};
+use agnt_runtime::session::tool_status::ToolStatus;
 
 use super::transcript_store::TranscriptStore;
 use super::{ToolCallLine, ToolCallStatus};
@@ -15,15 +15,20 @@ use super::{ToolCallLine, ToolCallStatus};
 /// Tool-domain state extracted from `AppState`: the tool-call rows tracked by
 /// key, the active (in-progress) call ids per key, and the next call id.
 ///
-/// Completion-display de-duplication against a pre-authorize preview is NOT
-/// handled here: `HookChain::on_outcome`/`suppress_previewed_display`
-/// (agnt-core) already omit `display` from the `Completed` event when a
-/// preview was shown, so this layer never sees a duplicate to suppress.
+/// Completion de-duplication is structural: the preview and the completion are
+/// written to the same transcript entry by index, so a finished call cannot gain
+/// a second block. The `ToolCompleted` event carries no display — the drawer
+/// derives the completion body from the call and the handler's own payload.
 #[derive(Debug, Clone)]
 pub struct ToolState {
     pub(crate) calls: Vec<ToolCallLine>,
     pub(crate) active_ids_by_key: HashMap<String, VecDeque<u64>>,
     next_call_id: u64,
+    /// Whether a replay batch is folding. A switch publishes the switched-to
+    /// session's whole log; the calls it carries have no gate record, so each
+    /// derives its card from the call itself. The first live turn after the
+    /// batch ends that, and the gate returns to being the only live card source.
+    replay_open: bool,
 }
 
 impl Default for ToolState {
@@ -32,6 +37,7 @@ impl Default for ToolState {
             calls: Vec::new(),
             active_ids_by_key: HashMap::new(),
             next_call_id: 1,
+            replay_open: false,
         }
     }
 }
@@ -54,15 +60,51 @@ impl ToolState {
         call: &ToolCall,
         outcome: &ToolOutcome,
     ) -> bool {
-        let block_index = self.finish_tool_call(store, &call.id, Some(outcome.status));
+        let block_index = self.finish_tool_call(store, call.id(), Some(outcome.status));
 
-        if let Some(display) = &outcome.display
+        // The drawer derives the completion body from the call and its result
+        // data; nothing about the display travels on the event.
+        if let Some(display) = call.result_body(Some(&outcome.text))
             && let Some(block_index) = block_index
         {
-            store.set_tool_result_at(block_index, preview_to_display(display));
+            store.set_tool_result_at(block_index, display);
         }
 
         true
+    }
+
+    /// Open a replay batch: the switch marker has folded, and every call the
+    /// replayed log carries derives its card from the call itself, because a
+    /// replayed call is accompanied by no gate record.
+    pub(crate) fn open_replay(&mut self) {
+        self.replay_open = true;
+    }
+
+    /// Close the replay batch: the first live turn after it derives its cards
+    /// from gate records alone.
+    pub(crate) fn close_replay(&mut self) {
+        self.replay_open = false;
+    }
+
+    /// Derive a replayed call's pre-run card while a replay batch is folding.
+    ///
+    /// No producer content is supplied: only the gate computes a diff, and a
+    /// replayed call has no gate record. A call outside a replay batch derives
+    /// no card here — the gate is the live card's only source.
+    ///
+    /// Returns whether a card was set.
+    pub(crate) fn derive_replayed_preview(
+        &mut self,
+        store: &mut TranscriptStore,
+        call: &ToolCall,
+    ) -> bool {
+        if !self.replay_open {
+            return false;
+        }
+        let Some(display) = call.preview_body(None) else {
+            return false;
+        };
+        self.set_tool_preview(store, call.id(), &display)
     }
 
     pub(crate) fn start_tool_call(&mut self, store: &mut TranscriptStore, call: &ToolCall) {
@@ -86,7 +128,7 @@ impl ToolState {
             &mut self.active_ids_by_key,
             &mut self.next_call_id,
         )
-        .start_tool_call(&call.id, block_index);
+        .start_tool_call(call.id(), block_index);
     }
 
     /// Attach a pre-execution preview (edit diff, nu code) to the pending tool
@@ -106,7 +148,7 @@ impl ToolState {
             .calls
             .iter()
             .rev()
-            .find(|tool| &tool.key == id)
+            .find(|tool| tool.key() == id)
             .and_then(|tool| tool.block_index);
         let Some(block_index) = block_index else {
             return false;
@@ -129,8 +171,10 @@ impl ToolState {
             .calls
             .iter()
             .rev()
-            .find(|call| call.status == ToolCallStatus::InProgress && call.key.as_str() == tool_key)
-            .map(|call| call.key.clone())
+            .find(|call| {
+                call.status == ToolCallStatus::InProgress && call.key().as_str() == tool_key
+            })
+            .map(|call| call.key().clone())
         else {
             return false;
         };
@@ -163,23 +207,5 @@ impl ToolState {
             &mut self.next_call_id,
         )
         .finish_tool_call(id, success, store.entries_mut(), item_status)
-    }
-}
-
-/// Convert a protocol event display into the IR display type. The shapes are
-/// identical; the IR type keeps the renderer independent of the event layer.
-pub(crate) fn preview_to_display(display: &ToolDisplay) -> Display {
-    Display {
-        title: display.title.clone(),
-        sections: display
-            .sections
-            .iter()
-            .map(|section| agnt_core::transcript::ir::DisplaySection {
-                label: section.label.clone(),
-                kind: section.kind.clone(),
-                content: section.content.clone(),
-                stats: section.stats.clone(),
-            })
-            .collect(),
     }
 }

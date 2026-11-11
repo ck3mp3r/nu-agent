@@ -5,11 +5,10 @@
 //! the dotted rail at list-local 0, the cog marker at list-local 2, entry text
 //! at the cog column, and the list area's last two columns clear.
 
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::tool_args::CallLine;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
+use crate::test_support::tool_started;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -41,16 +40,13 @@ async fn test_alignment_transcript_gutters_pin_rail_cog_and_right_margin() -> Re
 
     // -- Exec
     driver
-        .advance_with_frame(&[DriveEvent::SystemEvent(Box::new(
-            SystemEvent::ToolStarted {
-                call: agnt_core::protocol::events::ToolCall::new(
-                    agnt_core::transcript::ir::ToolName("tool".to_string()),
-                    "mcp",
-                    "{}",
-                    CallLine::from_json_summary("{}"),
-                ),
-            },
-        ))])
+        .advance_with_frame(&[DriveEvent::Record(Box::new(tool_started(
+            agnt_runtime::protocol::events::ToolCall::new(
+                agnt_render::transcript::ir::ToolName("tool".to_string()),
+                agnt_runtime::tools::handler::ToolSource::Mcp,
+                "{}",
+            ),
+        )))])
         .await?;
 
     // -- Check: list-local 0 is the list area's first column.

@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// The render loop hands a submitted prompt to the orchestrator channel exactly
 /// once, forwards Quit on Ctrl+C, and a global abort cancels active and pending
@@ -24,7 +24,7 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
     let submitted = events
         .iter()
         .filter(
-            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "hi"),
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "hi"),
         )
         .count();
     assert_eq!(submitted, 1);
@@ -83,11 +83,9 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
         None
     );
     let submitted = aborting.take_orchestrator_events();
-    assert!(
-        submitted.iter().any(
-            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "a")
-        )
-    );
+    assert!(submitted.iter().any(
+        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "a")
+    ));
     let statuses = aborting
         .state()
         .prompt_items()
@@ -107,10 +105,8 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
 
     // -- Check: the restored text is submitted.
     let submitted = aborting.take_orchestrator_events();
-    assert!(
-        submitted.iter().any(
-            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "bc")
-        )
-    );
+    assert!(submitted.iter().any(
+        |event| matches!(event, OrchestratorEvent::PromptSubmitted { text, .. } if text == "bc")
+    ));
     Ok(())
 }

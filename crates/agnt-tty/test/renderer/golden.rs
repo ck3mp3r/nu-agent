@@ -7,8 +7,8 @@
 //! assertions, because `agnt-tui` does not depend on `agnt-tty` and `agnt-tty`
 //! must not depend on `agnt-tui`.
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::{MessageRole, NoticeKind};
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::{MessageRole, NoticeKind};
 use agnt_render::{Gallery, PlainBackend, RenderBackend, RowRect, Theme};
 
 use crate::renderer::backend::TtyBackend;
@@ -50,7 +50,7 @@ fn test_golden_decorated_rows_per_family() -> Result<()> {
         ),
         (
             "tool-result",
-            vec!["[tool] ✓ edit → src/render.rs", "result body"],
+            vec!["[tool] ✓ edit → src/render.rs (diff)", "result body"],
         ),
         ("task", vec!["[compaction] ✓ Compaction · auto"]),
         (

@@ -246,19 +246,7 @@ fn modal_backdrop_and_empty_state() -> Result<()> {
 
     // -- Setup & Fixtures: a permission prompt.
     let mut permission = AppState::default();
-    permission
-        .permission
-        .open_prompt(crate::state::PermissionPrompt {
-            request_id: "ask-0000000000000001".to_string(),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            tool: "nu".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            scope: "nested".to_string(),
-            pattern: "*".to_string(),
-            target_field: Some("command".to_string()),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-        });
+    permission.permission.open_prompt("ask-0000000000000001");
 
     // -- Exec & Check: no global backdrop.
     assert!(!modal_open_state_applies_dimmed_backdrop_for_test(

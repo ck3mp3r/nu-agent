@@ -18,10 +18,7 @@ fn models_palette_and_slash_share_action_handler() -> Result<()> {
         .ok_or("should have a selection")?;
     assert_eq!(selected.id, "Models");
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
-    assert_eq!(
-        state.take_next_launch_request(),
-        Some(SharedUiAction::Models)
-    );
+    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
     assert_eq!(state.take_next_prompt_for_execution(), None);
     assert_ne!(
         state.picker.render_kind(),
@@ -39,8 +36,8 @@ fn models_palette_and_slash_share_action_handler() -> Result<()> {
         None,
     );
     assert_eq!(
-        slash_state.take_next_launch_request(),
-        Some(SharedUiAction::Models)
+        slash_state.picker.render_kind(),
+        Some(PickerRenderKind::Model)
     );
     assert_eq!(slash_state.take_next_prompt_for_execution(), None);
 
@@ -63,8 +60,8 @@ fn models_palette_and_slash_share_action_handler() -> Result<()> {
         None,
     );
     assert_eq!(
-        palette_state.take_next_launch_request(),
-        Some(SharedUiAction::Models)
+        palette_state.picker.render_kind(),
+        Some(PickerRenderKind::Model)
     );
     assert_eq!(palette_state.take_next_prompt_for_execution(), None);
 
@@ -77,15 +74,13 @@ fn models_palette_and_slash_share_action_handler() -> Result<()> {
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
-    assert_ne!(state.picker.render_kind(), Some(PickerRenderKind::Model));
+    // The palette Models action opens the shared model picker, never the
+    // command palette it was chosen from.
     assert_ne!(
         state.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
     );
-    assert_eq!(
-        state.take_next_launch_request(),
-        Some(SharedUiAction::Models)
-    );
+    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
     assert_eq!(state.take_next_prompt_for_execution(), None);
     Ok(())
 }
@@ -107,10 +102,7 @@ fn models_launcher_opens_picker_while_worker_active() -> Result<()> {
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
-    assert_eq!(
-        state.take_next_launch_request(),
-        Some(SharedUiAction::Models)
-    );
+    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
     assert_eq!(state.take_next_prompt_for_execution(), None);
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(state.is_active_cycle());
@@ -127,10 +119,7 @@ fn models_launcher_opens_picker_while_worker_active() -> Result<()> {
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
-    assert_eq!(
-        state.take_next_launch_request(),
-        Some(SharedUiAction::Models)
-    );
+    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
     assert_eq!(state.take_next_prompt_for_execution(), None);
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(state.is_active_cycle());

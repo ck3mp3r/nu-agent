@@ -24,6 +24,10 @@ pub use tools::*;
 pub use types::*;
 
 #[cfg(test)]
+#[path = "../test/support.rs"]
+mod test_support;
+
+#[cfg(test)]
 #[path = "../test/card.rs"]
 mod card_test;
 #[cfg(test)]

@@ -398,7 +398,7 @@ fn init_logging(args: &AgentArgs) {
     // log target resolves here once. The grammar cache is installed after
     // config load instead: its ladder has a `[paths]` level the environment
     // cannot see.
-    let paths = agnt_core::config::Paths::resolve_for_process(None).ok();
+    let paths = agnt_runtime::config::Paths::resolve_for_process(None).ok();
 
     // Log to a file, never to stderr. The TUI renders on stderr, so stderr log
     // output corrupts the display and reappears on the terminal once the TUI
@@ -414,16 +414,16 @@ fn init_logging(args: &AgentArgs) {
 /// `[paths].state_home` value retargets the sink once config.toml loads.
 /// Falls back to a sink when the log directory or file cannot be opened, so
 /// that logging never writes to stderr.
-fn log_target(paths: Option<&agnt_core::config::Paths>) -> env_logger::Target {
+fn log_target(paths: Option<&agnt_runtime::config::Paths>) -> env_logger::Target {
     let sink = || env_logger::Target::Pipe(Box::new(std::io::sink()));
 
     let Some(paths) = paths else {
         return sink();
     };
-    let Ok(file_sink) = agnt_core::logging::FileLogSink::open(paths.log_path.clone()) else {
+    let Ok(file_sink) = agnt_runtime::logging::FileLogSink::open(paths.log_path.clone()) else {
         return sink();
     };
-    agnt_core::logging::install_process_sink(&file_sink);
+    agnt_runtime::logging::install_process_sink(&file_sink);
 
     env_logger::Target::Pipe(Box::new(file_sink))
 }

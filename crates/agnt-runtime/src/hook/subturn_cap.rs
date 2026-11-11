@@ -1,0 +1,66 @@
+//! Per-sub-turn tool call cap concern.
+//!
+//! Limits the number of tool calls per LLM sub-turn (one LLM response cycle).
+//! The counter is reset by [`SubTurnCap::reset`] when a new LLM request fires.
+
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use rig::agent::DispatchAction;
+
+/// Enforces a per-sub-turn tool call cap.
+///
+/// When `max == 0`, the cap is disabled and all calls pass through.
+#[derive(Clone)]
+pub struct SubTurnCap {
+    pub max: usize,
+    pub count: Arc<Mutex<usize>>,
+}
+
+impl SubTurnCap {
+    /// Create a new cap with the given maximum (0 = unlimited).
+    pub fn new(max: usize) -> Self {
+        Self {
+            max,
+            count: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    /// Reset the counter — call this at the start of each new sub-turn.
+    pub fn reset(&self) {
+        *self.lock_count() = 0;
+    }
+
+    /// The counter, recovered if a checker panicked mid-increment.
+    fn lock_count(&self) -> MutexGuard<'_, usize> {
+        self.count.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Check and increment the counter.
+    ///
+    /// Returns `Some(DispatchAction::skip(...))` if the cap is exceeded, `None` if the call should proceed.
+    pub fn check_and_increment(&self, tool_name: &str) -> Option<DispatchAction> {
+        if self.max == 0 {
+            return None;
+        }
+        let mut count = self.lock_count();
+        if *count >= self.max {
+            log::warn!(
+                "Tool call cap: tool={tool_name} count={} max={}",
+                *count,
+                self.max
+            );
+            return Some(DispatchAction::skip(format!(
+                "Sub-turn tool call limit reached ({max}). No further tools will be called in this \
+                 response. Please summarise what you have accomplished so far and continue in the \
+                 next turn if needed.",
+                max = self.max
+            )));
+        }
+        *count += 1;
+        None
+    }
+}
+
+#[cfg(test)]
+#[path = "../../test/hook/subturn_cap.rs"]
+mod subturn_cap_test;

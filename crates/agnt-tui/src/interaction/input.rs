@@ -1,4 +1,45 @@
-use agnt_core::protocol::events::{Key, SystemEvent};
+//! The terminal boundary: raw terminal events in, surface input out.
+//!
+//! Input is surface state, not bus traffic: a key press, a wheel notch, and a
+//! resize are interpreted here and never leave this crate.
+
+/// A key the reducer interprets. The surface owns this enum so no terminal
+/// library type crosses the crate boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    Char(char),
+    Enter,
+    AltEnter,
+    ShiftEnter,
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    CtrlU,
+    CtrlD,
+    CtrlP,
+    CtrlN,
+    CtrlJ,
+    CtrlK,
+    Tab,
+    BackTab,
+    Esc,
+    CtrlC,
+}
+
+/// One input the surface interprets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiInput {
+    KeyPressed { key: Key },
+    WheelScrolled { up: bool, column: u16, row: u16 },
+    Resized { width: u16, height: u16 },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalKey {
@@ -49,18 +90,18 @@ pub enum TerminalEvent {
     Mouse(TerminalMouse),
 }
 
-/// Translate one terminal event into the system vocabulary. The terminal layer
-/// reports keys, wheel notches, and resizes; what a key means (the keymap, the
-/// input lock, the open card) belongs to the reducer.
-pub fn map_terminal_event(event: &TerminalEvent) -> Option<SystemEvent> {
+/// Translate one terminal event into the input the surface interprets. The
+/// terminal layer reports keys, wheel notches, and resizes; what a key means
+/// (the keymap, the input lock, the open card) belongs to the reducer.
+pub fn map_terminal_event(event: &TerminalEvent) -> Option<UiInput> {
     match event {
-        TerminalEvent::Resize(TerminalResize { columns, rows }) => Some(SystemEvent::Resized {
+        TerminalEvent::Resize(TerminalResize { columns, rows }) => Some(UiInput::Resized {
             width: *columns,
             height: *rows,
         }),
-        TerminalEvent::Key(key) => Some(SystemEvent::KeyPressed { key: key.to_core() }),
+        TerminalEvent::Key(key) => Some(UiInput::KeyPressed { key: key.to_core() }),
         TerminalEvent::Paste(_) => None,
-        TerminalEvent::Mouse(mouse) => Some(SystemEvent::WheelScrolled {
+        TerminalEvent::Mouse(mouse) => Some(UiInput::WheelScrolled {
             up: mouse.up,
             column: mouse.column,
             row: mouse.row,

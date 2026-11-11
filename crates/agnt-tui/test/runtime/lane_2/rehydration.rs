@@ -119,7 +119,7 @@ fn lane_2_rehydrate_replaced_by_live_turn_usage() -> Result<()> {
     assert!(hydrated_text.ends_with("7 (7%)"));
 
     // -- Exec: a live turn.
-    coordinator.reduce_system_event(llm_completed(20, 0, 8, 32, Some(40), None, false));
+    coordinator.fold_record(&llm_completed(20, 8, Some(40), None, false));
 
     // -- Check: the live value replaces the rehydrated one.
     let live = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);

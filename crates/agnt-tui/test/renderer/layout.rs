@@ -2,9 +2,9 @@
 
 use super::support::*;
 use crate::state::code_block::content_wrap_width;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::renderer::ItemStatus;
 use agnt_render::catalog::LaneKind;
+use agnt_render::transcript::ir::MessageRole;
+use agnt_render::transcript::renderer::ItemStatus;
 
 // region:    --- Prose
 
@@ -105,17 +105,11 @@ fn test_renderer_layout_coalesced_user_turn_paints_one_row_per_prompt() -> Resul
 // region:    --- Tool call line
 
 /// WHEN a tool call has no display body, THE widget SHALL paint the call line
-/// alone: the marker, the summary, and no body row.
+/// alone: the marker, the derived call line, and no body row.
 #[test]
 fn test_renderer_layout_tool_without_display_paints_call_line_only() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = tool_entry(
-        "read",
-        "→ {\"path\":\"a.rs\"}",
-        None,
-        None,
-        ItemStatus::Done,
-    );
+    let entry = tool_entry("read", r#"{"path":"a.rs"}"#, None, None, ItemStatus::Done);
 
     // -- Exec
     let (backend, rows) = render_at(&entry, 0)?;
@@ -123,8 +117,8 @@ fn test_renderer_layout_tool_without_display_paints_call_line_only() -> Result<(
     // -- Check
     assert_eq!(rows, 1, "a bare call is one row");
     assert!(
-        row_trimmed(&backend, 0).contains("→ {\"path\":\"a.rs\"}"),
-        "the call summary must render; got {:?}",
+        row_trimmed(&backend, 0).contains("→ a.rs"),
+        "the call line must render; got {:?}",
         row_trimmed(&backend, 0)
     );
     Ok(())
@@ -136,7 +130,7 @@ fn test_renderer_layout_tool_without_display_paints_call_line_only() -> Result<(
 fn test_renderer_layout_tool_call_line_paints_name_and_muted_summary() -> Result<()> {
     // -- Setup & Fixtures
     let theme = test_theme();
-    let entry = tool_entry("edit", "→ foo.rs", None, None, ItemStatus::Done);
+    let entry = tool_entry("edit", r#"{"path":"foo.rs"}"#, None, None, ItemStatus::Done);
 
     // -- Exec
     let backend = render_at(&entry, 0)?.0;
@@ -145,7 +139,7 @@ fn test_renderer_layout_tool_call_line_paints_name_and_muted_summary() -> Result
     // summary.
     let row = row_text(&backend, 0);
     assert!(
-        row.starts_with("  \u{2699} \u{2713} edit → foo.rs"),
+        row.starts_with("  \u{2699} \u{2713} edit → foo.rs (diff)"),
         "got {row:?}"
     );
     assert_eq!(
@@ -172,7 +166,7 @@ fn test_renderer_layout_tool_call_line_paints_name_and_muted_summary() -> Result
 fn test_renderer_layout_nameless_tool_paints_summary_only() -> Result<()> {
     // -- Setup & Fixtures
     let theme = test_theme();
-    let entry = tool_entry("", "→ foo.rs", None, None, ItemStatus::Done);
+    let entry = tool_entry("", r#"{"path":"foo.rs"}"#, None, None, ItemStatus::Done);
 
     // -- Exec
     let backend = render_at(&entry, 0)?.0;
@@ -180,8 +174,8 @@ fn test_renderer_layout_nameless_tool_paints_summary_only() -> Result<()> {
     // -- Check
     assert_eq!(
         row_trimmed(&backend, 0),
-        "  \u{2699} \u{2713} → foo.rs",
-        "the summary follows the indicator directly"
+        "  \u{2699} \u{2713} → {\"path\":\"foo.rs\"}",
+        "the call line follows the indicator directly"
     );
     assert_eq!(
         cell_fg(&backend, 6, 0),
@@ -196,7 +190,13 @@ fn test_renderer_layout_nameless_tool_paints_summary_only() -> Result<()> {
 #[test]
 fn test_renderer_layout_tool_in_progress_paints_content() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = tool_entry("read", "→ x", None, None, ItemStatus::InProgress);
+    let entry = tool_entry(
+        "read",
+        r#"{"path":"x"}"#,
+        None,
+        None,
+        ItemStatus::InProgress,
+    );
 
     // -- Exec
     let backend = render(&entry)?;

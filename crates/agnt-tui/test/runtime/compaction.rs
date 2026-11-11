@@ -145,16 +145,15 @@ fn hydration_compaction_empty_summary_shows_block_only() {
 fn hydration_compaction_matches_live_rendering() {
     let summary_body = "## Summary\n- alpha\n- beta";
 
-    // Live path: CompactionStarted + CompactionCompleted via reducer
+    // Live path: the sweep's start and completion records.
     let mut live = RuntimeCoordinator::new(120, 30, Some(true));
-    live.reduce_system_event(SystemEvent::CompactionStarted {
-        source: "history".to_string(),
-    });
-    live.reduce_system_event(SystemEvent::CompactionCompleted {
-        source: "history".to_string(),
-        summary_preview: "preview".to_string(),
-        summary_body: summary_body.to_string(),
-    });
+    live.fold_record(&SessionRecord::Compaction(CompactionRecord::Started {
+        source: CompactionSource::Auto,
+    }));
+    live.fold_record(&SessionRecord::Compaction(CompactionRecord::Completed {
+        source: CompactionSource::Auto,
+        summary: summary_body.to_string(),
+    }));
 
     // Hydration path: UiMessageSnapshot with role "compaction"
     let mut hydrated = RuntimeCoordinator::new(120, 30, Some(true));
@@ -178,10 +177,24 @@ fn hydration_compaction_matches_live_rendering() {
         .map(entry_text)
         .collect();
 
-    assert_eq!(
-        live_texts, hydrated_texts,
-        "live and hydrated transcript texts should match"
+    // The drawer labels the two rows by their source: a live sweep reads its
+    // own source, a rehydrated one reads `history`. The shape and the body
+    // match.
+    assert_eq!(live_texts.len(), hydrated_texts.len());
+    assert!(
+        live_texts.contains(&"Compaction · auto".to_string()),
+        "live row reads its source: {live_texts:?}"
     );
+    assert!(
+        hydrated_texts.contains(&"Compaction · history".to_string()),
+        "rehydrated row reads history: {hydrated_texts:?}"
+    );
+    for texts in [&live_texts, &hydrated_texts] {
+        assert!(
+            texts.iter().any(|text| text.contains("- alpha")),
+            "the summary body renders in both: {texts:?}"
+        );
+    }
 
     let live_roles: Vec<TranscriptRole> = live
         .state()

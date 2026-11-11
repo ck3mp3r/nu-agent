@@ -1,5 +1,12 @@
 use super::support::*;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::session::tool_status::ToolStatus;
+
+use crate::interaction::reducer::apply_permission_request_display;
+use crate::runtime::RuntimeCoordinator;
+use crate::state::AppState;
+use crate::test_support::{fold_record, tool_completed, tool_started};
 
 // ---------------------------------------------------------------------------
 // Call line
@@ -128,13 +135,108 @@ fn test_widgets_tool_diff_preview_paints_line_tints() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// The completed edit keeps the gate preview's band
+// ---------------------------------------------------------------------------
+
+/// WHEN one live edit is asked at the gate and then accepted, THE completed
+/// entry SHALL paint its diff rows with the backgrounds the gate preview
+/// painted: the file-header and hunk rows keep the code surface, and the
+/// changed rows keep their tints. The band is the body's content, not the
+/// entry's slot.
+#[test]
+fn test_widgets_tool_completed_edit_keeps_the_gate_preview_backgrounds() -> Result<()> {
+    // -- Setup & Fixtures: one live call, asked at the gate with the diff the
+    // producer computed.
+    let mut state = AppState::default();
+    fold_record(&mut state, tool_started(edit_call()));
+    apply_permission_request_display(&mut state, &edit_gate(EDIT_DIFF));
+
+    // -- Exec: capture the gate preview's rows, then fold the completion with
+    // the edit handler's own payload and capture the completed rows.
+    let preview_entry = only_entry(&state)?.clone();
+    let (preview, preview_rows) = render_at(&preview_entry, 0)?;
+    fold_record(
+        &mut state,
+        tool_completed(edit_call(), edit_outcome(EDIT_DIFF)),
+    );
+    let (completed, completed_rows) = render_at(only_entry(&state)?, 0)?;
+
+    // -- Check: the headers and the hunk carry the code surface in both
+    // captures; the changed rows carry their tints in both.
+    let preview_backgrounds = edit_capture_backgrounds(&preview, preview_rows)?;
+    let completed_backgrounds = edit_capture_backgrounds(&completed, completed_rows)?;
+    assert_eq!(
+        completed_backgrounds, preview_backgrounds,
+        "the completed edit paints the gate preview's backgrounds row for row"
+    );
+    let expected: Vec<_> = edit_row_backgrounds()
+        .iter()
+        .map(|(_, background)| *background)
+        .collect();
+    assert_eq!(preview_backgrounds, expected, "the preview band");
+    assert_eq!(completed_backgrounds, expected, "the completed band");
+
+    // -- Check: the completion's own stats row rides the same band.
+    assert_eq!(
+        row_background(&completed, completed_rows, "files=1")?,
+        Some(terminal(test_theme().code_surface)),
+        "the stats row sits on the code surface"
+    );
+    Ok(())
+}
+
+/// WHEN a resumed session's edit row is rehydrated from the persisted pair, THE
+/// replayed row SHALL paint the backgrounds the live completion painted: the
+/// band derives from the body's content, so the replay lane inherits it.
+#[test]
+fn test_widgets_tool_rehydrated_edit_paints_the_live_backgrounds() -> Result<()> {
+    // -- Setup & Fixtures: the live lane, asked at the gate and completed.
+    let mut state = AppState::default();
+    fold_record(&mut state, tool_started(edit_call()));
+    apply_permission_request_display(&mut state, &edit_gate(EDIT_DIFF));
+    fold_record(
+        &mut state,
+        tool_completed(edit_call(), edit_outcome(EDIT_DIFF)),
+    );
+    let (live, live_rows) = render_at(only_entry(&state)?, 0)?;
+
+    // -- Exec: the persisted pair — the call's arguments and the handler's own
+    // result text — rehydrated through the replay fold.
+    let snapshot = UiMessageSnapshot::new("tool", "")
+        .with_tool_name("edit".to_string())
+        .with_tool_details(
+            Some(edit_call().arguments.clone()),
+            Some(edit_result_text(EDIT_DIFF)),
+            Some(true),
+        )
+        .with_tool_status(ToolStatus::Success);
+    let mut coordinator = RuntimeCoordinator::new(120, HEIGHT, Some(true));
+    coordinator.hydrate_transcript_from_messages(vec![snapshot], None);
+    let (replayed, replayed_rows) = render_at(only_entry(coordinator.state())?, 0)?;
+
+    // -- Check: the replayed row paints the live capture's backgrounds row for
+    // row, and both carry the expectation table's band.
+    let live_backgrounds = edit_capture_backgrounds(&live, live_rows)?;
+    let replayed_backgrounds = edit_capture_backgrounds(&replayed, replayed_rows)?;
+    assert_eq!(
+        replayed_backgrounds, live_backgrounds,
+        "the rehydrated edit paints the live completion's backgrounds row for row"
+    );
+    let expected: Vec<_> = edit_row_backgrounds()
+        .iter()
+        .map(|(_, background)| *background)
+        .collect();
+    assert_eq!(replayed_backgrounds, expected, "the rehydrated band");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Display selection and plain bodies
 // ---------------------------------------------------------------------------
 
 /// WHEN the entry carries both a gate preview and a completion result, THE
 /// widget SHALL render the result alone — the result takes over the entry's
-/// unified display slot — and the completion SHALL render bare: the pre-wave
-/// pane gave the code surface to the gate preview only.
+/// unified display slot — on the code surface its own content names.
 #[test]
 fn test_widgets_tool_result_takes_over_the_unified_display_slot() -> Result<()> {
     // -- Setup & Fixtures
@@ -143,6 +245,7 @@ fn test_widgets_tool_result_takes_over_the_unified_display_slot() -> Result<()> 
         Some(code_display("nu", "result body")),
         ItemStatus::Done,
     );
+    let theme = test_theme();
 
     // -- Exec
     let (backend, rows) = render_at(&entry, 0)?;
@@ -155,21 +258,27 @@ fn test_widgets_tool_result_takes_over_the_unified_display_slot() -> Result<()> 
         "the result takes over: the preview must not render beside it"
     );
 
-    // -- Check: the completion is bare — no surface, no margin rows.
-    assert_eq!(rows, 2, "call + one body row: no band around a completion");
-    for y in 0..u16::try_from(rows)? {
-        assert!(
-            is_untinted(cell_bg(&backend, 0, y)),
-            "row {y} must stay untinted on a completion display"
+    // -- Check: the completion body is a code body, so it keeps the band.
+    assert_eq!(rows, 4, "call + two margins + one body row");
+    assert!(
+        is_untinted(cell_bg(&backend, 0, 0)),
+        "the call line stays untinted"
+    );
+    for y in 1..u16::try_from(rows)? {
+        assert_eq!(
+            cell_bg(&backend, 0, y),
+            Some(terminal(theme.code_surface)),
+            "row {y} paints the code surface"
         );
     }
     Ok(())
 }
 
 /// WHEN a completion display carries a diff, THE diff rows SHALL keep their
-/// line tints on the pane — bare rows, no surface band and no margins.
+/// tints over the code surface: the band is the body's content, so the
+/// completion paints exactly what the gate preview painted.
 #[test]
-fn test_widgets_tool_completion_diff_paints_tints_without_a_band() -> Result<()> {
+fn test_widgets_tool_completion_diff_keeps_the_band() -> Result<()> {
     // -- Setup & Fixtures
     let entry = tool_entry(
         None,
@@ -181,22 +290,33 @@ fn test_widgets_tool_completion_diff_paints_tints_without_a_band() -> Result<()>
     // -- Exec
     let (backend, rows) = render_at(&entry, 0)?;
 
-    // -- Check: call, hunk, removed, added — no margins.
-    assert_eq!(rows, 4, "call + three diff rows, no band");
+    // -- Check: call, top margin, hunk, removed, added, bottom margin.
+    assert_eq!(rows, 6, "call + two margins + three diff rows");
     assert!(is_untinted(cell_bg(&backend, 0, 0)));
-    assert!(
-        is_untinted(cell_bg(&backend, 0, 1)),
-        "the hunk row sits on the pane"
+    assert_eq!(
+        cell_bg(&backend, 0, 1),
+        Some(terminal(theme.code_surface)),
+        "the top margin paints the code surface"
     );
     assert_eq!(
         cell_bg(&backend, 0, 2),
-        Some(terminal(theme.diff_remove_bg)),
-        "the removed row keeps its tint on the pane"
+        Some(terminal(theme.code_surface)),
+        "the hunk row sits on the code surface"
     );
     assert_eq!(
         cell_bg(&backend, 0, 3),
+        Some(terminal(theme.diff_remove_bg)),
+        "the removed row keeps its tint"
+    );
+    assert_eq!(
+        cell_bg(&backend, 0, 4),
         Some(terminal(theme.diff_add_bg)),
-        "the added row keeps its tint on the pane"
+        "the added row keeps its tint"
+    );
+    assert_eq!(
+        cell_bg(&backend, 0, 5),
+        Some(terminal(theme.code_surface)),
+        "the bottom margin closes the band"
     );
     Ok(())
 }

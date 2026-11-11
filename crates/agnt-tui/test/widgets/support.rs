@@ -1,17 +1,17 @@
 //! Shared fixtures for the widget suite.
 
-use agnt_core::protocol::event::ToolDisplayStats;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::entry::{
+use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
-    ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
+use agnt_render::transcript::ir::{
+    ContentKind, Display, DisplaySection, DisplayStats, MessageRole, NoticeKind, ToolName,
 };
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Color, RenderBackend, RowRect, Theme};
+use agnt_runtime::protocol::events::{PermissionRecord, RequestId, ToolCall, ToolOutcome};
+use agnt_runtime::session::tool_status::ToolStatus;
 
+use crate::state::AppState;
 use crate::widgets::RatatuiBackend;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -20,6 +20,8 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) const WIDTH: u16 = 40;
 /// Frame height every fixture renders at.
 pub(super) const HEIGHT: u16 = 16;
+/// The arguments of the edit call every edit fixture makes.
+const EDIT_ARGUMENTS: &str = r#"{"path":"a.rs"}"#;
 
 /// A theme with distinct colors, so every assertion names one surface.
 pub(super) fn test_theme() -> Theme {
@@ -93,6 +95,21 @@ pub(super) fn terminal(color: Color) -> ratatui::style::Color {
     ratatui::style::Color::Rgb(color.r, color.g, color.b)
 }
 
+/// The background the row containing `needle` paints at column 0. The capture
+/// must carry that row, so a renamed sample fails loudly.
+pub(super) fn row_background(
+    backend: &RatatuiBackend,
+    count: usize,
+    needle: &str,
+) -> Result<Option<ratatui::style::Color>> {
+    let last = u16::try_from(count)?;
+    let found = (0..last).find(|y| row_text(backend, *y).contains(needle));
+    let Some(y) = found else {
+        return Err(format!("the capture must render {needle:?}").into());
+    };
+    Ok(cell_bg(backend, 0, y))
+}
+
 // endregion: --- Cell reads
 
 // region:    --- Fixtures
@@ -146,11 +163,8 @@ pub(super) fn tool_entry(
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
-            "",
-            "{}",
-            CallLine {
-                summary: "→ a.rs".to_string(),
-            },
+            agnt_runtime::tools::handler::ToolSource::Unknown,
+            r#"{"path":"a.rs"}"#,
         ),
         preview,
         result,
@@ -206,14 +220,100 @@ pub(super) fn stat_display() -> Display {
             label: None,
             kind: ContentKind::Plain,
             content: "body".to_string(),
-            stats: Some(ToolDisplayStats {
+            stats: Some(DisplayStats {
                 files_changed: Some(1),
                 insertions: Some(2),
                 deletions: Some(0),
-                ..ToolDisplayStats::default()
+                ..DisplayStats::default()
             }),
         }],
     }
+}
+
+/// The tool call an `edit` makes: the one path it will write.
+pub(super) fn edit_call() -> ToolCall {
+    ToolCall::new(
+        ToolName("edit".to_string()),
+        agnt_runtime::tools::handler::ToolSource::Builtin,
+        EDIT_ARGUMENTS,
+    )
+}
+
+/// A gate request for one `edit`, carrying the diff the producer computed.
+pub(super) fn edit_gate(diff: &str) -> PermissionRecord {
+    PermissionRecord::Requested {
+        request_id: RequestId::mint(),
+        call_id: edit_call().id().clone(),
+        tool: "edit".to_string(),
+        source: "builtin".to_string(),
+        mode: Some("apply".to_string()),
+        rule_identity: "tool:edit".to_string(),
+        scope: "tool".to_string(),
+        target_field: None,
+        pattern: "edit".to_string(),
+        summary: "→ a.rs".to_string(),
+        shows_preview: true,
+        preview: Some(diff.to_string()),
+    }
+}
+
+/// The diff every edit capture renders.
+pub(super) const EDIT_DIFF: &str = "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
+
+/// The backgrounds an edit's diff rows paint inside the band: the file headers
+/// and the hunk sit on the code surface, the changed rows on their tints.
+pub(super) fn edit_row_backgrounds() -> [(&'static str, Option<ratatui::style::Color>); 5] {
+    let theme = test_theme();
+    [
+        ("--- a/a.rs", Some(terminal(theme.code_surface))),
+        ("+++ b/a.rs", Some(terminal(theme.code_surface))),
+        ("@@ -1 +1 @@", Some(terminal(theme.code_surface))),
+        ("│old", Some(terminal(theme.diff_remove_bg))),
+        ("│new", Some(terminal(theme.diff_add_bg))),
+    ]
+}
+
+/// The backgrounds an edit capture paints, in the expectation table's order.
+pub(super) fn edit_capture_backgrounds(
+    backend: &RatatuiBackend,
+    count: usize,
+) -> Result<Vec<Option<ratatui::style::Color>>> {
+    edit_row_backgrounds()
+        .iter()
+        .map(|(needle, _)| row_background(backend, count, needle))
+        .collect()
+}
+
+/// The `edit` outcome's own JSON payload text for `diff`.
+pub(super) fn edit_result_text(diff: &str) -> String {
+    let escaped = diff
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!(
+        "{{\"path\":\"a.rs\",\"diff\":\"{escaped}\",\"stats\":{{\"files_changed\":1,\"insertions\":1,\"deletions\":1}}}}"
+    )
+}
+
+/// The outcome the `edit` handler settles on: its own JSON payload as the
+/// result text.
+pub(super) fn edit_outcome(diff: &str) -> ToolOutcome {
+    ToolOutcome {
+        status: ToolStatus::Success,
+        payload: None,
+        text: edit_result_text(diff),
+        message: None,
+        kind: None,
+    }
+}
+
+/// The one entry a fixture store holds.
+pub(super) fn only_entry(store: &AppState) -> Result<&TranscriptEntry> {
+    store
+        .transcript
+        .entries()
+        .first()
+        .ok_or_else(|| "the store must hold one entry".into())
 }
 
 /// A task call line: the name, the subject it works on, and its status.

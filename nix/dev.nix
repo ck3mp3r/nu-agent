@@ -37,6 +37,8 @@ in
       pkgs.prek
       cargo-llvm-cov
       pkgs.cargo-nextest
+      # Nushell runtime: the suite spawns `nu` by bare name
+      pkgs.nushell
 
       # Development scripts
       check

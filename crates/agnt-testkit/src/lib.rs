@@ -1,7 +1,7 @@
 //! Dev-only wiremock harness shared by the nu-agent test suites.
 //!
 //! Three OpenAI-compatible SSE stub stacks grew up independently in the
-//! `agnt-core` and `agnt-acp` test trees. This crate is the single shared
+//! `agnt-runtime` and `agnt-acp` test trees. This crate is the single shared
 //! implementation they are meant to collapse into.
 //!
 //! The crate is development-only. No production crate depends on it, and it
@@ -16,6 +16,15 @@
 //! - There is no mid-stream TCP fault injection. A connection cannot be reset
 //!   after the first frame. A test that needs byte-level write control stays
 //!   hand-rolled raw-TCP.
+//!
+//! It also carries the architecture assertions in [`architecture`]: the
+//! structural properties the workspace is accepted against.
+
+// region:    --- Modules
+
+pub mod architecture;
+
+// endregion: --- Modules
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -233,6 +242,10 @@ fn json_string(value: &str) -> String {
 // endregion: --- Support
 
 // region:    --- Tests
+
+#[cfg(test)]
+#[path = "../test/architecture/test.rs"]
+mod architecture_test;
 
 #[cfg(test)]
 #[path = "../test/lib.rs"]

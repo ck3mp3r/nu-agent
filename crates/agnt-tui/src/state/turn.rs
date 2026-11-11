@@ -24,7 +24,7 @@ impl TurnState {
         *input_locked = false;
         // Clear only Neutral status messages. Warning-kind messages survive
         // turn finalize and expire via their own 15 s TTL — a repetition-stop
-        // warning arrives just before `TurnEvent::Completed` and must not be
+        // warning arrives just before `TurnRecord::Completed` and must not be
         // wiped by it.
         if status.message.kind() == StatusMessageKind::Neutral {
             status.message.clear();

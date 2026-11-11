@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use agnt_core::bus::TryRecvError;
-use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_runtime::bus::{Control, Facts, Lifecycle, Narration, Stream};
+use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
@@ -21,10 +21,21 @@ pub struct TuiInteractiveUi {
     theme_persist_tx: Option<mpsc::Sender<String>>,
 }
 
-/// Auxiliary receivers the render loop drains alongside terminal events.
-pub(crate) struct RenderLoopChannels {
+/// Auxiliary channels the render loop drains and publishes on, alongside
+/// terminal events.
+///
+/// The render loop is a bus consumer: it folds the record stream, the narration
+/// tail, the facts snapshots and the control intake. The picker catalogs are
+/// the surface's own state and never ride a channel here — they come back on
+/// the reply hand carried by the `UiRequest`.
+pub(crate) struct RenderLoopChannels<'a> {
     pub(crate) branch_rx: mpsc::Receiver<()>,
     pub(crate) theme_persist_tx: Option<mpsc::Sender<String>>,
+    pub(crate) stream: &'a Stream,
+    pub(crate) narration: &'a Narration,
+    pub(crate) control: &'a Control,
+    pub(crate) lifecycle: &'a Lifecycle,
+    pub(crate) facts: &'a Facts,
 }
 
 /// The render loop's only timer: the busy spinner's own cadence. A tick
@@ -74,14 +85,14 @@ impl TuiInteractiveUi {
 
     pub fn set_mcp_lifecycle_projection(
         &mut self,
-        projection: Vec<agnt_core::tools::mcp::runtime::McpServerLifecycle>,
+        projection: Vec<agnt_runtime::tools::mcp::runtime::McpServerLifecycle>,
     ) {
         self.renderer.set_mcp_lifecycle_projection(projection);
     }
 
     pub fn set_skills_projection(
         &mut self,
-        skills: Vec<agnt_core::protocol::skills::DiscoverableSkill>,
+        skills: Vec<agnt_runtime::protocol::skills::DiscoverableSkill>,
     ) {
         self.renderer.set_skills_projection(skills);
     }
@@ -98,7 +109,7 @@ impl TuiInteractiveUi {
 
     pub fn hydrate_transcript(
         &mut self,
-        messages: Vec<agnt_core::protocol::contracts::UiMessageSnapshot>,
+        messages: Vec<agnt_runtime::protocol::contracts::UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
     ) {
         self.renderer
@@ -177,7 +188,7 @@ impl TuiInteractiveUi {
 
     pub fn make_render_loop_spawner(
         &mut self,
-        bus: agnt_core::bus::Bus,
+        bus: agnt_runtime::bus::Bus,
     ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
         let coordinator = std::mem::replace(
             &mut self.renderer.coordinator,
@@ -214,10 +225,14 @@ impl TuiInteractiveUi {
                 let channels = RenderLoopChannels {
                     branch_rx,
                     theme_persist_tx,
+                    stream: bus.stream(),
+                    narration: bus.narration(),
+                    control: bus.control(),
+                    lifecycle: bus.lifecycle(),
+                    facts: bus.facts(),
                 };
                 run_render_loop(
                     &mut coordinator,
-                    &bus,
                     &cancel_controller,
                     event_tx,
                     terminal_rx,
@@ -285,17 +300,17 @@ pub(crate) async fn run_render_loop<
     B: ratatui::backend::Backend + crate::runtime::backend::FrameSync,
 >(
     coordinator: &mut RuntimeCoordinator,
-    bus: &agnt_core::bus::Bus,
     cancel_controller: &CancelController,
     event_tx: mpsc::Sender<OrchestratorEvent>,
     mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
     live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
-    mut channels: RenderLoopChannels,
+    mut channels: RenderLoopChannels<'_>,
 ) {
-    let mut ui_event_rx = bus.ui_event().subscribe();
-    let mut compaction_rx = bus.compaction().subscribe();
-    let mut session_rx = bus.session().subscribe();
-    let mut ui_state_rx = bus.ui_state().subscribe();
+    let mut stream_rx = channels.stream.subscribe();
+    let mut narration_rx = channels.narration.subscribe();
+    let mut control_rx = channels.control.subscribe();
+    let mut lifecycle_rx = channels.lifecycle.subscribe();
+    let mut facts_rx = channels.facts.subscribe();
     let mut render_timer = tokio::time::interval(RENDER_TICK);
 
     loop {
@@ -303,96 +318,85 @@ pub(crate) async fn run_render_loop<
             maybe = terminal_event_rx.recv() => {
                 let Some(event) = maybe else { return; };
                 coordinator.handle_terminal_event(event);
-                let pending = coordinator.state.take_pending_events(cancel_controller);
-                for ev in pending {
-                    if event_tx.send(ev).await.is_err() {
-                        return;
-                    }
-                }
-                drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
-                let ui_state_events = coordinator.state.take_pending_ui_state_events();
-                for ev in ui_state_events {
-                    let _ = bus.ui_state().send(ev).await;
-                }
-                if coordinator.state.quit_requested {
-                    let _ = event_tx.send(OrchestratorEvent::Quit).await;
-                    return;
-                }
-                if let Some(msg) = coordinator.fatal_error() {
-                    let _ = event_tx
-                        .send(OrchestratorEvent::FatalError(LabeledError::new(
-                            msg.to_string(),
-                        )))
-                        .await;
+                if flush_pending(coordinator, &event_tx, cancel_controller, &channels).await {
                     return;
                 }
                 let _ = coordinator.render_if_needed(live_terminal);
             }
-            ok = ui_event_rx.recv() => {
-                if let Ok(event) = ok {
-                    // Coalesce the burst that queued behind the awaited event:
-                    // one chunk fold per wake instead of one per chunk. `Lagged`
-                    // ends the drain — the buffered events arrive on later
-                    // iterations, and chunks carry `aggregated`, so a dropped
+            record = stream_rx.recv() => {
+                // A lag re-syncs the subscription at the tail: the dropped
+                // records are counted and gone, and nothing needs repair.
+                if let Ok(record) = record {
+                    // Coalesce the burst that queued behind the awaited record:
+                    // one chunk fold per wake instead of one per chunk. A lag
+                    // ends the drain — the buffered records arrive on later
+                    // iterations, and a chunk carries `aggregated`, so a dropped
                     // older chunk loses no content.
+                    let mut batch = vec![record];
+                    while let Ok(next) = stream_rx.try_recv() {
+                        batch.push(next);
+                    }
+                    // A turn completion (or failure) clears the active prompt.
+                    // Drain any prompts stacked during the turn into
+                    // PromptSubmitted events now, without waiting for the next
+                    // terminal input.
+                    if coordinator.reduce_record_batch(batch)
+                        && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
+                    {
+                        return;
+                    }
+                }
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+            event = narration_rx.recv() => {
+                // Narration is the oldest-droppable tail: the surviving events
+                // keep their receipt order, and a lagged subscription resumes at
+                // the tail.
+                if let Ok(event) = event {
                     let mut batch = vec![event];
-                    loop {
-                        match ui_event_rx.try_recv() {
-                            Ok(next) => batch.push(next),
-                            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
-                            Err(TryRecvError::Lagged(_)) => break,
-                        }
+                    while let Ok(next) = narration_rx.try_recv() {
+                        batch.push(next);
                     }
-                    if coordinator.reduce_event_batch(batch) {
-                        // A turn completion (or failure) clears the active prompt. Drain
-                        // any prompts stacked during the turn into PromptSubmitted events
-                        // now, without waiting for the next terminal input.
-                        let pending = coordinator.state.take_pending_events(cancel_controller);
-                        for ev in pending {
-                            if event_tx.send(ev).await.is_err() {
-                                return;
-                            }
-                        }
-                        drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
-                        let ui_state_events = coordinator.state.take_pending_ui_state_events();
-                        for ev in ui_state_events {
-                            let _ = bus.ui_state().send(ev).await;
-                        }
-                        coordinator.mark_render_needed();
-                        let _ = coordinator.render_if_needed(live_terminal);
+                    if coordinator.reduce_narration_batch(batch)
+                        && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
+                    {
+                        return;
                     }
                 }
+                let _ = coordinator.render_if_needed(live_terminal);
             }
-            ok = compaction_rx.recv() => {
-                if let Ok(event) = ok
-                    && coordinator.reduce_system_event(event)
+            command = control_rx.recv() => {
+                // Control carries commands addressed to whichever owner names
+                // them: the surface folds the ones it owns, and the loop's own
+                // intake never reaches the fold.
+                if let Ok(command) = command
+                    && coordinator.reduce_control(&command)
+                    && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
                 {
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
+                    return;
                 }
+                let _ = coordinator.render_if_needed(live_terminal);
             }
-            ok = session_rx.recv() => {
-                // Session lifecycle events are not rendered in the TUI; drain only.
-                let _ = ok;
+            event = lifecycle_rx.recv() => {
+                // The turn spine is the surface's clock over a replay batch: the
+                // first live turn that starts after a switch ends the batch, and
+                // the gate becomes the only card source again. A lag skips whole
+                // spine steps; a skipped step is never guessed at.
+                if let Ok(event) = event
+                    && coordinator.reduce_lifecycle(&event)
+                    && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
+                {
+                    return;
+                }
+                let _ = coordinator.render_if_needed(live_terminal);
             }
-            ok = ui_state_rx.recv() => {
-                if let Ok(event) = ok {
-                    coordinator.reduce_ui_state_event(event);
-                    // An A2A prompt arrives as `EnqueueExternalPrompt`, which
-                    // queues it via `enqueue_prompt`. Drain the queue now so the
-                    // prompt is submitted on this tick instead of waiting for the
-                    // next terminal input.
-                    let pending = coordinator.state.take_pending_events(cancel_controller);
-                    for ev in pending {
-                        if event_tx.send(ev).await.is_err() {
-                            return;
-                        }
-                    }
-                    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
-                    let ui_state_events = coordinator.state.take_pending_ui_state_events();
-                    for ev in ui_state_events {
-                        let _ = bus.ui_state().send(ev).await;
-                    }
+            fact = facts_rx.recv() => {
+                // A lag skips snapshots, never a state: the subscription
+                // resumes at the tail carrying each field's latest value, so a
+                // lagged receive needs no repair of its own.
+                if let Ok(fact) = fact
+                    && coordinator.reduce_fact_record(fact)
+                {
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
@@ -402,6 +406,9 @@ pub(crate) async fn run_render_loop<
                 let _ = coordinator.render_if_needed(live_terminal);
             }
             _ = render_timer.tick() => {
+                // The picker catalogs arrive on the surface's own reply hands,
+                // outside the bus, so the tick is what drains them.
+                coordinator.poll_picker_replies();
                 if coordinator.has_pending_status_message()
                     && coordinator.expire_status_message_if_due(Instant::now())
                 {
@@ -414,4 +421,37 @@ pub(crate) async fn run_render_loop<
             }
         }
     }
+}
+
+/// Drain the state's outbound effects: the prompts and commands the loop owns,
+/// the theme preference the command layer persists, and the two hands that end
+/// the loop (quit and fatal error).
+///
+/// Returns whether the render loop must stop.
+async fn flush_pending(
+    coordinator: &mut RuntimeCoordinator,
+    event_tx: &mpsc::Sender<OrchestratorEvent>,
+    cancel_controller: &CancelController,
+    channels: &RenderLoopChannels<'_>,
+) -> bool {
+    let pending = coordinator.state.take_pending_events(cancel_controller);
+    for ev in pending {
+        if event_tx.send(ev).await.is_err() {
+            return true;
+        }
+    }
+    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
+    if coordinator.state.quit_requested {
+        let _ = event_tx.send(OrchestratorEvent::Quit).await;
+        return true;
+    }
+    if let Some(msg) = coordinator.fatal_error() {
+        let _ = event_tx
+            .send(OrchestratorEvent::FatalError(LabeledError::new(
+                msg.to_string(),
+            )))
+            .await;
+        return true;
+    }
+    false
 }

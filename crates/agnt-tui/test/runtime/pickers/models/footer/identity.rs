@@ -13,7 +13,7 @@ async fn test_model_picker_footer_shows_full_selected_identity() -> Result<()> {
     let mut driver = RenderLoopDriver::new(62, 18);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: "anthropic/claude-opus-4.5".to_string(),
             identity: identity.clone(),
@@ -68,7 +68,7 @@ async fn test_model_picker_footer_pins_to_bottom_edge_at_popup_height_twenty() -
     let mut driver = RenderLoopDriver::new(62, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: "anthropic/claude-opus-4.5".to_string(),
             identity: identity.clone(),

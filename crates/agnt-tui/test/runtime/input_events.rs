@@ -119,15 +119,7 @@ fn coordinator_enter_while_input_locked_queues_prompt_and_clears_draft() -> Resu
     assert_eq!(coordinator.state.input.pending_submit_text, None);
 
     // -- Exec: the turn settles and the pending events drain.
-    coordinator.reduce_system_event(SystemEvent::TurnCompleted {
-        tool_calls: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: None,
-        cost: None,
-        cost_complete: true,
-        duration_ms: 0,
-    });
+    coordinator.fold_record(&turn_completed(0));
     let events = coordinator
         .state
         .take_pending_events(&CancelController::default());
@@ -136,7 +128,7 @@ fn coordinator_enter_while_input_locked_queues_prompt_and_clears_draft() -> Resu
     let submitted: Vec<&str> = events
         .iter()
         .filter_map(|event| match event {
-            OrchestratorEvent::PromptSubmitted { text } => Some(text.as_str()),
+            OrchestratorEvent::PromptSubmitted { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();

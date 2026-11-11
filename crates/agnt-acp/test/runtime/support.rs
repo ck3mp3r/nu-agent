@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use agnt_core::session::{RigStoreConfig, StoreType};
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
+use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 use super::*;
 
@@ -57,15 +57,15 @@ pub(super) fn make_params(
         session_id: None,
         client_fs: None,
         agent_name: None,
-        hook_context: agnt_core::hooks::HookAgentContext::default(),
+        hook_context: agnt_runtime::hooks::HookAgentContext::default(),
     }
 }
 
 /// The application paths of a runtime test rooted at `config_path`'s dir.
-pub(super) fn test_paths(config_path: &Path) -> agnt_core::config::Paths {
+pub(super) fn test_paths(config_path: &Path) -> agnt_runtime::config::Paths {
     let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     let logs = dir.join("logs");
-    agnt_core::config::Paths {
+    agnt_runtime::config::Paths {
         config_path: config_path.to_path_buf(),
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),
@@ -100,11 +100,7 @@ pub(super) fn disabled_http_server(name: &str) -> McpServerConfig {
 
 pub(super) fn visible_tool_names(runtime: &AgentConversationRuntime) -> Vec<String> {
     runtime
-        .tools
-        .active_definitions(
-            runtime.mcp_state.mcp_registry(),
-            runtime.permission_state.permissions(),
-        )
+        .visible_tool_definitions()
         .into_iter()
         .map(|def| def.name.to_string())
         .collect()
@@ -112,7 +108,6 @@ pub(super) fn visible_tool_names(runtime: &AgentConversationRuntime) -> Vec<Stri
 
 pub(super) fn lifecycle_names(runtime: &AgentConversationRuntime) -> Vec<String> {
     runtime
-        .mcp_state
         .mcp_lifecycle_projection()
         .iter()
         .map(|server| server.name.clone())

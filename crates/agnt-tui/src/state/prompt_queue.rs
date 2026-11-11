@@ -86,6 +86,11 @@ impl<'a> PromptQueueLifecycle<'a> {
             .collect()
     }
 
+    /// Take the next submission off the queue.
+    ///
+    /// Returns the texts to submit together with the footer facts their block
+    /// carries. A run of user prompts coalesces, so stacking typed prose keeps
+    /// its one block.
     pub(super) fn coalesce_pending_prompts(&mut self) -> (Vec<String>, PromptFacts) {
         if self.pending_prompt_ids.is_empty() {
             return (vec![], PromptFacts::default());
@@ -98,13 +103,14 @@ impl<'a> PromptQueueLifecycle<'a> {
             return (vec![], PromptFacts::default());
         }
 
-        let ids: Vec<u64> = self.pending_prompt_ids.drain(..).collect();
-        *self.active_prompt_id = ids.first().copied();
+        let block: Vec<u64> = self.pending_prompt_ids.drain(..).collect();
 
-        let mut texts = Vec::with_capacity(ids.len());
+        *self.active_prompt_id = block.first().copied();
+
+        let mut texts = Vec::with_capacity(block.len());
         let mut facts = PromptFacts::default();
-        for (i, &id) in ids.iter().enumerate() {
-            if let Some(p) = self.prompt_items.iter_mut().find(|p| p.id == id) {
+        for (i, id) in block.iter().enumerate() {
+            if let Some(p) = self.prompt_items.iter_mut().find(|p| p.id == *id) {
                 if i == 0 {
                     p.status = PromptStatus::InProgress;
                 } else {

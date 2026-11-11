@@ -1,8 +1,8 @@
 use super::*;
 
 #[tokio::test]
-async fn test_tasks_send_with_metadata() {
-    let (server, client) = test_server().await;
+async fn test_tasks_send_with_metadata() -> Result<()> {
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
@@ -11,10 +11,9 @@ async fn test_tasks_send_with_metadata() {
             "metadata": {"source": "test", "priority": 5}
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["metadata"]["source"], "test",
         "metadata.source should be stored"
@@ -25,11 +24,12 @@ async fn test_tasks_send_with_metadata() {
     );
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_tasks_get_returns_metadata() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task with metadata
     let send_resp = client
@@ -39,9 +39,8 @@ async fn test_tasks_get_returns_metadata() -> Result<()> {
             "metadata": {"source": "test", "key": "value"}
         }))
         .send()
-        .await
-        .unwrap();
-    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+        .await?;
+    let send_body: serde_json::Value = send_resp.json().await?;
     let task_id = send_body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -51,9 +50,8 @@ async fn test_tasks_get_returns_metadata() -> Result<()> {
     let resp = client
         .get(format!("{}/tasks/{task_id}", server.local_url))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(
         body["task"]["metadata"]["source"], "test",
         "metadata should be preserved when getting task"

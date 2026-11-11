@@ -22,10 +22,12 @@ mod verbosity;
 
 // endregion: --- Modules
 
-use agnt_core::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::renderer::UiRenderer;
-use agnt_core::transcript::ir::ToolName;
+use crate::renderer::{RenderInput, UiRenderer};
+use agnt_kernel::bus::NarrationEvent;
+use agnt_kernel::{
+    CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, SessionRecord, ToolCall,
+    ToolOutcome, ToolRecord, TurnRecord, Usage,
+};
 
 use super::StderrUiRenderer;
 use crate::policy::{UiPolicy, Verbosity};
@@ -33,6 +35,16 @@ use crate::policy::{UiPolicy, Verbosity};
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Test Support
+
+/// Draw one record through `renderer`, so every fixture reads the same.
+pub(super) fn draw<R: UiRenderer>(renderer: &mut R, record: SessionRecord) {
+    renderer.draw(RenderInput::Record(&record));
+}
+
+/// Draw one narration datum through `renderer`.
+pub(super) fn narrate<R: UiRenderer>(renderer: &mut R, event: NarrationEvent) {
+    renderer.draw(RenderInput::Narration(&event));
+}
 
 /// A writer the test keeps a handle on, so the printed bytes can be read
 /// between chunks instead of only after the renderer is dropped.

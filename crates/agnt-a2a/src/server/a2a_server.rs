@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use axum::{
@@ -47,6 +47,23 @@ pub struct AppState {
     pub files: Arc<RwLock<HashMap<String, Vec<u8>>>>,
     /// Deadline for blocking `message:send` requests (spec §3.2.2).
     pub blocking_timeout: Duration,
+}
+
+impl AppState {
+    /// The served agent card, recovered if a writer panicked mid-swap.
+    pub(crate) fn read_agent_card(&self) -> RwLockReadGuard<'_, AgentCard> {
+        self.agent_card.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The uploaded-file map, recovered if a writer panicked mid-insert.
+    pub(crate) fn read_files(&self) -> RwLockReadGuard<'_, HashMap<String, Vec<u8>>> {
+        self.files.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The uploaded-file map, recovered if a reader panicked mid-read.
+    pub(crate) fn write_files(&self) -> RwLockWriteGuard<'_, HashMap<String, Vec<u8>>> {
+        self.files.write().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -101,12 +118,29 @@ impl A2aServer {
     ///
     /// `blocking_timeout` bounds how long a blocking `message:send` request
     /// waits for a terminal task state (spec §3.2.2) before returning the
-    /// task in its current state.
+    /// task in its current state. The server's task store has no transport, so
+    /// push delivery is skipped — use [`start_with_transport`] to enable it.
     pub async fn start_with_blocking_timeout(
         agent_card: AgentCard,
         peer_cache: Arc<PeerCache>,
         port: u16,
         blocking_timeout: Duration,
+    ) -> Result<Self, A2aError> {
+        Self::start_with_transport(agent_card, peer_cache, port, blocking_timeout, None).await
+    }
+
+    /// Start the A2A server with the composition root's push transport.
+    ///
+    /// `transport` is the `reqwest::Client` the task store uses for webhook
+    /// push delivery. When `None` the store skips push delivery with a
+    /// warning, which is what server-only tests and library users that build
+    /// their own store need.
+    pub async fn start_with_transport(
+        agent_card: AgentCard,
+        peer_cache: Arc<PeerCache>,
+        port: u16,
+        blocking_timeout: Duration,
+        transport: Option<reqwest::Client>,
     ) -> Result<Self, A2aError> {
         assert!(
             !cfg!(test) || blocking_timeout <= MAX_TEST_BLOCKING_TIMEOUT,
@@ -140,7 +174,10 @@ impl A2aServer {
         // 4. Build shared state and event channel
         let (incoming_tx, incoming_rx) = mpsc::channel::<IncomingTask>(64);
         let (cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
-        let task_store: Arc<InMemoryTaskStore> = Arc::new(InMemoryTaskStore::default());
+        let task_store: Arc<InMemoryTaskStore> = Arc::new(match transport {
+            Some(transport) => InMemoryTaskStore::with_transport(transport),
+            None => InMemoryTaskStore::default(),
+        });
         let files: Arc<RwLock<HashMap<String, Vec<u8>>>> = Arc::new(RwLock::new(HashMap::new()));
         let agent_card: Arc<RwLock<AgentCard>> = Arc::new(RwLock::new(agent_card));
         let state = AppState {

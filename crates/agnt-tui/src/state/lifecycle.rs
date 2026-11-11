@@ -1,17 +1,17 @@
-use agnt_core::protocol::slash::filter_inline_slash_suggestions;
+use agnt_runtime::protocol::slash::filter_inline_slash_suggestions;
 
 use super::*;
 
 use std::time::Instant;
 
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
 
 pub(crate) const CTRL_C_QUIT_CONFIRM_STATUS: &str = "Ctrl-C again to quit";
 
 impl AppState {
     pub fn new_with_sender(
-        event_tx: tokio::sync::mpsc::Sender<agnt_core::orchestrator::OrchestratorEvent>,
+        event_tx: tokio::sync::mpsc::Sender<agnt_runtime::orchestrator::events::OrchestratorEvent>,
     ) -> Self {
         Self {
             event_tx,
@@ -116,15 +116,7 @@ impl AppState {
             });
         // The row carries the carrier's facts verbatim: what the submit boundary
         // stamped, nothing filled in.
-        let msg = MessageEntry {
-            role: MessageRole::User,
-            markdown: prompt.prompt_text,
-            timestamp_millis: prompt.facts.millis,
-            model: prompt.facts.model,
-            agent: prompt.facts.agent,
-        };
-        let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
-        self.shift_bookkeeping_after_eviction(evicted);
+        self.push_user_row(prompt.prompt_text, prompt.facts);
 
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
@@ -133,6 +125,25 @@ impl AppState {
         Some(active_id)
     }
 
+    /// Push the transcript's user row for one prompt.
+    ///
+    /// The row carries the facts it was handed, verbatim. A surface prompt
+    /// reaches this from the queue it was submitted through; a peer's prompt
+    /// reaches it from the record the loop published, because the loop already
+    /// dispatched that turn and the surface submits nothing.
+    pub fn push_user_row(&mut self, markdown: String, facts: PromptFacts) {
+        let msg = MessageEntry {
+            role: MessageRole::User,
+            markdown,
+            timestamp_millis: facts.millis,
+            model: facts.model,
+            agent: facts.agent,
+        };
+        let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
+        self.shift_bookkeeping_after_eviction(evicted);
+    }
+
+    /// Take the next submission for execution.
     pub fn take_next_prompt_for_execution(&mut self) -> Option<String> {
         if let Some(immediate) = self.pending_immediate_submissions.pop_front() {
             // The immediate lane runs commands, not prose: it never pushes a row
@@ -158,19 +169,12 @@ impl AppState {
         // One newline is a markdown soft break: the projector flushes each
         // break as a row break, so the submitted block renders one row per
         // queued message — the stack's rhythm, with no blank row between them
-        // (pinned by `layout_coalesced_user_block_renders_one_row_per_message`).
+        // (pinned by
+        // `test_renderer_layout_coalesced_user_turn_paints_one_row_per_prompt`).
         let combined = texts.join("\n");
         // The coalesced block carries the first `Some` of each fact, in queue
         // order: a merged row keeps what its first stamped prompt knew.
-        let msg = MessageEntry {
-            role: MessageRole::User,
-            markdown: combined.clone(),
-            timestamp_millis: facts.millis,
-            model: facts.model,
-            agent: facts.agent,
-        };
-        let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
-        self.shift_bookkeeping_after_eviction(evicted);
+        self.push_user_row(combined.clone(), facts);
 
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
@@ -315,10 +319,17 @@ impl AppState {
     pub fn check_inline_slash(&mut self, buffer: &str) {
         let options = filter_inline_slash_suggestions(buffer);
         if options.is_empty() {
-            self.picker.close();
+            // Only the suggestion surface closes here: a picker the input just
+            // launched (a slash command opening its own panel) stays open.
+            if self.picker.render_kind() == Some(PickerRenderKind::InlineSlash) {
+                self.picker.close();
+            }
             return;
         }
         let entry = self.picker.open(ActivePicker::InlineSlash);
+        // The options are replaced wholesale: the old index no longer names the
+        // highlighted row, so the highlight restarts at the first narrowed entry.
+        entry.state.selection = 0;
         entry.state.options = options
             .into_iter()
             .map(|c| PickerOption {

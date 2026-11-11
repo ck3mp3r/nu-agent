@@ -7,12 +7,13 @@
 //! preview shows while the call is pending, the completion result takes over,
 //! and the preview persists when the completion carries no display.
 
-use agnt_core::transcript::entry::ToolEntry;
-use agnt_core::transcript::ir::{ContentKind, ContentLine, Display, StyleHint};
-use agnt_core::transcript::markdown::{project_code_block_lines, project_diff_lines};
 use agnt_render::catalog::{
     CallLineRow, CodeSurface, DiffView, LaneKind, LaneLine, StatRow, SurfaceRow,
 };
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::ToolEntry;
+use agnt_render::transcript::ir::{ContentKind, ContentLine, Display, StyleHint};
+use agnt_render::transcript::markdown::{project_code_block_lines, project_diff_lines};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -49,7 +50,7 @@ impl ToolWidget<'_> {
     fn call_line(&self) -> CallLineRow {
         CallLineRow::new(
             self.entry.call.name.0.clone(),
-            self.entry.call.call_line.summary.clone(),
+            self.entry.call.call_line(),
             Some(self.entry.status),
         )
     }
@@ -76,13 +77,13 @@ impl ToolWidget<'_> {
 
     /// Whether the displayed rows paint as a banded code region.
     ///
-    /// Only the gate preview is a code-surface block: the pre-wave pane pushed
-    /// it with `Fill::Code`. A completion display renders bare — its diff rows
-    /// keep their line tints on the pane, its other rows read as prose. The
-    /// entry's state decides, not a second field: `result` set means the body
-    /// on screen is the completion.
+    /// The band belongs to the body's content, not to the entry's slot: a body
+    /// carrying code or diff rows renders on the code surface — the diff tints
+    /// over it — in both slots, so a completion keeps the background its gate
+    /// preview painted. A body with no code or diff content reads as prose and
+    /// stays bare on the pane.
     fn banded(&self) -> bool {
-        self.entry.result.is_none()
+        self.display().is_some_and(Display::has_code_or_diff)
     }
 
     /// The call line's wrap budget: the status indicator takes its columns on

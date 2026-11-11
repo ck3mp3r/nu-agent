@@ -1,7 +1,7 @@
 use super::{ToolCallLine, ToolCallStatus};
-use agnt_core::protocol::events::ToolCallId;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::events::ToolCallId;
 use std::collections::{HashMap, VecDeque};
 
 pub(super) struct ToolCallBookkeeping<'a> {
@@ -26,12 +26,12 @@ impl<'a> ToolCallBookkeeping<'a> {
     pub(super) fn start_tool_call(&mut self, key: &ToolCallId, block_index: usize) {
         let id = self.next_id();
 
-        self.calls.push(ToolCallLine {
+        self.calls.push(ToolCallLine::new(
             id,
-            status: ToolCallStatus::InProgress,
-            key: key.clone(),
-            block_index: Some(block_index),
-        });
+            ToolCallStatus::InProgress,
+            key.clone(),
+            Some(block_index),
+        ));
         self.active_ids_by_key
             .entry(key.as_str().to_string())
             .or_default()

@@ -2,8 +2,8 @@ use ratatui::style::Modifier;
 
 use crate::rendering::theme::{CatppuccinPalette, TuiTheme};
 use crate::widgets::text::hint_style;
-use agnt_core::transcript::ir::StyleHint;
 use agnt_render::Theme;
+use agnt_render::transcript::ir::StyleHint;
 
 /// The style one hint paints with under the TUI theme: the widgets' single
 /// vocabulary, resolved through the backend-neutral theme.

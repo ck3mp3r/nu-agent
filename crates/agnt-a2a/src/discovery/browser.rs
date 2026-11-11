@@ -2,11 +2,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
+use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use crate::{A2aError, peer::Peer};
+use crate::client::{A2aClient, A2aHttpClient};
+use crate::{A2aError, AgentCard, peer::Peer};
 
-use super::card::{CARD_FETCHER, CardFetcher};
 use super::filter;
 use super::service::{peer_from_service, peer_name_from_fullname};
 
@@ -16,6 +17,12 @@ use super::service::{peer_from_service, peer_name_from_fullname};
 
 /// The mDNS service type this mesh registers and browses.
 pub(crate) const SERVICE_TYPE: &str = "_nu-agent-a2a._tcp.local.";
+
+/// The card-fetch deadline for one browse resolution.
+///
+/// Per request, never client-global: the transport belongs to the composition
+/// root and must stay unbounded for every other caller.
+const CARD_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Events emitted by the [`DiscoveryBrowser`] when peers appear or disappear.
 #[derive(Debug, Clone)]
@@ -52,10 +59,20 @@ impl DiscoveryBrowser {
     /// Returns a handle that can be dropped to stop browsing, and a
     /// `mpsc::Receiver` that yields [`PeerEvent`]s as peers are discovered
     /// or lost.
+    ///
+    /// `card_client` and `runtime_handle` are handed down from the composition
+    /// root: the shared transport and the handle of the runtime that owns this
+    /// agent. The poll thread is a bare `std::thread`, so `Handle::block_on` is
+    /// how it enters that runtime to fetch a card. The owning runtime must stay
+    /// alive — and driven — until every browse thread holding a handle has
+    /// exited: the CLI and plugin binaries build one runtime per process and
+    /// keep it, so a library user must do the same.
     pub fn browse(
         daemon: ServiceDaemon,
         mesh_key: &str,
         own_port: u16,
+        card_client: A2aClient,
+        runtime_handle: Handle,
     ) -> Result<(Self, mpsc::Receiver<PeerEvent>), A2aError> {
         let receiver = daemon
             .browse(SERVICE_TYPE)
@@ -67,15 +84,6 @@ impl DiscoveryBrowser {
         let filters = filter::build_filters(own_port, &mesh_key);
 
         let handle = std::thread::spawn(move || {
-            // Initialise the card fetcher inside the browse thread — safe because
-            // we are *not* inside a tokio runtime here. A rediscover re-enters
-            // this path, so only the first browse may build one: `set` evaluates
-            // its argument eagerly, so an unguarded call would build a reqwest
-            // client and a tokio runtime only to drop them.
-            if CARD_FETCHER.get().is_none() {
-                let _ = CARD_FETCHER.set(CardFetcher::new());
-            }
-
             // recv() blocks until an event arrives. recv() returns Err when the
             // browse channel closes: `stop_browse` removes the querier and purges
             // its pending retransmissions (the rediscover path), and daemon
@@ -100,7 +108,10 @@ impl DiscoveryBrowser {
 
                         let mut peer = peer_from_service(&resolved);
                         let url = format!("{}/.well-known/agent-card.json", peer.url);
-                        peer.card = CARD_FETCHER.get().and_then(|f| f.fetch_card(&url));
+                        // The sync/async boundary: this thread has no ambient
+                        // runtime, so the handed-down handle is what enters the
+                        // runtime that owns the agent.
+                        peer.card = fetch_card(&card_client, &runtime_handle, &url);
 
                         let _ = cb_tx
                             .try_send(PeerEvent::PeerDiscovered(Box::new(peer)))
@@ -156,3 +167,46 @@ impl Drop for DiscoveryBrowser {
         }
     }
 }
+
+// region:    --- Support
+
+/// Best-effort card fetch from the browse thread.
+///
+/// The browse loop is a bare `std::thread` with no ambient runtime, so
+/// [`Handle::block_on`] is the sync/async boundary into the runtime that owns
+/// the agent. The deadline is stamped per request: the handed-down transport is
+/// the composition root's and stays unbounded for every other caller. Returns
+/// `None` on any failure — a peer without a card is still a peer.
+fn fetch_card<C: A2aHttpClient>(
+    client: &C,
+    runtime_handle: &Handle,
+    url: &str,
+) -> Option<AgentCard> {
+    match runtime_handle.block_on(client.get_bytes_with_timeout(url, CARD_FETCH_TIMEOUT)) {
+        Ok(bytes) => match serde_json::from_slice::<AgentCard>(&bytes) {
+            Ok(card) => Some(card),
+            Err(e) => {
+                log::warn!("card fetch failed (bad JSON) for {url}: {e}");
+                None
+            }
+        },
+        Err(e @ (A2aError::ConnectionRefused(_) | A2aError::Timeout(_))) => {
+            log::warn!("card fetch failed (connection error) for {url}: {e}");
+            None
+        }
+        Err(e) => {
+            log::warn!("card fetch failed (HTTP error) for {url}: {e}");
+            None
+        }
+    }
+}
+
+// endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/discovery/browser.rs"]
+mod browser_test;
+
+// endregion: --- Tests

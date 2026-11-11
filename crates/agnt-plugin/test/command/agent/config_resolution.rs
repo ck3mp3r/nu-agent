@@ -3,7 +3,7 @@ use super::test_helpers::{
     test_plugin_config, test_provider,
 };
 
-use agnt_core::config::{
+use agnt_runtime::config::{
     Config, ModelConfig, ModelLimits, ModelRoleConfig, PluginConfig, ProviderConfig,
 };
 use nu_protocol::Value;
@@ -103,7 +103,7 @@ mod config_resolution_integration {
     #[test]
     fn resolve_config_plugin_overrides_env() -> Result<()> {
         // Env map supplies the API key; the plugin config supplies temperature.
-        let env = agnt_core::utils::env_map::EnvMap::from([
+        let env = agnt_runtime::utils::env_map::EnvMap::from([
             ("OPENAI_API_KEY".to_string(), "env_key".to_string()),
             ("AGENT_TEMPERATURE".to_string(), "0.5".to_string()),
         ]);
@@ -137,7 +137,7 @@ mod config_resolution_integration {
     #[test]
     fn resolve_config_flags_override_everything() -> Result<()> {
         // Env map supplies the API key for the resolved provider (openai).
-        let env = agnt_core::utils::env_map::EnvMap::from([
+        let env = agnt_runtime::utils::env_map::EnvMap::from([
             ("OPENAI_API_KEY".to_string(), "env_key".to_string()),
             ("AGENT_TEMPERATURE".to_string(), "0.5".to_string()),
         ]);

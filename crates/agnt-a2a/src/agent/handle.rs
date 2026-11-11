@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use std::time::Duration;
 
@@ -127,8 +127,13 @@ impl AgentHandle {
         // Shut down discovery (mDNS daemon, etc.).
         // Lock, take what we need, drop the guard, then proceed.
         // Do NOT hold the lock across any .await point.
-        let mut discovery = self.discovery.lock().expect("discovery lock");
+        let mut discovery = lock_discovery(&self.discovery);
         discovery.shutdown();
         // Guard dropped here — no .await after this point.
     }
+}
+
+/// The discovery backend, recovered if a caller panicked mid-restart.
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+    discovery.lock().unwrap_or_else(|e| e.into_inner())
 }

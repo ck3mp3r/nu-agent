@@ -7,6 +7,7 @@ use super::*;
 #[tokio::test]
 async fn test_handle_accessors_expose_server_state() -> Result<()> {
     let handle = AgentBuilder::new("handle-accessors")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("mesh-handle".into())
@@ -18,7 +19,11 @@ async fn test_handle_accessors_expose_server_state() -> Result<()> {
     // card_handle exposes the server's card; the handle's own card is that
     // card with the auto-generated port suffix applied.
     let card_handle = handle.card_handle().ok_or("card_handle should be Some")?;
-    let server_card_name = card_handle.read().expect("card lock").name.clone();
+    let server_card_name = card_handle
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .name
+        .clone();
     assert_eq!(
         handle.card().name,
         format!("{server_card_name}-{}", handle.server.port),
@@ -30,7 +35,7 @@ async fn test_handle_accessors_expose_server_state() -> Result<()> {
     assert!(
         discovery
             .lock()
-            .expect("discovery lock")
+            .unwrap_or_else(|e| e.into_inner())
             .fullname()
             .is_none(),
         "Noop discovery has no mDNS fullname"
@@ -63,6 +68,7 @@ async fn test_handle_accessors_expose_server_state() -> Result<()> {
 #[tokio::test]
 async fn test_handle_take_receivers_once() -> Result<()> {
     let mut handle = AgentBuilder::new("handle-receivers")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("mesh".into())
@@ -103,6 +109,7 @@ async fn test_builder_bind_failure_returns_error() -> Result<()> {
     let port = blocker.local_addr()?.port();
 
     let result = AgentBuilder::new("bind-fail")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Noop)
         .port(port)
         .mesh_key("mesh".into())
@@ -138,6 +145,7 @@ async fn test_builder_static_discovery_populates_peer_cache() -> Result<()> {
     };
 
     let handle = AgentBuilder::new("static-discovery")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Static(
             crate::discovery::static_discovery::StaticPeerDiscovery::new(vec![peer]),
         ))

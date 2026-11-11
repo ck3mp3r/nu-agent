@@ -17,6 +17,8 @@ in
       toolchain
       # Test runner with JUnit output for CI
       pkgs.cargo-nextest
+      # Nushell runtime: the suite spawns `nu` by bare name
+      pkgs.nushell
     ];
 
     shellHook = ''

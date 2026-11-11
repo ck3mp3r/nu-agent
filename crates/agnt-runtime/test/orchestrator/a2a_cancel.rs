@@ -1,0 +1,302 @@
+use super::*;
+
+// ── CancellableBlockingRuntime ─────────────────────────────────────────
+// Blocks in execute_turn until the block flag is unset OR a cancellation is
+// requested via the bus cancel channel. Used to verify that an A2A task
+// cancel stops the running turn.
+
+#[derive(Clone)]
+struct CancellableBlockingRuntime {
+    block: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+    started_tx: tokio::sync::watch::Sender<bool>,
+    prompts: Arc<Mutex<Vec<String>>>,
+    bus: crate::bus::Bus,
+}
+
+impl CancellableBlockingRuntime {
+    fn new(block: Arc<AtomicBool>) -> Self {
+        let (started_tx, _) = tokio::sync::watch::channel(false);
+        Self {
+            block,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            started_tx,
+            prompts: Arc::new(Mutex::new(Vec::new())),
+            bus: crate::bus::Bus::default(),
+        }
+    }
+
+    /// Signals when the blocking turn has begun. Tests await this instead of
+    /// polling before they send a cancel.
+    fn started_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.started_tx.subscribe()
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
+        self.bus = bus;
+        self
+    }
+}
+
+impl CoreRuntime for CancellableBlockingRuntime {
+    async fn execute_turn(
+        &mut self,
+        prompt: String,
+        _context: Option<String>,
+        span: Span,
+        _task_id: Option<String>,
+    ) -> TurnEnd {
+        self.prompts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(prompt);
+        // Signal that the blocking turn has begun so tests can cancel without
+        // polling.
+        let _ = self.started_tx.send(true);
+        // Subscribe to the bus cancel channel directly, matching production where
+        // the hook/tool proxies subscribe to `bus.cancel()`.
+        let mut cancel_rx = self.bus.cancel().subscribe();
+        loop {
+            tokio::select! {
+                recv = cancel_rx.recv() => {
+                    if matches!(recv, Ok(crate::bus::CancelEvent::Requested) | Err(crate::bus::ChannelError::Lagged { .. })) {
+                        self.cancelled.store(true, Ordering::SeqCst);
+                        let _ = self.bus.lifecycle().publish(
+                            LifecycleEvent::TurnCompleted {
+                                task_id: None,
+                                duration_ms: 0,
+                            },
+                        );
+                        return TurnEnd::Cancelled {
+                            value: Value::nothing(span),
+                        };
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(2)) => {
+                    if self.block.load(Ordering::SeqCst) {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = self.bus.lifecycle().publish(LifecycleEvent::TurnCompleted {
+            task_id: None,
+            duration_ms: 0,
+        });
+        TurnEnd::Completed {
+            value: Value::nothing(span),
+        }
+    }
+}
+
+impl ModelSwitching for CancellableBlockingRuntime {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+        Err("model switching not supported".to_string())
+    }
+
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+        Err("agent switch not supported in this runtime".to_string())
+    }
+
+    fn active_model_identity(&self) -> String {
+        "unknown/unknown".to_string()
+    }
+
+    fn max_context_tokens(&self) -> Option<u64> {
+        None
+    }
+}
+
+crate::default_session!(CancellableBlockingRuntime);
+crate::default_mcp!(CancellableBlockingRuntime);
+
+#[tokio::test]
+async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
+    let block = Arc::new(AtomicBool::new(false));
+    let bus = Bus::default();
+    let runtime = CancellableBlockingRuntime::new(Arc::clone(&block)).with_bus(bus.clone());
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_external_prompts(1)
+        .with_bus(bus.clone());
+
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    // Publish an external A2A task, retrying until the loop subscribes.
+    let publish_bus = bus.clone();
+    tokio::spawn(async move {
+        while publish_bus
+            .control()
+            .publish(crate::bus::ControlCommand::EnqueueExternalPrompt {
+                task_id: "11111111-2222-3333-4444-555555555555".to_string(),
+                prompt:
+                    "[A2A Task 11111111-2222-3333-4444-555555555555 from http://a.local]: do work"
+                        .to_string(),
+            })
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
+
+    // Send a matching cancel once the turn has started.
+    let mut started_rx = runtime.started_rx();
+    let cancel_tx_clone = cancel_tx.clone();
+    tokio::spawn(async move {
+        let _ = started_rx.changed().await;
+        if cancel_tx_clone
+            .send("11111111-2222-3333-4444-555555555555".to_string())
+            .is_err()
+        {
+            panic!("the cancel send must reach the loop");
+        }
+    });
+
+    let spawner = ui.make_event_spawner();
+    let (runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default()
+            .with_bus(bus)
+            .with_task_cancel_rx(Some(cancel_rx))
+            .with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let runtime = handed_back(runtime)?;
+    result.map_err(|e| format!("interactive loop: {e}"))?;
+
+    assert!(
+        runtime.cancelled(),
+        "matching A2A task cancel must set cancel_requested and stop the turn"
+    );
+    // Unblock so the test exits cleanly.
+    block.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult {
+    let block_first_turn = Arc::new(AtomicBool::new(false));
+    let bus = Bus::default();
+    let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_external_prompts(1)
+        .with_bus(bus.clone());
+
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    // Publish an external A2A task, retrying until the loop subscribes.
+    let publish_bus = bus.clone();
+    tokio::spawn(async move {
+        while publish_bus
+            .control()
+            .publish(crate::bus::ControlCommand::EnqueueExternalPrompt {
+                task_id: "11111111-2222-3333-4444-555555555555".to_string(),
+                prompt:
+                    "[A2A Task 11111111-2222-3333-4444-555555555555 from http://a.local]: do work"
+                        .to_string(),
+            })
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
+    cancel_tx.send("99999999-9999-9999-9999-999999999999".to_string())?;
+
+    // Unblock the turn once it has started; a non-matching cancel must NOT
+    // cancel it.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let unblock = Arc::clone(&block_first_turn);
+    tokio::spawn(async move {
+        let _ = turn_started_rx.changed().await;
+        unblock.store(true, Ordering::SeqCst);
+    });
+
+    let spawner = ui.make_event_spawner();
+    let (runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default()
+            .with_bus(bus)
+            .with_task_cancel_rx(Some(cancel_rx))
+            .with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let runtime = handed_back(runtime)?;
+    result.map_err(|e| format!("interactive loop: {e}"))?;
+
+    let prompts = runtime.prompts.lock().unwrap_or_else(|e| e.into_inner());
+    assert_eq!(prompts.len(), 1, "one external prompt should be processed");
+    assert!(
+        prompts[0].starts_with("[A2A Task 11111111-2222-3333-4444-555555555555"),
+        "non-matching cancel must not abort the running turn"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn matching_a2a_task_cancel_stops_running_turn() -> TResult {
+    let block = Arc::new(AtomicBool::new(false));
+    let bus = Bus::default();
+    let runtime = CancellableBlockingRuntime::new(Arc::clone(&block)).with_bus(bus.clone());
+    let ui = FakeInteractiveUi::with_prompts(&[])
+        .with_expected_external_prompts(1)
+        .with_bus(bus.clone());
+
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    // Publish an external A2A task that blocks, then send a matching cancel
+    // shortly after the turn has started.
+    let publish_bus = bus.clone();
+    tokio::spawn(async move {
+        while publish_bus
+            .control()
+            .publish(crate::bus::ControlCommand::EnqueueExternalPrompt {
+                task_id: "22222222-3333-4444-5555-666666666666".to_string(),
+                prompt:
+                    "[A2A Task 22222222-3333-4444-5555-666666666666 from http://a.local]: do work"
+                        .to_string(),
+            })
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
+
+    let mut started_rx = runtime.started_rx();
+    let cancel_tx_clone = cancel_tx.clone();
+    tokio::spawn(async move {
+        // Wait until the turn has started, then cancel the matching task.
+        let _ = started_rx.changed().await;
+        if cancel_tx_clone
+            .send("22222222-3333-4444-5555-666666666666".to_string())
+            .is_err()
+        {
+            panic!("the cancel send must reach the loop");
+        }
+    });
+
+    let spawner = ui.make_event_spawner();
+    let (runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default()
+            .with_bus(bus)
+            .with_task_cancel_rx(Some(cancel_rx))
+            .with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let runtime = handed_back(runtime)?;
+    result.map_err(|e| format!("interactive loop: {e}"))?;
+
+    assert!(
+        runtime.cancelled(),
+        "matching A2A task cancel must stop the running turn"
+    );
+    // Unblock so the test exits cleanly.
+    block.store(true, Ordering::SeqCst);
+    Ok(())
+}

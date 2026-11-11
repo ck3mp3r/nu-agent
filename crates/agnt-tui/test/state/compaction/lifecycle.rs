@@ -2,8 +2,8 @@
 //! status mutated in place, and a replay that never spins.
 
 use super::*;
-use agnt_core::transcript::ir::NoticeKind;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::NoticeKind;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// The transcript's compaction task lines, in order.
 fn task_lines(state: &AppState) -> Vec<(String, String, ItemStatus)> {
@@ -28,7 +28,7 @@ fn compaction_start_pushes_one_in_progress_task_line() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
 
     // -- Check
     let lines = task_lines(&state);
@@ -50,13 +50,13 @@ fn compaction_start_pushes_one_in_progress_task_line() -> Result<()> {
 fn compaction_complete_mutates_the_same_line_in_place() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
     let before = task_lines(&state);
 
     // -- Exec
     reduce_compaction(
         &mut state,
-        completed("auto", "preview", "## Summary\n- one"),
+        completed(CompactionSource::Auto, "## Summary\n- one"),
     );
 
     // -- Check
@@ -85,15 +85,12 @@ fn compaction_complete_mutates_the_same_line_in_place() -> Result<()> {
 fn compaction_failure_marks_the_same_line_failed() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
 
     // -- Exec
     reduce_compaction(
         &mut state,
-        SystemEvent::CompactionFailed {
-            source: "auto".to_string(),
-            message: "summarizer timed out".to_string(),
-        },
+        failed(CompactionSource::Auto, "summarizer timed out"),
     );
 
     // -- Check
@@ -120,7 +117,7 @@ fn compaction_finish_finds_the_line_after_cap_eviction() -> Result<()> {
     let mut state = AppState::default();
     for index in 0..1_990 {
         state.transcript.push_entry(TranscriptEntry::Message(
-            agnt_core::transcript::entry::MessageEntry {
+            agnt_render::transcript::entry::MessageEntry {
                 role: MessageRole::Assistant,
                 markdown: format!("line {index}"),
                 timestamp_millis: None,
@@ -129,11 +126,11 @@ fn compaction_finish_finds_the_line_after_cap_eviction() -> Result<()> {
             },
         ));
     }
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
     // Overflow the cap: the head entries are evicted, the line shifts with them.
     for index in 0..40 {
         state.transcript.push_entry(TranscriptEntry::Message(
-            agnt_core::transcript::entry::MessageEntry {
+            agnt_render::transcript::entry::MessageEntry {
                 role: MessageRole::Assistant,
                 markdown: format!("tail {index}"),
                 timestamp_millis: None,
@@ -148,7 +145,7 @@ fn compaction_finish_finds_the_line_after_cap_eviction() -> Result<()> {
     );
 
     // -- Exec
-    reduce_compaction(&mut state, completed("auto", "preview", "body"));
+    reduce_compaction(&mut state, completed(CompactionSource::Auto, "body"));
 
     // -- Check
     let lines = task_lines(&state);
@@ -163,14 +160,14 @@ fn compaction_finish_finds_the_line_after_cap_eviction() -> Result<()> {
 fn repeated_slash_compaction_opens_a_fresh_line_per_cycle() -> Result<()> {
     // -- Setup & Fixtures: one completed cycle.
     let mut state = AppState::default();
-    reduce_compaction(&mut state, started("slash"));
+    reduce_compaction(&mut state, started(CompactionSource::Manual));
     reduce_compaction(
         &mut state,
-        completed("slash", "preview 1", "## Summary\n- one"),
+        completed(CompactionSource::Manual, "## Summary\n- one"),
     );
 
     // -- Exec: the second cycle.
-    reduce_compaction(&mut state, started("slash"));
+    reduce_compaction(&mut state, started(CompactionSource::Manual));
 
     // -- Check: the new cycle has its own running line.
     let lines = task_lines(&state);
@@ -181,7 +178,7 @@ fn repeated_slash_compaction_opens_a_fresh_line_per_cycle() -> Result<()> {
     // -- Exec & Check: the second completion marks the second line.
     reduce_compaction(
         &mut state,
-        completed("slash", "preview 2", "## Summary\n- two"),
+        completed(CompactionSource::Manual, "## Summary\n- two"),
     );
     let lines = task_lines(&state);
     assert_eq!(lines.len(), 2, "no line is re-pushed: {lines:?}");
@@ -196,17 +193,14 @@ fn repeated_slash_compaction_opens_a_fresh_line_per_cycle() -> Result<()> {
 fn failed_auto_compaction_retrigger_opens_a_fresh_line() -> Result<()> {
     // -- Setup & Fixtures: an auto compaction that failed.
     let mut state = AppState::default();
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
     reduce_compaction(
         &mut state,
-        SystemEvent::CompactionFailed {
-            source: "auto".to_string(),
-            message: "summarizer timed out".to_string(),
-        },
+        failed(CompactionSource::Auto, "summarizer timed out"),
     );
 
     // -- Exec: the next turn retries automatically.
-    reduce_compaction(&mut state, started("auto"));
+    reduce_compaction(&mut state, started(CompactionSource::Auto));
 
     // -- Check
     let lines = task_lines(&state);
@@ -224,13 +218,19 @@ fn double_history_replay_pushes_one_done_line_per_completion() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec
-    reduce_compaction(
+    replay_records(
         &mut state,
-        completed("history", "preview 1", "## Summary\n- one"),
+        [compaction_completed(
+            CompactionSource::Auto,
+            "## Summary\n- one",
+        )],
     );
-    reduce_compaction(
+    replay_records(
         &mut state,
-        completed("history", "preview 2", "## Summary\n- two"),
+        [compaction_completed(
+            CompactionSource::Auto,
+            "## Summary\n- two",
+        )],
     );
 
     // -- Check
@@ -255,9 +255,12 @@ fn replayed_completion_pushes_a_done_line_directly() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec: the history replay folds the completion alone
-    reduce_compaction(
+    replay_records(
         &mut state,
-        completed("history", "preview", "## Summary\n- one"),
+        [compaction_completed(
+            CompactionSource::Auto,
+            "## Summary\n- one",
+        )],
     );
 
     // -- Check

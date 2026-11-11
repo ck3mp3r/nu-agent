@@ -19,7 +19,7 @@ async fn test_server_with_extensions(
     )
     .await
     .map_err(|e| format!("server should start: {e:?}"))?;
-    Ok((server, test_client()))
+    Ok((server, test_client()?))
 }
 
 /// POST a minimal `message:send` body with an optional `A2A-Extensions` header.

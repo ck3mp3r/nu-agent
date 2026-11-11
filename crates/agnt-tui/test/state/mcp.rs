@@ -1,6 +1,5 @@
 use crate::state::*;
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::McpUsabilityState;
+use agnt_runtime::bus::{FactRecord, McpServerUsability};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -142,16 +141,11 @@ fn failed_server_toggle_disables_and_drops_the_failure_reason() -> Result<()> {
     );
 
     // -- Exec: the disable response confirms Disabled with no error.
-    assert!(
-        state
-            .status
-            .reduce_ui_state_event(UiStateEvent::SetMcpServerState {
-                server: "broken".to_string(),
-                state: McpUsabilityState::Disabled,
-                error: None,
-                total: 0,
-            })
-    );
+    assert!(state.status.reduce_fact_record(FactRecord::McpServerState {
+        server: "broken".to_string(),
+        state: McpServerUsability::Disabled,
+        error: None,
+    }));
 
     // -- Check: the row stays Disabled and the failure reason is gone.
     assert_eq!(

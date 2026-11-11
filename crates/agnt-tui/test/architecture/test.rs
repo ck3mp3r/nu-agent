@@ -7,9 +7,9 @@
 //! scroll, picker state); that is out of this ban's scope.
 //!
 //! The checks are cheap source greps with regression value: one module
-//! dispatches `SystemEvent`, and the fold's domain writers are called nowhere
-//! else. The source-shape bans (no test-only hooks, no sniffing, one call-key
-//! derivation) live in [`source_shape`].
+//! dispatches the record vocabulary, and the fold's domain writers are called
+//! nowhere else. The source-shape bans (no test-only hooks, no sniffing, one
+//! call-key derivation) live in [`source_shape`].
 
 // region:    --- Modules
 
@@ -24,6 +24,17 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The only module allowed to fold bus events into state.
 const REDUCER: &str = "interaction/reducer.rs";
+
+/// The reducer's module tree: after the split the fold is one file per concern,
+/// and every file in the tree is still the single writer.
+const REDUCER_TREE: &str = "interaction/reducer/";
+
+/// Modules that implement `Fold` for a replay datum of their own.
+///
+/// A `Fold` impl is a fold arm by another name: the replay path names the one
+/// label the persisted log cannot carry, and derives the tool card the drawer
+/// owns. Both writes belong to a fold, never to a second dispatcher.
+const FOLD_IMPLS: [&str; 1] = ["state/hydration.rs"];
 
 /// The TUI's widget modules, relative to `src`.
 const WIDGET_SURFACE: &str = "widgets";
@@ -91,20 +102,20 @@ fn test_architecture_single_writer_events_are_dispatched_only_in_reduce() -> Res
     // -- Check
     assert!(
         violations.is_empty(),
-        "`SystemEvent` is matched outside `reduce`: {violations:#?}"
+        "the record vocabulary is matched outside `reduce` and its fold impls: {violations:#?}"
     );
     Ok(())
 }
 
 #[test]
 fn test_architecture_single_writer_check_flags_a_second_writer() -> Result<()> {
-    // -- Setup & Fixtures: a module that folds an event and writes the state.
+    // -- Setup & Fixtures: a module that folds a record and writes the state.
     let rogue = "runtime/rogue.rs";
     let source = concat!(
-        "fn rogue(state: &mut AppState, event: SystemEvent) -> bool {\n",
+        "fn rogue(state: &mut AppState, record: SessionRecord) -> bool {\n",
         "    state.llm.started();\n",
-        "    match event {\n",
-        "        SystemEvent::Tick => true,\n",
+        "    match record {\n",
+        "        SessionRecord::Notice(_) => true,\n",
         "    }\n",
         "}\n",
     );
@@ -201,7 +212,7 @@ fn test_architecture_terminal_library_ban_flags_an_import() -> Result<()> {
     // -- Exec & Check
     assert_eq!(terminal_library_violations(rogue, source).len(), 1);
     assert!(
-        terminal_library_violations(rogue, "use agnt_core::transcript::ir::Span;\n").is_empty()
+        terminal_library_violations(rogue, "use agnt_render::transcript::ir::Span;\n").is_empty()
     );
     Ok(())
 }
@@ -296,8 +307,14 @@ fn terminal_library_violations(module: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `module` is the reducer: the single file before the split, any file
+/// of its module tree after it.
+fn is_reducer(module: &str) -> bool {
+    module == REDUCER || module.starts_with(REDUCER_TREE)
+}
+
 fn fold_writer_violations(module: &str, source: &str) -> Vec<String> {
-    if module == REDUCER {
+    if is_reducer(module) || FOLD_IMPLS.contains(&module) {
         return Vec::new();
     }
     source
@@ -309,7 +326,7 @@ fn fold_writer_violations(module: &str, source: &str) -> Vec<String> {
 }
 
 fn dispatcher_violations(module: &str, source: &str) -> Vec<String> {
-    if module == REDUCER {
+    if is_reducer(module) || FOLD_IMPLS.contains(&module) {
         return Vec::new();
     }
     source
@@ -320,11 +337,13 @@ fn dispatcher_violations(module: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
-/// A match pattern over the vocabulary: construction always sits inside a call
-/// or a `let`, so a line that begins with the variant is a fold arm.
+/// A match pattern over the record vocabulary: construction sits inside a call
+/// or a `let`, so a line that begins with the variant and carries `=>` is a
+/// fold arm.
 fn is_event_pattern(line: &str) -> bool {
     let line = line.trim_start();
-    line.starts_with("SystemEvent::") || line.starts_with("| SystemEvent::")
+    (line.starts_with("SessionRecord::") || line.starts_with("| SessionRecord::"))
+        && line.contains("=>")
 }
 
 // endregion: --- Test Support

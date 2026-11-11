@@ -6,17 +6,16 @@ use super::*;
 
 #[tokio::test]
 async fn test_send_missing_role_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"parts": [{"type": "text", "text": "hi"}]}}))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
     assert!(
@@ -33,17 +32,16 @@ async fn test_send_missing_role_returns_400() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_missing_parts_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user"}}))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
     assert!(
@@ -64,17 +62,16 @@ async fn test_send_missing_parts_returns_400() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_stream_missing_role_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
         .json(&json!({"message": {"parts": [{"type": "text", "text": "hi"}]}}))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
     assert!(
@@ -91,17 +88,16 @@ async fn test_send_stream_missing_role_returns_400() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_stream_missing_parts_returns_400() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
         .json(&json!({"message": {"role": "user"}}))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(resp.status(), 400);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
     assert!(
@@ -132,7 +128,7 @@ async fn test_send_stream_sender_url_populates_peer_cache() -> Result<()> {
         A2aServer::start_with_blocking_timeout(card, cache.clone(), 0, TEST_BLOCKING_TIMEOUT)
             .await
             .map_err(|e| format!("{e:?}"))?;
-    let client = test_client();
+    let client = test_client()?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -141,8 +137,7 @@ async fn test_send_stream_sender_url_populates_peer_cache() -> Result<()> {
             "senderUrl": "http://stream-sender.local:4321"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     let peers = cache.list();
@@ -166,8 +161,7 @@ async fn test_send_stream_sender_url_populates_peer_cache() -> Result<()> {
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
     let _ = tokio::time::timeout(Duration::from_secs(5), resp.bytes()).await;
 
     server.shutdown().await;
@@ -176,7 +170,7 @@ async fn test_send_stream_sender_url_populates_peer_cache() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_stream_forwards_artifact_events() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
@@ -185,8 +179,7 @@ async fn test_send_stream_forwards_artifact_events() -> Result<()> {
             "contextId": "ctx-art"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     let task_id = wait_for_task_in_state(
@@ -215,8 +208,7 @@ async fn test_send_stream_forwards_artifact_events() -> Result<()> {
     client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     let body = tokio::time::timeout(Duration::from_secs(5), resp.bytes())
         .await
@@ -262,20 +254,19 @@ async fn test_agent_card_invalid_version_returns_500() -> Result<()> {
     )
     .await
     .map_err(|e| format!("{e:?}"))?;
-    let client = test_client();
+    let client = test_client()?;
 
     let resp = client
         .get(format!("{}/.well-known/agent-card.json", server.local_url))
         .send()
-        .await
-        .unwrap();
+        .await?;
 
     assert_eq!(
         resp.status(),
         500,
         "a version that cannot form an ETag must yield 500"
     );
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body["error"].as_str().unwrap_or("").contains("ETag"),
         "error must mention the invalid ETag, got: {body}"
@@ -291,7 +282,7 @@ async fn test_agent_card_invalid_version_returns_500() -> Result<()> {
 
 #[tokio::test]
 async fn test_task_cancel_without_receiver_still_cancels() -> Result<()> {
-    let (mut server, client) = test_server().await;
+    let (mut server, client) = test_server().await?;
 
     // Drop the cancel receiver so the handler's signal send fails and takes
     // the warn path instead of propagating an error.
@@ -306,9 +297,8 @@ async fn test_task_cancel_without_receiver_still_cancels() -> Result<()> {
             "configuration": {"returnImmediately": true}
         }))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let task_id = body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -317,15 +307,14 @@ async fn test_task_cancel_without_receiver_still_cancels() -> Result<()> {
     let resp = client
         .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(
         resp.status(),
         200,
         "cancel must succeed even when no receiver is attached"
     );
 
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await?;
     assert_eq!(body["task"]["status"]["state"], "TASK_STATE_CANCELED");
 
     server.shutdown().await;
@@ -360,7 +349,7 @@ async fn test_server_binds_explicit_port() -> Result<()> {
     assert_eq!(server.port, port, "server must bind the requested port");
     assert_eq!(server.local_url, format!("http://127.0.0.1:{port}"));
 
-    let client = test_client();
+    let client = test_client()?;
     let resp = client
         .get(format!("{}/health", server.local_url))
         .send()

@@ -25,4 +25,17 @@ pub trait A2aHttpClient: Clone + Send + Sync + 'static {
         &self,
         url: &str,
     ) -> impl std::future::Future<Output = Result<Vec<u8>, A2aError>> + Send;
+
+    /// GET URL with a per-request timeout, return raw bytes.
+    ///
+    /// Same error mapping as [`get_bytes`]. The default body ignores the
+    /// timeout and delegates to [`get_bytes`]; a client that owns a timeout
+    /// knob overrides it.
+    fn get_bytes_with_timeout(
+        &self,
+        url: &str,
+        _timeout: std::time::Duration,
+    ) -> impl std::future::Future<Output = Result<Vec<u8>, A2aError>> + Send {
+        self.get_bytes(url)
+    }
 }

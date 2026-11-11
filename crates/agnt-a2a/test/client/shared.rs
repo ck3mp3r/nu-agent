@@ -8,6 +8,8 @@ use std::sync::Arc;
 use crate::client::A2aClient;
 use crate::{AgentCapabilities, AgentCard, PeerCache, SendMessageConfiguration};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // region:    --- Test Support
 
 /// Non-blocking configuration: these tests assert on the in-progress task, so
@@ -20,7 +22,7 @@ pub(super) fn non_blocking() -> Option<SendMessageConfiguration> {
 }
 
 /// Start a test server, return (server, client, server_url).
-pub(super) async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
+pub(super) async fn test_setup() -> Result<(crate::A2aServer, A2aClient, String)> {
     let card = AgentCard {
         name: "test-server".into(),
         url: "http://127.0.0.1:0".into(),
@@ -35,11 +37,10 @@ pub(super) async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
         0,
         crate::TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    let client = A2aClient::new().unwrap();
+    .await?;
+    let client = A2aClient::new(crate::test_support::test_transport());
     let url = server.local_url.clone();
-    (server, client, url)
+    Ok((server, client, url))
 }
 
 // endregion: --- Test Support

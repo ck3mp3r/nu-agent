@@ -1,15 +1,14 @@
 use std::time::{Duration, Instant};
 
-use crate::interaction::reducer::reduce;
 use crate::state::*;
-use agnt_core::orchestrator::UiStateEvent;
-use agnt_core::protocol::contracts::McpUsabilityState;
-use agnt_core::protocol::events::{SystemEvent, SystemKind};
+use crate::test_support::{fold_narration, system_message};
+use agnt_runtime::bus::{FactRecord, McpServerUsability};
+use agnt_runtime::protocol::events::{NoticeKind, Usage};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
-fn reduce_ui_state_event_updates_status_fields() -> Result<()> {
+fn reduce_fact_record_updates_status_fields() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
 
@@ -17,15 +16,26 @@ fn reduce_ui_state_event_updates_status_fields() -> Result<()> {
     assert!(
         state
             .status
-            .reduce_ui_state_event(UiStateEvent::SetActiveModelIdentity("gpt-4".to_string()))
+            .reduce_fact_record(FactRecord::ActiveModelIdentity("gpt-4".to_string()))
     );
     assert_eq!(state.status.identity.active_model_identity, "gpt-4");
+
+    // -- Exec & Check: agent identity.
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::ActiveAgentIdentity("planner".to_string()))
+    );
+    assert_eq!(
+        state.status.identity.active_agent_identity.as_deref(),
+        Some("planner")
+    );
 
     // -- Exec & Check: persona icon.
     assert!(
         state
             .status
-            .reduce_ui_state_event(UiStateEvent::SetActivePersonaIcon(Some("🦀".to_string())))
+            .reduce_fact_record(FactRecord::ActivePersonaIcon(Some("🦀".to_string())))
     );
     assert_eq!(
         state.status.identity.active_persona_icon.as_deref(),
@@ -36,36 +46,47 @@ fn reduce_ui_state_event_updates_status_fields() -> Result<()> {
     assert!(
         state
             .status
-            .reduce_ui_state_event(UiStateEvent::SetContextWindowMaxTokens(Some(128_000)))
+            .reduce_fact_record(FactRecord::ContextWindowMaxTokens(Some(128_000)))
     );
     assert_eq!(state.status.tokens.context_window_max_tokens, Some(128_000));
 
-    // -- Exec & Check: mcp server state and visible tool count.
+    // -- Exec & Check: mcp server state and the llm-visible total.
     state.status.mcp.set_mcp_servers(vec![McpServerState {
         name: "server-a".to_string(),
         state: McpServerUsabilityState::Disabled,
     }]);
-    assert!(
-        state
-            .status
-            .reduce_ui_state_event(UiStateEvent::SetMcpServerState {
-                server: "server-a".to_string(),
-                state: McpUsabilityState::Enabled,
-                error: None,
-                total: 3,
-            })
-    );
+    assert!(state.status.reduce_fact_record(FactRecord::McpServerState {
+        server: "server-a".to_string(),
+        state: McpServerUsability::Enabled,
+        error: None,
+    }));
     assert_eq!(
         state.status.mcp.mcp_servers[0].state,
         McpServerUsabilityState::Enabled
     );
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::McpVisibleToolTotal(3))
+    );
     assert_eq!(state.status.mcp.llm_visible_mcp_tool_count, 3);
+
+    // -- Exec & Check: a failure reason rides the state snapshot.
+    assert!(state.status.reduce_fact_record(FactRecord::McpServerState {
+        server: "server-a".to_string(),
+        state: McpServerUsability::Failed,
+        error: Some("handshake refused".to_string()),
+    }));
+    assert_eq!(
+        state.status.mcp.failed_mcp_servers_with_reasons(),
+        vec![("server-a", Some("handshake refused"))]
+    );
 
     // -- Exec & Check: per-server visible tool count.
     assert!(
         state
             .status
-            .reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolCount {
+            .reduce_fact_record(FactRecord::McpVisibleToolCount {
                 server: "server-a".to_string(),
                 count: 5,
             })
@@ -82,7 +103,7 @@ fn reduce_ui_state_event_updates_status_fields() -> Result<()> {
     assert!(
         state
             .status
-            .reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolNames {
+            .reduce_fact_record(FactRecord::McpVisibleToolNames {
                 server: "server-a".to_string(),
                 names: vec!["b".to_string(), "a".to_string()],
             })
@@ -95,11 +116,17 @@ fn reduce_ui_state_event_updates_status_fields() -> Result<()> {
         vec!["a".to_string(), "b".to_string()]
     );
 
-    // -- Exec & Check: an unhandled event reports false.
+    // -- Exec & Check: a family the status line does not show reports false.
     assert!(
         !state
             .status
-            .reduce_ui_state_event(UiStateEvent::ClearTranscript)
+            .reduce_fact_record(FactRecord::SessionUsage(Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+            }))
     );
     Ok(())
 }
@@ -110,13 +137,9 @@ fn status_message_kind_and_warning_events() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec & Check: a warning system message sets the line and warning kind.
-    assert!(reduce(
+    assert!(fold_narration(
         &mut state,
-        SystemEvent::SystemMessage {
-            kind: SystemKind::Warning,
-            text: "hello".to_string(),
-        },
-        None,
+        system_message(NoticeKind::Warning, "hello"),
     ));
     assert_eq!(state.status.message.status_line(), "hello");
     assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);

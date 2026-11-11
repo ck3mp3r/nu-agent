@@ -1,21 +1,18 @@
-use agnt_core::protocol::persona::PersonaSummary;
+use agnt_runtime::protocol::persona::PersonaSummary;
 
 use super::*;
 
-/// Opening the agent picker queues a refresh request that drains as a
-/// `RefreshAgentPicker` orchestrator event.
+/// Opening the agent picker queues the refresh hand the orchestrator answers.
 #[test]
 fn test_picker_agent_refresh_emits_on_open() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let cancel_controller = CancelController::default();
 
     // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Agents));
-    let events = state.take_pending_events(&cancel_controller);
+    open_shared_ui_action(&mut state, SharedUiAction::Agents);
 
-    // -- Check
-    assert_eq!(agent_refresh_event_count(&events), 1);
+    // -- Check: the refresh hand is waiting.
+    assert!(state.take_next_agent_picker_refresh_request().is_some());
     Ok(())
 }
 
@@ -24,17 +21,14 @@ fn test_picker_agent_refresh_emits_on_open() -> Result<()> {
 fn test_picker_agent_refresh_dedups_before_drain() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let cancel_controller = CancelController::default();
 
     // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Agents));
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Agents));
-    let events = state.take_pending_events(&cancel_controller);
+    open_shared_ui_action(&mut state, SharedUiAction::Agents);
+    open_shared_ui_action(&mut state, SharedUiAction::Agents);
 
-    // -- Check: one request, and the flag is cleared by the drain.
-    assert_eq!(agent_refresh_event_count(&events), 1);
-    let drained_again = state.take_pending_events(&cancel_controller);
-    assert_eq!(agent_refresh_event_count(&drained_again), 0);
+    // -- Check: one hand, and the flag is cleared by the drain.
+    assert!(state.take_next_agent_picker_refresh_request().is_some());
+    assert!(state.take_next_agent_picker_refresh_request().is_none());
     Ok(())
 }
 
@@ -43,14 +37,12 @@ fn test_picker_agent_refresh_dedups_before_drain() -> Result<()> {
 fn test_picker_agent_refresh_ignores_other_actions() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let cancel_controller = CancelController::default();
 
     // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models));
-    let events = state.take_pending_events(&cancel_controller);
+    open_shared_ui_action(&mut state, SharedUiAction::Models);
 
     // -- Check
-    assert_eq!(agent_refresh_event_count(&events), 0);
+    assert!(state.take_next_agent_picker_refresh_request().is_none());
     Ok(())
 }
 
@@ -61,7 +53,7 @@ fn test_picker_agent_refresh_sets_options_and_cycle_names() -> Result<()> {
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Agent,
-        vec![agnt_core::protocol::picker::AgentPickerOption {
+        vec![agnt_runtime::protocol::picker::AgentPickerOption {
             name: "stale".to_string(),
             description: None,
             display: "stale".to_string(),
@@ -69,10 +61,13 @@ fn test_picker_agent_refresh_sets_options_and_cycle_names() -> Result<()> {
         }],
     );
     state.status.identity.agent_cycle_names = vec!["stale".to_string()];
-    state.picker.open(ActivePicker::Agent);
+    open_shared_ui_action(&mut state, SharedUiAction::Agents);
+    let reply = state
+        .take_next_agent_picker_refresh_request()
+        .ok_or("the agent picker queues its refresh hand")?;
 
-    // -- Exec
-    state.reduce_ui_state_event(UiStateEvent::SetAgentPickerOptions(vec![
+    // -- Exec: the orchestrator answers the hand.
+    reply.try_send(Ok(vec![
         PersonaSummary {
             name: "planner".to_string(),
             description: Some("Plans".to_string()),
@@ -83,7 +78,8 @@ fn test_picker_agent_refresh_sets_options_and_cycle_names() -> Result<()> {
             description: None,
             builtin: false,
         },
-    ]));
+    ]))?;
+    state.poll_picker_replies();
 
     // -- Check: the picker rows follow the scan, name-sorted.
     let ids: Vec<String> = state
@@ -106,16 +102,11 @@ fn test_picker_agent_refresh_sets_options_and_cycle_names() -> Result<()> {
 
 // region:    --- Test Support
 
-fn agent_refresh_event_count(events: &[OrchestratorEvent]) -> usize {
-    events
-        .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                OrchestratorEvent::UiRequest(UiRequest::RefreshAgentPicker)
-            )
-        })
-        .count()
+/// Fold one shared UI action through the control fold and apply the launch it
+/// queues, exactly as the live surface does.
+fn open_shared_ui_action(state: &mut AppState, action: SharedUiAction) {
+    fold_control(state, &ControlCommand::SharedUiAction { action });
+    state.drain_launch_requests();
 }
 
 // endregion: --- Test Support

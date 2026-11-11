@@ -2,16 +2,15 @@ use super::*;
 
 #[tokio::test]
 async fn test_get_task_with_history_length_full() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task via send (adds message to history)
     let send_resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"turn 1"}]}}))
         .send()
-        .await
-        .unwrap();
-    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+        .await?;
+    let send_body: serde_json::Value = send_resp.json().await?;
     let task_id = send_body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -21,9 +20,8 @@ async fn test_get_task_with_history_length_full() -> Result<()> {
     let resp = client
         .get(format!("{}/tasks/{}", server.local_url, task_id))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let history = body["task"]["history"]
         .as_array()
         .ok_or("should have history")?;
@@ -35,7 +33,7 @@ async fn test_get_task_with_history_length_full() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_task_with_history_length_filter() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
     let store = server.task_store();
 
     // Create a task via send (adds first message to history)
@@ -43,9 +41,8 @@ async fn test_get_task_with_history_length_filter() -> Result<()> {
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"turn 1"}]}}))
         .send()
-        .await
-        .unwrap();
-    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+        .await?;
+    let send_body: serde_json::Value = send_resp.json().await?;
     let task_id = send_body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -88,9 +85,8 @@ async fn test_get_task_with_history_length_filter() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let history = body["task"]["history"]
         .as_array()
         .ok_or("should have history")?;
@@ -107,16 +103,15 @@ async fn test_get_task_with_history_length_filter() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_task_with_history_length_zero() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
 
     // Create a task
     let send_resp = client
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello"}]}}))
         .send()
-        .await
-        .unwrap();
-    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+        .await?;
+    let send_body: serde_json::Value = send_resp.json().await?;
     let task_id = send_body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -129,9 +124,8 @@ async fn test_get_task_with_history_length_zero() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     assert!(
         body["task"].get("history").is_none(),
         "history should be absent when historyLength=0"
@@ -143,7 +137,7 @@ async fn test_get_task_with_history_length_zero() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_task_with_history_length_invalid() -> Result<()> {
-    let (server, client) = test_server().await;
+    let (server, client) = test_server().await?;
     let store = server.task_store();
 
     // Create a task
@@ -151,9 +145,8 @@ async fn test_get_task_with_history_length_invalid() -> Result<()> {
         .post(format!("{}/message:send", server.local_url))
         .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hello"}]}}))
         .send()
-        .await
-        .unwrap();
-    let send_body: serde_json::Value = send_resp.json().await.unwrap();
+        .await?;
+    let send_body: serde_json::Value = send_resp.json().await?;
     let task_id = send_body["task"]["id"]
         .as_str()
         .ok_or("should have task id")?
@@ -182,9 +175,8 @@ async fn test_get_task_with_history_length_invalid() -> Result<()> {
             server.local_url, task_id
         ))
         .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = resp.json().await.unwrap();
+        .await?;
+    let body: serde_json::Value = resp.json().await?;
     let history = body["task"]["history"]
         .as_array()
         .ok_or("should have history")?;
@@ -207,13 +199,12 @@ async fn test_incoming_task_channel_with_context_and_parent() -> Result<()> {
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
+    .await?;
     let mut task_rx = server
         .take_incoming_task_receiver()
         .ok_or("should have incoming task receiver")?;
 
-    let client = test_client();
+    let client = test_client()?;
 
     // Send a task with contextId and parentTaskId
     let resp = client
@@ -224,8 +215,7 @@ async fn test_incoming_task_channel_with_context_and_parent() -> Result<()> {
             "parentTaskId": "parent-888"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     // Verify the event was received with all fields

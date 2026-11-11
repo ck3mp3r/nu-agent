@@ -1,8 +1,8 @@
 //! The notice family widget: compaction and system notices on their lanes.
 
-use agnt_core::transcript::entry::NoticeEntry;
-use agnt_core::transcript::ir::{ContentLine, StyleHint};
 use agnt_render::catalog::{LaneKind, LaneLine};
+use agnt_render::transcript::entry::NoticeEntry;
+use agnt_render::transcript::ir::{ContentLine, StyleHint};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 

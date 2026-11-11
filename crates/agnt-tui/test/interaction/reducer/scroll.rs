@@ -23,7 +23,7 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     }
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('j'),
         },
         None,
@@ -49,7 +49,7 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     }
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('j'),
         },
         None,
@@ -77,7 +77,7 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     for _ in 0..7 {
         reduce(
             &mut state,
-            SystemEvent::KeyPressed {
+            UiInput::KeyPressed {
                 key: Key::Char('j'),
             },
             None,
@@ -108,7 +108,7 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     }
     reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('k'),
         },
         None,
@@ -138,11 +138,7 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::PageUp },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::PageUp }, None);
     assert_eq!(state.scroll.cursor_visual_row, 2);
     assert_eq!(state.scroll.scroll_offset, 0);
     assert!(!state.scroll.following_tail);
@@ -164,11 +160,7 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::PageDown },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::PageDown }, None);
     assert_eq!(state.scroll.cursor_visual_row, 8);
     assert_eq!(state.scroll.scroll_offset, 8);
     assert!(!state.scroll.following_tail);
@@ -191,11 +183,7 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::PageUp },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::PageUp }, None);
     let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(state.scroll.cursor_visual_row, 2);
     assert_eq!(sel.cursor(), 2);
@@ -218,11 +206,7 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::PageDown },
-        None,
-    );
+    reduce(&mut state, UiInput::KeyPressed { key: Key::PageDown }, None);
     let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(state.scroll.cursor_visual_row, 8);
     assert_eq!(sel.cursor(), 8);
@@ -253,7 +237,7 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
     // -- Exec
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 5,
             row: 5,
@@ -270,7 +254,7 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
     // -- Exec
     reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: true,
             column: 5,
             row: 5,
@@ -292,7 +276,7 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
     // -- Exec
     reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 5,
             row: 5,
@@ -327,7 +311,7 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
     // -- Exec
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 5,
             row: 5,
@@ -346,7 +330,7 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
     // -- Exec: a point left of the area.
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 9,
             row: 5,
@@ -361,7 +345,7 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
     // -- Exec: the area's top-left cell.
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 10,
             row: 2,
@@ -400,7 +384,7 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
     // -- Exec
     reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: false,
             column: 5,
             row: 5,
@@ -416,7 +400,7 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
     // -- Exec
     reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: true,
             column: 5,
             row: 5,
@@ -439,7 +423,7 @@ fn test_wheel_scroll_insert_mode_noop_reports_mode_change() -> Result<()> {
     // -- Exec
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: true,
             column: 5,
             row: 5,
@@ -465,7 +449,7 @@ fn test_wheel_scroll_normal_mode_noop_reports_no_change() -> Result<()> {
     // -- Exec
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: true,
             column: 5,
             row: 5,
@@ -492,7 +476,7 @@ fn test_wheel_scroll_insert_mode_scroll_change_reports_change() -> Result<()> {
     // -- Exec
     let changed = reduce(
         &mut state,
-        SystemEvent::WheelScrolled {
+        UiInput::WheelScrolled {
             up: true,
             column: 5,
             row: 5,

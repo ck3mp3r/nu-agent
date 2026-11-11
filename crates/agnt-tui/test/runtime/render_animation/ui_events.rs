@@ -1,10 +1,15 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
-use agnt_core::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
+use crate::state::InfoPanel;
+use crate::test_support::{system_message, tool_started};
+use agnt_runtime::bus::{ControlCommand, FactRecord, McpServerUsability, SharedUiAction};
+use agnt_runtime::protocol::events::{
+    AutoResolution, NoticeKind, PermissionRecord, RequestId, SessionRecord,
+};
 
-/// A warning SystemEvent sets the status line and marks the frame dirty; a
+/// A warning narration sets the status line and marks the frame dirty; a
 /// TurnError falls through to the transcript and finalizes the cycle.
 #[test]
 fn ui_event_warning_and_turn_error() -> Result<()> {
@@ -13,10 +18,7 @@ fn ui_event_warning_and_turn_error() -> Result<()> {
     coordinator.set_render_needed(false);
 
     // -- Exec
-    let handled = coordinator.reduce_system_event(SystemEvent::SystemMessage {
-        kind: SystemKind::Warning,
-        text: "warned".to_string(),
-    });
+    let handled = coordinator.fold_narration(&system_message(NoticeKind::Warning, "warned"));
     if handled {
         coordinator.mark_render_needed();
     }
@@ -32,10 +34,7 @@ fn ui_event_warning_and_turn_error() -> Result<()> {
     erroring.state.input_locked = true;
 
     // -- Exec
-    let handled = erroring.reduce_system_event(SystemEvent::SystemMessage {
-        kind: SystemKind::TurnError,
-        text: "boom".to_string(),
-    });
+    let handled = erroring.fold_narration(&system_message(NoticeKind::TurnError, "boom"));
 
     // -- Check
     assert!(handled, "TurnError must fall through and be handled");
@@ -48,17 +47,17 @@ fn ui_event_warning_and_turn_error() -> Result<()> {
     Ok(())
 }
 
-/// Status-owned UiStateEvents route through StatusState; non-status variants
-/// fall back to AppState.
+/// Facts fold through `StatusState`; UI-state events stay with `AppState`.
 #[test]
-fn reduce_ui_state_event_routing() -> Result<()> {
+fn reduce_fact_record_routing() -> Result<()> {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
 
-    // -- Exec & Check: status variants.
-    coordinator.reduce_ui_state_event(UiStateEvent::SetActiveModelIdentity(
-        "openai/gpt-4o".to_string(),
-    ));
+    // -- Exec & Check: the kernel-state families.
+    assert!(
+        coordinator
+            .reduce_fact_record(FactRecord::ActiveModelIdentity("openai/gpt-4o".to_string(),))
+    );
     coordinator.mark_render_needed();
     assert_eq!(
         coordinator.state.status.identity.active_model_identity,
@@ -66,30 +65,34 @@ fn reduce_ui_state_event_routing() -> Result<()> {
     );
     assert!(coordinator.render_needed());
 
-    coordinator.reduce_ui_state_event(UiStateEvent::SetActivePersonaIcon(Some("icon".to_string())));
+    assert!(
+        coordinator.reduce_fact_record(FactRecord::ActivePersonaIcon(Some("icon".to_string())))
+    );
     assert_eq!(
         coordinator.state.status.identity.active_persona_icon,
         Some("icon".to_string())
     );
 
-    coordinator.reduce_ui_state_event(UiStateEvent::SetContextWindowMaxTokens(Some(128_000)));
+    assert!(coordinator.reduce_fact_record(FactRecord::ContextWindowMaxTokens(Some(128_000))));
     assert_eq!(
         coordinator.state.status.tokens.context_window_max_tokens,
         Some(128_000)
     );
 
-    coordinator.reduce_ui_state_event(UiStateEvent::SetMcpServerState {
+    assert!(coordinator.reduce_fact_record(FactRecord::McpServerState {
         server: "gh".to_string(),
-        state: agnt_core::protocol::contracts::McpUsabilityState::Failed,
+        state: McpServerUsability::Failed,
         error: Some("boom".to_string()),
-        total: 3,
-    });
+    }));
+    assert!(coordinator.reduce_fact_record(FactRecord::McpVisibleToolTotal(3)));
     assert_eq!(coordinator.state.status.mcp.llm_visible_mcp_tool_count, 3);
 
-    coordinator.reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolCount {
-        server: "gh".to_string(),
-        count: 5,
-    });
+    assert!(
+        coordinator.reduce_fact_record(FactRecord::McpVisibleToolCount {
+            server: "gh".to_string(),
+            count: 5,
+        })
+    );
     assert_eq!(
         coordinator
             .state
@@ -99,10 +102,12 @@ fn reduce_ui_state_event_routing() -> Result<()> {
         5
     );
 
-    coordinator.reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolNames {
-        server: "gh".to_string(),
-        names: vec!["z_tool".to_string(), "a_tool".to_string()],
-    });
+    assert!(
+        coordinator.reduce_fact_record(FactRecord::McpVisibleToolNames {
+            server: "gh".to_string(),
+            names: vec!["z_tool".to_string(), "a_tool".to_string()],
+        })
+    );
     assert_eq!(
         coordinator
             .state
@@ -117,7 +122,7 @@ fn reduce_ui_state_event_routing() -> Result<()> {
     assert!(fallback.state.transcript.entries().is_empty());
 
     // -- Exec
-    fallback.reduce_ui_state_event(UiStateEvent::PushStartupLogo);
+    fallback.state.push_startup_logo();
 
     // -- Check: non-status variants fall through to AppState.
     let has_logo = fallback
@@ -130,9 +135,9 @@ fn reduce_ui_state_event_routing() -> Result<()> {
     Ok(())
 }
 
-/// A PermissionRequested SystemEvent applies all effects and marks the frame
-/// dirty; decision variants skip effects; a pre-authorize display is applied
-/// before the prompt opens.
+/// A permission request applies all effects and marks the frame dirty;
+/// resolution records skip effects; a pre-authorize display is applied before
+/// the prompt opens.
 #[test]
 fn ui_event_permission_group() -> Result<()> {
     // -- Setup & Fixtures
@@ -140,24 +145,25 @@ fn ui_event_permission_group() -> Result<()> {
     coordinator.set_render_needed(false);
     coordinator.state.status.message.set_message("idle");
     coordinator.state.scroll.following_tail = false;
-    let event = SystemEvent::PermissionRequested {
-        request_id: RequestId::new("ask-0000000000000001"),
-        context: PermissionRequestContext {
-            tool: "nu(command=echo hi)".to_string(),
-            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            scope: "nested".to_string(),
-            target_field: Some("command".to_string()),
-            pattern: "*".to_string(),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
-        },
-    };
+    let event = SessionRecord::Permission(PermissionRecord::Requested {
+        request_id: RequestId::from_minted("ask-0000000000000001"),
+        call_id: agnt_runtime::protocol::events::ToolCallId::from_key(
+            "nu\n{\"command\":\"echo hi\"}",
+        ),
+        tool: "nu(command=echo hi)".to_string(),
+        source: "closure".to_string(),
+        mode: Some("apply".to_string()),
+        rule_identity: "nested:nu.command:*".to_string(),
+        scope: "nested".to_string(),
+        target_field: Some("command".to_string()),
+        pattern: "*".to_string(),
+        summary: "→ {\"command\":\"echo hi\"}".to_string(),
+        shows_preview: true,
+        preview: None,
+    });
 
     // -- Exec
-    let handled = coordinator.reduce_system_event(event);
+    let handled = coordinator.fold_record(&event);
     if handled {
         coordinator.mark_render_needed();
     }
@@ -169,41 +175,44 @@ fn ui_event_permission_group() -> Result<()> {
     assert!(coordinator.render_needed());
     assert!(coordinator.state.permission.has_prompt());
 
-    // -- Exec & Check: decision variants skip effects.
+    // -- Exec & Check: resolution records skip effects.
     for event in [
-        SystemEvent::PermissionDecisionSubmitted {
-            request_id: RequestId::new("ask-0000000000000001"),
+        SessionRecord::Permission(PermissionRecord::Decided {
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             decision: PermissionDecision::AllowOnce,
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-        },
-        SystemEvent::PermissionDecisionTimedOut {
-            request_id: RequestId::new("ask-0000000000000001"),
-        },
-        SystemEvent::PermissionDecisionIgnored {
-            request_id: RequestId::new("ask-0000000000000001"),
+            rule_identity: "nested:nu.command:*".to_string(),
+        }),
+        SessionRecord::Permission(PermissionRecord::TimedOut {
+            request_id: RequestId::from_minted("ask-0000000000000001"),
+        }),
+        SessionRecord::Permission(PermissionRecord::Ignored {
+            request_id: RequestId::from_minted("ask-0000000000000001"),
             reason: "user closed".to_string(),
-        },
-        SystemEvent::PermissionRequestCancelled {
-            request_id: RequestId::new("ask-0000000000000001"),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-        },
-        SystemEvent::PermissionAutoResolved {
-            matched_rule_identity: "tool:read".to_string(),
-            action: AutoResolutionAction::Allow,
+        }),
+        SessionRecord::Permission(PermissionRecord::Cancelled {
+            request_id: RequestId::from_minted("ask-0000000000000001"),
+            rule_identity: "nested:nu.command:*".to_string(),
+        }),
+        SessionRecord::Permission(PermissionRecord::AutoResolved {
+            rule_identity: "tool:read".to_string(),
+            action: AutoResolution::Allow,
             reason: None,
-        },
+            call_id: None,
+            shows_preview: false,
+            preview: None,
+        }),
     ] {
         let mut decision = RuntimeCoordinator::new(120, 40, Some(false));
         decision.set_render_needed(false);
         decision.state.status.message.set_message("idle");
         decision.state.scroll.following_tail = false;
 
-        let handled = decision.reduce_system_event(event);
+        let handled = decision.fold_record(&event);
         if handled {
             decision.mark_render_needed();
         }
 
-        assert!(!handled, "decision variants must reduce to false");
+        assert!(!handled, "resolution records must reduce to false");
         assert_eq!(decision.state.status.message.status_line(), "idle");
         assert!(!decision.state.scroll.following_tail);
         assert!(!decision.render_needed());
@@ -211,35 +220,30 @@ fn ui_event_permission_group() -> Result<()> {
 
     // -- Setup & Fixtures: a pending tool call for the pre-authorize display.
     let mut preview = RuntimeCoordinator::new(120, 40, Some(false));
-    preview.reduce_system_event(SystemEvent::ToolStarted {
-        call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("write".to_string()),
-            "user",
-            "{}",
-            agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+    preview.fold_record(&tool_started(
+        agnt_runtime::protocol::events::ToolCall::new(
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Unknown,
+            r#"{"path":"a.rs"}"#,
         ),
-    });
-    let context = PermissionRequestContext {
-        tool: "write".to_string(),
-        tool_key: "write\n{}".to_string(),
+    ));
+    let request = SessionRecord::Permission(PermissionRecord::Requested {
+        request_id: RequestId::from_minted("ask-0000000000000001"),
+        call_id: agnt_runtime::protocol::events::ToolCallId::from_key("edit\n{\"path\":\"a.rs\"}"),
+        tool: "edit".to_string(),
         source: "user".to_string(),
-        mode: Some("edit".to_string()),
-        matched_rule_identity: "identity".to_string(),
+        mode: Some("apply".to_string()),
+        rule_identity: "identity".to_string(),
         scope: "scope".to_string(),
         target_field: Some("target".to_string()),
         pattern: "pattern".to_string(),
         summary: "summary".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: Some("preview-title".to_string()),
-            sections: vec![],
-        }),
-    };
+        shows_preview: true,
+        preview: Some("--- a\n+++ b\n".to_string()),
+    });
 
     // -- Exec
-    let handled = preview.reduce_system_event(SystemEvent::PermissionRequested {
-        request_id: RequestId::new("ask-0000000000000001"),
-        context,
-    });
+    let handled = preview.fold_record(&request);
 
     // -- Check: the display is set on the entry's preview before the prompt
     // opens.
@@ -247,11 +251,55 @@ fn ui_event_permission_group() -> Result<()> {
     let preview_pushed = preview.state.transcript.entries().iter().any(|entry| {
         matches!(
             entry,
-            agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+            agnt_render::transcript::entry::TranscriptEntry::Tool(tool)
                 if tool.preview.is_some()
         )
     });
     assert!(preview_pushed);
     assert!(preview.state.permission.has_prompt());
+    Ok(())
+}
+
+/// WHEN a control command folds to a state change, THE control intake SHALL
+/// mark the frame dirty: the loop repaints only on the flag, and the control
+/// arm publishes no marker of its own.
+#[test]
+fn test_runtime_render_animation_control_fold_marks_render_needed() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+    coordinator.set_render_needed(false);
+
+    // -- Exec: the status handoff a slash command publishes.
+    let changed = coordinator.reduce_control(&ControlCommand::SharedUiAction {
+        action: SharedUiAction::Status,
+    });
+
+    // -- Check: the fold opened the panel and marked the frame dirty.
+    assert!(changed, "a shared UI action folds to true");
+    assert_eq!(
+        coordinator.state.info_panel,
+        Some(InfoPanel::Status),
+        "the folded action opens the panel it names"
+    );
+    assert!(
+        coordinator.render_needed(),
+        "a control fold that changed the state must mark the frame dirty"
+    );
+
+    // -- Setup & Fixtures: a control command the surface does not own.
+    let mut foreign = RuntimeCoordinator::new(120, 40, Some(false));
+    foreign.set_render_needed(false);
+
+    // -- Exec
+    let changed = foreign.reduce_control(&ControlCommand::CompactionRequested {
+        source: agnt_runtime::protocol::events::CompactionSource::Manual,
+    });
+
+    // -- Check: a fold that changed nothing leaves the flag untouched.
+    assert!(!changed, "a foreign control command folds to false");
+    assert!(
+        !foreign.render_needed(),
+        "a control fold that changed nothing must not mark the frame dirty"
+    );
     Ok(())
 }

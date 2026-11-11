@@ -1,0 +1,119 @@
+use super::*;
+
+/// `resolve` prefixes both user-provided and auto-generated session ids with
+/// the cwd-derived directory prefix.
+#[tokio::test]
+async fn resolve_session_request_prefixes_ids() -> Result<()> {
+    use crate::session::RigStoreConfig;
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+
+    // -- Setup & Fixtures
+    let resolver = DefaultSessionResolver::new(RigStoreConfig::in_memory());
+    let cwd = std::path::PathBuf::from("/home/user/project");
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
+
+    // -- Exec & Check: a user-provided id is prefixed
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: false,
+            session_id: Some("foo".to_string()),
+            cwd: cwd.clone(),
+        })
+        .await?;
+    let id = result
+        .final_session_id
+        .ok_or("should have a final session id")?;
+    assert_eq!(&id[..17], format!("{prefix}-"));
+    assert!(
+        id.ends_with("foo"),
+        "expected id to end with 'foo', got: {id}"
+    );
+
+    // -- Exec & Check: an auto-generated id is prefixed
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            session_id: None,
+            cwd: cwd.clone(),
+        })
+        .await?;
+    let id = result
+        .final_session_id
+        .ok_or("should have a final session id")?;
+    assert!(
+        id.starts_with(&format!("{prefix}-")),
+        "expected id to start with '{prefix}-', got: {id}"
+    );
+    Ok(())
+}
+
+/// Attaching an existing session loads its messages and leaves
+/// `last_total_tokens` unset.
+#[tokio::test]
+async fn attach_existing_session_returns_initial_messages_and_no_tokens() -> Result<()> {
+    use crate::session::RigStoreConfig;
+    use crate::session::resolver::{
+        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
+    };
+    use crate::types::Message;
+    use tempfile::TempDir;
+
+    // -- Setup & Fixtures
+    let temp_dir = TempDir::new()?;
+    let rig =
+        RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(temp_dir.path());
+    let cwd = std::path::PathBuf::from("/home/user/project");
+    let prefix = crate::session::prefix::dir_prefix(&cwd);
+    let raw_id = "existing-session";
+    let prefixed_id = format!("{prefix}-{raw_id}");
+    let messages = vec![Message::user("hello"), Message::assistant("world")];
+    seed(&rig, &prefixed_id, messages).await?;
+
+    // -- Exec
+    let resolver = DefaultSessionResolver::new(rig);
+    let result = resolver
+        .resolve(SessionResolutionInput {
+            use_tui: true,
+            session_id: Some(raw_id.to_string()),
+            cwd: cwd.clone(),
+        })
+        .await?;
+
+    // -- Check
+    assert!(
+        result.should_hydrate_transcript,
+        "should_hydrate_transcript must be true when session has messages"
+    );
+    assert!(
+        !result.initial_messages.is_empty(),
+        "initial_messages must be non-empty when session has messages"
+    );
+    assert!(
+        result.last_total_tokens.is_none(),
+        "last_total_tokens must be None for existing sessions, got: {:?}",
+        result.last_total_tokens
+    );
+    Ok(())
+}
+
+// -- Test Support
+
+/// Seed the rig-memory store of `session_id` with `messages`.
+async fn seed(
+    rig: &crate::session::RigStoreConfig,
+    session_id: &str,
+    messages: Vec<Message>,
+) -> Result<()> {
+    let store = rig
+        .open(session_id)
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, session_id)
+        .map_err(|e| format!("rig store load should succeed: {e:?}"))?;
+    conversation.extend(messages);
+    rig_memory::save(&*store, session_id, &mut conversation)
+        .map_err(|e| format!("rig store save should succeed: {e:?}"))?;
+    Ok(())
+}

@@ -22,6 +22,7 @@ fn non_blocking() -> Option<SendMessageConfiguration> {
 #[tokio::test]
 async fn test_agent_start_shutdown() -> Result<()> {
     let handle = AgentBuilder::new("test-agent")
+        .with_transport(crate::test_support::test_transport())
         .description("A test agent")
         .port(0)
         .mesh_key("test-mesh".into())
@@ -44,9 +45,7 @@ async fn test_agent_start_shutdown() -> Result<()> {
     assert_eq!(handle.card().description.as_deref(), Some("A test agent"));
 
     // Health endpoint should respond
-    let resp = reqwest::get(&format!("{}/health", handle.server.local_url))
-        .await
-        .unwrap();
+    let resp = reqwest::get(&format!("{}/health", handle.server.local_url)).await?;
     assert_eq!(resp.status(), 200);
 
     let port = handle.server.port;
@@ -83,6 +82,7 @@ async fn test_agent_card_reflects_persona() -> Result<()> {
     }];
 
     let handle = AgentBuilder::new("coder")
+        .with_transport(crate::test_support::test_transport())
         .description("A coding agent")
         .skills(skills)
         .port(0)
@@ -92,7 +92,7 @@ async fn test_agent_card_reflects_persona() -> Result<()> {
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -114,6 +114,7 @@ async fn test_agent_card_reflects_persona() -> Result<()> {
 #[tokio::test]
 async fn test_agent_empty_skills() -> Result<()> {
     let handle = AgentBuilder::new("no-skills")
+        .with_transport(crate::test_support::test_transport())
         .description("Has no explicit skills")
         .port(0)
         .mesh_key("test-mesh".into())
@@ -122,7 +123,7 @@ async fn test_agent_empty_skills() -> Result<()> {
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -135,6 +136,7 @@ async fn test_agent_empty_skills() -> Result<()> {
 #[tokio::test]
 async fn test_agent_no_description() -> Result<()> {
     let handle = AgentBuilder::new("no-desc")
+        .with_transport(crate::test_support::test_transport())
         .port(0)
         .mesh_key("test-mesh".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
@@ -142,7 +144,7 @@ async fn test_agent_no_description() -> Result<()> {
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -167,6 +169,7 @@ async fn test_agent_start_with_card() -> Result<()> {
     };
 
     let handle = AgentBuilder::new("custom-card")
+        .with_transport(crate::test_support::test_transport())
         .with_card(card)
         .port(0)
         .mesh_key("test-mesh".into())
@@ -196,6 +199,7 @@ async fn test_agent_start_with_card() -> Result<()> {
 #[tokio::test]
 async fn test_two_agents_start_independently() -> Result<()> {
     let agent_a = AgentBuilder::new("agent-a")
+        .with_transport(crate::test_support::test_transport())
         .description("First agent")
         .port(0)
         .mesh_key("test-mesh".into())
@@ -204,6 +208,7 @@ async fn test_two_agents_start_independently() -> Result<()> {
         .await
         .map_err(|e| format!("{e:?}"))?;
     let agent_b = AgentBuilder::new("agent-b")
+        .with_transport(crate::test_support::test_transport())
         .description("Second agent")
         .port(0)
         .mesh_key("test-mesh".into())
@@ -221,7 +226,7 @@ async fn test_two_agents_start_independently() -> Result<()> {
     );
 
     // Both should serve their cards correctly
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let card_a = get_agent_card(&client, &agent_a.server.local_url)
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -299,6 +304,7 @@ async fn test_two_agents_start_independently() -> Result<()> {
 #[tokio::test]
 async fn test_agent_discovers_self() -> Result<()> {
     let handle = AgentBuilder::new("self-aware-agent")
+        .with_transport(crate::test_support::test_transport())
         .description("An agent that knows itself")
         .port(0)
         .mesh_key("test-mesh".to_string())
@@ -357,6 +363,7 @@ async fn test_agent_discovers_self() -> Result<()> {
 #[tokio::test]
 async fn test_mdns_name_appends_port_when_auto() -> Result<()> {
     let builder = AgentBuilder::new("researcher")
+        .with_transport(crate::test_support::test_transport())
         .port(0)
         .mesh_key("test".to_string())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT);
@@ -374,6 +381,7 @@ async fn test_mdns_name_appends_port_when_auto() -> Result<()> {
 #[tokio::test]
 async fn test_mdns_name_uses_exact_name_when_explicit() -> Result<()> {
     let builder = AgentBuilder::new("my-custom-agent")
+        .with_transport(crate::test_support::test_transport())
         .has_explicit_name(true)
         .port(0)
         .mesh_key("test".to_string())
@@ -395,6 +403,7 @@ async fn test_mdns_name_uses_exact_name_when_explicit() -> Result<()> {
 #[tokio::test]
 async fn reregister_token_is_set_after_build() -> Result<()> {
     let handle = AgentBuilder::new("test-rereg-token")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("test".into())
@@ -410,6 +419,7 @@ async fn reregister_token_is_set_after_build() -> Result<()> {
 #[tokio::test]
 async fn reregister_task_does_not_block_startup() -> Result<()> {
     let handle = AgentBuilder::new("test-rereg-noblock")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("test".into())
@@ -418,9 +428,7 @@ async fn reregister_task_does_not_block_startup() -> Result<()> {
         .await
         .map_err(|e| format!("{e:?}"))?;
     assert!(handle.server.port > 0);
-    let resp = reqwest::get(&format!("{}/health", handle.server.local_url))
-        .await
-        .unwrap();
+    let resp = reqwest::get(&format!("{}/health", handle.server.local_url)).await?;
     assert_eq!(resp.status(), 200);
     handle.shutdown().await;
     Ok(())
@@ -429,6 +437,7 @@ async fn reregister_task_does_not_block_startup() -> Result<()> {
 #[tokio::test]
 async fn shutdown_cancels_reregister_without_panic() -> Result<()> {
     let handle = AgentBuilder::new("test-rereg-cancel")
+        .with_transport(crate::test_support::test_transport())
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("test".into())

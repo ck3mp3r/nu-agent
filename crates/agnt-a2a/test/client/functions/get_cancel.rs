@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_get_task() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     let msg = Message {
         role: Role::User,
@@ -26,18 +26,19 @@ async fn test_get_task() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_get_task_not_found() {
-    let (_server, client, url) = test_setup().await;
+async fn test_get_task_not_found() -> Result<()> {
+    let (_server, client, url) = test_setup().await?;
     let result = get_task(&client, &url, "nonexistent-id").await;
     assert!(
         matches!(result, Err(A2aError::TaskNotFound(_))),
         "Expected TaskNotFound, got: {result:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_cancel_task() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     let msg = Message {
         role: Role::User,
@@ -61,7 +62,7 @@ async fn test_cancel_task() -> Result<()> {
 
 #[tokio::test]
 async fn test_cancel_already_completed() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     let msg = Message {
         role: Role::User,

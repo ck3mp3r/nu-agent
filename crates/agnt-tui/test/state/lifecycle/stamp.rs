@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::state::PromptFacts;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// WHEN the boundary stamps a submission, THE facts SHALL be the instant of the
 /// stamp and the identities active at it.

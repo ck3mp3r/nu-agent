@@ -2,22 +2,12 @@ use super::*;
 
 use crate::interaction::input::{TerminalMouse, TerminalResize};
 use crate::rendering::layout::INPUT_MIN_HEIGHT;
-use crate::state::{CTRL_C_QUIT_CONFIRM_STATUS, InfoPanel, PermissionPrompt};
+use crate::state::{CTRL_C_QUIT_CONFIRM_STATUS, InfoPanel};
 
 // region:    --- Test Support
 
 fn open_permission_prompt(state: &mut AppState) {
-    state.permission.open_prompt(PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu.command:*".to_string(),
-        tool: "nu".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "nested".to_string(),
-        pattern: "*".to_string(),
-        target_field: Some("command".to_string()),
-        summary: "→ {\"command\":\"echo hi\"}".to_string(),
-    });
+    state.permission.open_prompt("ask-0000000000000001");
 }
 
 fn ctrl_c() -> DriveEvent {

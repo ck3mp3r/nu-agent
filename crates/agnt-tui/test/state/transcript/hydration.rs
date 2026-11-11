@@ -1,5 +1,7 @@
 use super::*;
 
+use agnt_render::tool_view::ToolView;
+
 // ---------------------------------------------------------------------------
 // Hydration replay rebuilds tool entries
 // ---------------------------------------------------------------------------
@@ -36,39 +38,28 @@ fn hydration_reconstructs_tool_entries_and_display() -> Result<()> {
     let TranscriptEntry::Tool(tool_entry) = entry else {
         return Err("expected Tool entry".into());
     };
-    assert!(tool_entry.call.call_line.summary.contains("namespace"));
+    assert!(tool_entry.call.call_line().contains("namespace"));
     assert_eq!(tool_entry.status, ItemStatus::Done);
 
-    // -- Setup & Fixtures: a tool call plus a standalone persisted display.
-    let mut with_display = AppState::default();
+    // -- Setup & Fixtures: an edit row whose own result carries the diff.
+    let mut with_body = AppState::default();
     let snapshots = vec![
-        UiMessageSnapshot::new("tool", "→ {\"path\":\"a.rs\"}")
+        UiMessageSnapshot::new("tool", r#"{"path":"a.rs","diff":"--- a\n+++ b\n"}"#)
             .with_tool_name("edit".to_string())
-            .with_tool_details(Some(r#"{"path":"a.rs"}"#.to_string()), None, Some(true)),
-        UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(ToolDisplay {
-            title: Some("edit a.rs".to_string()),
-            sections: vec![ToolDisplaySection {
-                label: Some("changes".to_string()),
-                kind: ContentKind::Diff {
-                    language: "diff".to_string(),
-                    path: "test.rs".to_string(),
-                },
-                content: "--- a\n+++ b\n".to_string(),
-                stats: None,
-            }],
-        }),
+            .with_tool_details(
+                Some(r#"{"path":"a.rs"}"#.to_string()),
+                Some(r#"{"path":"a.rs","diff":"--- a\n+++ b\n"}"#.to_string()),
+                Some(true),
+            ),
     ];
 
     // -- Exec
-    hydrate_by_replay(&mut with_display, snapshots, None);
+    hydrate_by_replay(&mut with_body, snapshots, None);
 
-    // -- Check: the display lands in the tool entry's gate-preview slot.
-    assert_eq!(
-        with_display.transcript.len(),
-        1,
-        "the display must not add a companion entry"
-    );
-    let entry = with_display
+    // -- Check: one entry; the body is derived from the result data, and the
+    // gate-preview slot stays empty because no diff was ever in the transcript.
+    assert_eq!(with_body.transcript.len(), 1, "one call, one entry");
+    let entry = with_body
         .transcript
         .entries()
         .first()
@@ -78,15 +69,11 @@ fn hydration_reconstructs_tool_entries_and_display() -> Result<()> {
     };
     assert_eq!(tool_entry.status, ItemStatus::Done);
     assert!(
-        tool_entry.preview.is_some(),
-        "the persisted display docks in the preview slot"
+        tool_entry.preview.is_none(),
+        "the replay carries no gate content"
     );
-    assert!(
-        tool_entry.result.is_none(),
-        "a hydrated completion carries no display of its own"
-    );
-    let preview = tool_entry.preview.as_ref().ok_or("should have preview")?;
-    let result_text: String = preview
+    let result = tool_entry.result.as_ref().ok_or("should have the body")?;
+    let body: String = result
         .project_lines()
         .iter()
         .map(|line| {
@@ -97,7 +84,10 @@ fn hydration_reconstructs_tool_entries_and_display() -> Result<()> {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(result_text.contains("+++ b"));
+    assert!(
+        body.contains("+++ b"),
+        "the persisted diff is the completion body"
+    );
 
     // -- Setup & Fixtures: one role-"user" snapshot with multi-line content.
     let mut user = AppState::default();

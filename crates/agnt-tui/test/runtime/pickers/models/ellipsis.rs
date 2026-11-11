@@ -9,7 +9,7 @@ async fn model_picker_ellipsizes_long_identity_at_narrow_width() -> Result<()> {
     let mut driver = RenderLoopDriver::new(62, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: "anthropic/claude-opus-4.5".to_string(),
             identity: identity.clone(),
@@ -55,7 +55,7 @@ async fn model_picker_keeps_fitting_identity_at_narrow_width() -> Result<()> {
     let mut driver = RenderLoopDriver::new(62, 24);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: identity.clone(),
@@ -171,8 +171,8 @@ async fn model_picker_shows_ctx_and_price_columns_at_80x20() -> Result<()> {
 // -- Test Support
 
 /// A model option carrying a 200k context window and a price.
-fn priced_model_option() -> agnt_core::protocol::picker::ModelPickerOption {
-    agnt_core::protocol::picker::ModelPickerOption {
+fn priced_model_option() -> agnt_runtime::protocol::picker::ModelPickerOption {
+    agnt_runtime::protocol::picker::ModelPickerOption {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
         identity: "openai/gpt-4o".to_string(),

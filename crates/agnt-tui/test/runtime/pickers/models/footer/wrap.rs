@@ -14,7 +14,7 @@ async fn test_model_picker_footer_wraps_to_bottom_two_rows_at_popup_height_ninet
     let mut driver = RenderLoopDriver::new(62, 23);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: identity.clone(),
             identity: identity.clone(),
@@ -82,7 +82,7 @@ async fn test_model_picker_footer_wraps_to_two_rows_at_inner_height_eight() -> R
     let mut driver = RenderLoopDriver::new(62, 14);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openrouter".to_string(),
             model: identity.clone(),
             identity: identity.clone(),

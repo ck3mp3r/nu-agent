@@ -9,10 +9,14 @@ use crate::TEST_BLOCKING_TIMEOUT;
 
 // Import discovery module items — some are pub(crate) and not re-exported
 // via the pub glob in lib.rs.
+use crate::discovery::mdns_discovery::MdnsPeerDiscovery;
 use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent};
 use crate::{A2aServer, AgentCard, Peer, PeerCache};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+mod support;
+use support::*;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,12 +61,13 @@ where
 /// the host. It is ignored by default in CI/offline environments.
 #[ignore]
 #[tokio::test]
-async fn test_register_service() {
+async fn test_register_service() -> Result<()> {
     let card = test_card("test-agent", 9999);
-    let daemon = ServiceDaemon::new().unwrap();
-    let service =
-        DiscoveryService::register(daemon, "test-agent", 9999, &card, "test-mesh").unwrap();
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
+    let service = DiscoveryService::register(daemon, "test-agent", 9999, &card, "test-mesh")
+        .map_err(|e| format!("{e:?}"))?;
     drop(service);
+    Ok(())
 }
 
 /// Verify that registering the same name twice does not error.
@@ -70,16 +75,17 @@ async fn test_register_service() {
 /// NOTE: Requires a working mDNS responder on the host.
 #[ignore]
 #[tokio::test]
-async fn test_register_duplicate_name() {
-    let daemon = ServiceDaemon::new().unwrap();
+async fn test_register_duplicate_name() -> Result<()> {
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
     let card = test_card("dup-agent", 3001);
-    let a =
-        DiscoveryService::register(daemon.clone(), "dup-agent", 3001, &card, "test-mesh").unwrap();
-    let b =
-        DiscoveryService::register(daemon.clone(), "dup-agent", 3002, &card, "test-mesh").unwrap();
+    let a = DiscoveryService::register(daemon.clone(), "dup-agent", 3001, &card, "test-mesh")
+        .map_err(|e| format!("{e:?}"))?;
+    let b = DiscoveryService::register(daemon.clone(), "dup-agent", 3002, &card, "test-mesh")
+        .map_err(|e| format!("{e:?}"))?;
     drop(a);
     drop(b);
     let _ = daemon.shutdown();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -90,17 +96,24 @@ async fn test_register_duplicate_name() {
 ///
 /// NOTE: Requires a working mDNS responder (loopback) on the host.
 #[ignore]
-#[tokio::test]
-async fn test_register_and_browse_roundtrip() {
-    let daemon = ServiceDaemon::new().unwrap();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_register_and_browse_roundtrip() -> Result<()> {
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
     let card = test_card("roundtrip-agent", 7777);
     let _service =
         DiscoveryService::register(daemon.clone(), "roundtrip-agent", 7777, &card, "test-mesh")
-            .unwrap();
+            .map_err(|e| format!("{e:?}"))?;
 
     // Use a different port so we still discover the registered service
     // (self-port filter only excludes matching port+localhost).
-    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", 52095).unwrap();
+    let (_browser, mut rx) = DiscoveryBrowser::browse(
+        daemon.clone(),
+        "test-mesh",
+        52095,
+        test_card_client(),
+        tokio::runtime::Handle::current(),
+    )
+    .map_err(|e| format!("{e:?}"))?;
 
     // Wait up to 5 seconds for the registered service to appear.
     let found = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
@@ -109,6 +122,26 @@ async fn test_register_and_browse_roundtrip() {
     .await;
 
     assert!(found, "Should discover registered service via mDNS");
+    Ok(())
+}
+
+/// Verify browse returns a live channel.
+///
+/// NOTE: Requires a working mDNS responder on the host.
+#[ignore]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_browse_returns_live_channel() -> Result<()> {
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
+    let (_browser, rx) = DiscoveryBrowser::browse(
+        daemon,
+        "test-mesh",
+        52095,
+        test_card_client(),
+        tokio::runtime::Handle::current(),
+    )
+    .map_err(|e| format!("{e:?}"))?;
+    assert!(!rx.is_closed(), "receiver should be alive after browse()");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -119,19 +152,26 @@ async fn test_register_and_browse_roundtrip() {
 /// registered with a different mesh key.
 ///
 /// NOTE: Requires a working mDNS responder on the host.
-#[tokio::test]
-async fn test_mesh_scoping_filters_other_key() {
-    let daemon = ServiceDaemon::new().unwrap();
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mesh_scoping_filters_other_key() -> Result<()> {
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
     let card_a = test_card("mesh-key-a-agent", 7778);
     let card_b = test_card("mesh-key-b-agent", 7779);
     let _service_a =
         DiscoveryService::register(daemon.clone(), "mesh-key-a-agent", 7778, &card_a, "key-a")
-            .unwrap();
+            .map_err(|e| format!("{e:?}"))?;
     let _service_b =
         DiscoveryService::register(daemon.clone(), "mesh-key-b-agent", 7779, &card_b, "key-b")
-            .unwrap();
+            .map_err(|e| format!("{e:?}"))?;
 
-    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "key-a", 52095).unwrap();
+    let (_browser, mut rx) = DiscoveryBrowser::browse(
+        daemon.clone(),
+        "key-a",
+        52095,
+        test_card_client(),
+        tokio::runtime::Handle::current(),
+    )
+    .map_err(|e| format!("{e:?}"))?;
 
     // Wait up to 5 seconds and check we never receive the wrong-key peer.
     let wrong_key = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
@@ -142,6 +182,7 @@ async fn test_mesh_scoping_filters_other_key() {
         !wrong_key,
         "Should not discover peers with different mesh key"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -153,16 +194,23 @@ async fn test_mesh_scoping_filters_other_key() {
 /// NOTE: Flaky due to mDNS resolution timing — 127.0.0.1 must be
 /// present in the resolved addresses for the SelfPort filter to match.
 /// Requires a working mDNS responder on the host.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[ignore]
-async fn test_browse_self_excluded() {
-    let daemon = ServiceDaemon::new().unwrap();
+async fn test_browse_self_excluded() -> Result<()> {
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
     let card = test_card("self-test-agent", 7777);
     let _service =
         DiscoveryService::register(daemon.clone(), "self-test-agent", 7777, &card, "test-mesh")
-            .unwrap();
+            .map_err(|e| format!("{e:?}"))?;
 
-    let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", 7777).unwrap();
+    let (_browser, mut rx) = DiscoveryBrowser::browse(
+        daemon.clone(),
+        "test-mesh",
+        7777,
+        test_card_client(),
+        tokio::runtime::Handle::current(),
+    )
+    .map_err(|e| format!("{e:?}"))?;
 
     // Wait up to 5 seconds — our own service must never appear.
     let found_self = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
@@ -170,6 +218,7 @@ async fn test_browse_self_excluded() {
     })
     .await;
     assert!(!found_self, "agent should not discover itself");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -180,10 +229,10 @@ async fn test_browse_self_excluded() {
 /// registered with a DIFFERENT mesh key on a SEPARATE daemon.
 ///
 /// NOTE: Requires a working mDNS responder on the host.
-#[tokio::test]
-async fn test_cross_daemon_mesh_scoping() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cross_daemon_mesh_scoping() -> Result<()> {
     // Daemon A registers a service with mesh_key "key-a"
-    let daemon_a = ServiceDaemon::new().unwrap();
+    let daemon_a = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
     let card_a = test_card("cross-daemon-agent", 8888);
     let _service_a = DiscoveryService::register(
         daemon_a.clone(),
@@ -192,11 +241,18 @@ async fn test_cross_daemon_mesh_scoping() {
         &card_a,
         "key-a",
     )
-    .unwrap();
+    .map_err(|e| format!("{e:?}"))?;
 
     // Daemon B browses with a DIFFERENT mesh_key "key-b"
-    let daemon_b = ServiceDaemon::new().unwrap();
-    let (browser, mut rx) = DiscoveryBrowser::browse(daemon_b.clone(), "key-b", 52095).unwrap();
+    let daemon_b = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
+    let (browser, mut rx) = DiscoveryBrowser::browse(
+        daemon_b.clone(),
+        "key-b",
+        52095,
+        test_card_client(),
+        tokio::runtime::Handle::current(),
+    )
+    .map_err(|e| format!("{e:?}"))?;
 
     // Wait up to 5 seconds: should NOT discover cross-daemon-agent (key mismatch)
     let found_wrong = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
@@ -212,6 +268,7 @@ async fn test_cross_daemon_mesh_scoping() {
     drop(browser);
     let _ = daemon_a.shutdown();
     let _ = daemon_b.shutdown();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -224,11 +281,11 @@ async fn test_cross_daemon_mesh_scoping() {
 /// A plain re-browse leaves the previous listener in the retransmission queue
 /// holding a sender clone, so the superseded receiver would stay open and the
 /// browse thread would park forever. Requires a working mDNS responder.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_rediscover_closes_superseded_receivers() -> Result<()> {
     // -- Setup & Fixtures
     let card = test_card("rediscover-agent", 52097);
-    let mut discovery = PeerDiscoveryImpl::Mdns(Box::default());
+    let mut discovery = PeerDiscoveryImpl::Mdns(Box::new(test_mdns()));
     discovery.start("rediscover-agent-52097", 52097, &card, "rediscover-mesh");
     let mut rx1 = discovery
         .take_peer_rx()
@@ -277,7 +334,7 @@ async fn test_rediscover_closes_superseded_receivers() -> Result<()> {
 /// in CI.
 #[tokio::test]
 #[ignore]
-async fn test_card_fetch_roundtrip() {
+async fn test_card_fetch_roundtrip() -> Result<()> {
     let card = AgentCard {
         name: "test-agent".into(),
         description: Some("A test agent".into()),
@@ -287,21 +344,117 @@ async fn test_card_fetch_roundtrip() {
     let cache = Arc::new(PeerCache::default());
     let server = A2aServer::start_with_blocking_timeout(card, cache, 0, TEST_BLOCKING_TIMEOUT)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let url = format!("{}/.well-known/agent-card.json", server.local_url);
 
-    crate::discovery::card::ensure_crypto_provider();
+    crate::test_support::install_crypto_provider();
     let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await.unwrap();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert!(resp.status().is_success());
-    let fetched: AgentCard = resp.json().await.unwrap();
+    let fetched: AgentCard = resp.json().await.map_err(|e| format!("{e:?}"))?;
     assert_eq!(fetched.name, "test-agent");
     assert_eq!(fetched.description.as_deref(), Some("A test agent"));
 
     // Verify 404 on old wrong path
     let bad_url = format!("{}/agent.json", server.local_url);
-    let resp = client.get(&bad_url).send().await.unwrap();
+    let resp = client
+        .get(&bad_url)
+        .send()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(resp.status().as_u16(), 404);
 
     server.shutdown().await;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// MdnsPeerDiscovery — not-started state
+// ---------------------------------------------------------------------------
+//
+// These pin the no-daemon guards. They live in the integration module because a
+// `MdnsPeerDiscovery` is constructed with the browse pair its thread uses — a
+// live transport — so a unit test that builds one is integration in disguise.
+
+/// A backend over the test transport. It owns no daemon until `start` runs.
+fn test_mdns() -> MdnsPeerDiscovery {
+    MdnsPeerDiscovery::new(test_card_client(), tokio::runtime::Handle::current())
+}
+
+#[tokio::test]
+async fn reregister_does_not_panic_when_not_started() {
+    let mut discovery = test_mdns();
+    discovery.reregister(&test_card("test", 0));
+}
+
+#[tokio::test]
+async fn reregister_preserves_fullname_when_no_daemon() {
+    let mut discovery = test_mdns();
+    assert!(discovery.fullname().is_none());
+    discovery.reregister(&test_card("test", 0));
+    assert!(discovery.fullname().is_none());
+}
+
+#[tokio::test]
+async fn reregister_with_updated_card_does_not_panic() {
+    let mut discovery = test_mdns();
+    let updated_card = AgentCard {
+        description: Some("updated".to_string()),
+        ..test_card("test", 0)
+    };
+    discovery.reregister(&updated_card);
+}
+
+#[tokio::test]
+async fn shutdown_then_reregister_does_not_panic() {
+    let mut discovery = test_mdns();
+    discovery.shutdown();
+    discovery.reregister(&test_card("test", 0));
+}
+
+#[tokio::test]
+async fn test_mdns_peer_discovery_fullname_starts_none() -> Result<()> {
+    let mdns = test_mdns();
+    assert!(mdns.fullname().is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_mdns_peer_discovery_fullname_after_start() -> Result<()> {
+    // We can't easily test the full start() path (needs a real daemon), but
+    // we can verify that the fullname field is set correctly by calling
+    // rename() which sets it.
+    let mut mdns = test_mdns();
+    // Without a daemon, rename() is a no-op and fullname stays None.
+    mdns.rename(
+        "old._nu-agent-a2a._tcp.local.",
+        "new-name",
+        12345,
+        &test_card("new-name", 12345),
+        "test-mesh",
+    );
+    assert!(mdns.fullname().is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn reregister_mdns_when_not_started_is_noop() {
+    let mut discovery = PeerDiscoveryImpl::Mdns(Box::new(test_mdns()));
+    discovery.reregister(&test_card("test", 0));
+}
+
+#[tokio::test]
+async fn rediscover_mdns_when_not_started_returns_none() {
+    // -- Setup & Fixtures
+    let mut discovery = PeerDiscoveryImpl::Mdns(Box::new(test_mdns()));
+
+    // -- Exec
+    let rx = discovery.rediscover();
+
+    // -- Check
+    assert!(rx.is_none());
 }

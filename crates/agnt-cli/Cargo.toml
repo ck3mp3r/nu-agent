@@ -18,7 +18,7 @@ required-features = ["integration"]
 [dependencies]
 agnt-a2a = { workspace = true }
 agnt-acp = { workspace = true }
-agnt-core = { workspace = true }
+agnt-runtime = { workspace = true }
 agnt-tui = { workspace = true }
 agnt-tty = { workspace = true }
 chrono = { workspace = true }
@@ -26,12 +26,13 @@ clap = { workspace = true }
 crossterm = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
-# `nu-protocol` is required for interop with `agnt-core`'s public API, which is
+# `nu-protocol` is required for interop with `agnt-runtime`'s public API, which is
 # typed with `nu_protocol::{Span, Value, LabeledError}`. The CLI does not depend
 # on the Nushell plugin protocol.
 nu-protocol = { workspace = true }
 oauth2 = { workspace = true }
 open = "5"
+reqwest = { workspace = true }
 rmcp = { workspace = true }
 rustls = { workspace = true }
 serde_json = { workspace = true }

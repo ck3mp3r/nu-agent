@@ -3,6 +3,27 @@ use serde_json::Value;
 use super::{A2aToolContext, ToolResult};
 use crate::*;
 
+#[cfg(test)]
+#[path = "../../test/tools/send_context.rs"]
+mod send_context_test;
+
+pub(crate) const SEND_CONTEXT_RULE: &str = "contextId must be copied exactly and completely from a prior send result — never truncate or alter it; omit the parameter for a fresh session, and do not reuse an id across fresh sends";
+
+/// The `contextId` a send puts on the wire, or a refusal.
+///
+/// An explicit id is forwarded verbatim: the caller owns the round-trip. An
+/// empty or whitespace-only id is refused before any HTTP call — it names no
+/// context, and carrying it would append the send to one shared empty-id
+/// lineage. An omitted id stays omitted: the target boundary mints (spec
+/// §3.4.1).
+pub(crate) fn resolve_send_context(param: Option<&str>) -> Result<Option<String>, String> {
+    match param {
+        Some(id) if id.trim().is_empty() => Err(SEND_CONTEXT_RULE.to_string()),
+        Some(id) => Ok(Some(id.to_string())),
+        None => Ok(None),
+    }
+}
+
 pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
     let target = params
         .get("target")
@@ -12,10 +33,8 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         .get("text")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: 'text'".to_string())?;
-    let context_id = params
-        .get("contextId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let context_id = resolve_send_context(params.get("contextId").and_then(|v| v.as_str()))
+        .map_err(|rule| format!("Invalid 'contextId': {rule}"))?;
 
     let peer = ctx
         .cache

@@ -1,10 +1,12 @@
 use crate::interaction::{
     cancel::CancelController,
-    input::{TerminalEvent, TerminalKey, TerminalMouse, TerminalResize, map_terminal_event},
+    input::{
+        Key, TerminalEvent, TerminalKey, TerminalMouse, TerminalResize, UiInput, map_terminal_event,
+    },
     reducer::reduce,
 };
 use crate::state::{AppState, InputMode, UiPhase};
-use agnt_core::protocol::events::{Key, SystemEvent};
+use crate::test_support::{fold_record, inference_started, prompt_record};
 
 #[test]
 fn table_driven_key_mapping_to_the_system_vocabulary() {
@@ -40,7 +42,7 @@ fn table_driven_key_mapping_to_the_system_vocabulary() {
         let event = TerminalEvent::Key(terminal_key);
         assert_eq!(
             map_terminal_event(&event),
-            Some(SystemEvent::KeyPressed { key }),
+            Some(UiInput::KeyPressed { key }),
             "{terminal_key:?}"
         );
     }
@@ -60,17 +62,8 @@ fn table_driven_key_mapping_to_the_system_vocabulary() {
 fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
     // -- Setup & Fixtures: a running turn with a drafted submit text.
     let mut state = AppState::default();
-    reduce(
-        &mut state,
-        SystemEvent::PromptSubmitted {
-            text: "work".to_string(),
-            stamp_millis: None,
-            stamp_model: None,
-            stamp_agent: None,
-        },
-        None,
-    );
-    reduce(&mut state, SystemEvent::InferenceStarted, None);
+    fold_record(&mut state, prompt_record("work", None, None, None));
+    fold_record(&mut state, inference_started());
     // The turn start sets the lock; the reducer gate is what this test drives.
     state.input_locked = true;
     assert!(state.input_locked, "a running turn locks the input");
@@ -78,11 +71,7 @@ fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
     state.input.pending_submit_text = Some("draft".to_string());
 
     // -- Exec & Check: the submit key queues the dispatched draft.
-    let changed = reduce(
-        &mut state,
-        SystemEvent::KeyPressed { key: Key::Enter },
-        None,
-    );
+    let changed = reduce(&mut state, UiInput::KeyPressed { key: Key::Enter }, None);
     assert!(changed, "a locked submit queues the draft");
     assert_eq!(state.input.pending_submit_text, None);
     assert_eq!(state.pending_prompt_count(), 1);
@@ -95,7 +84,7 @@ fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
     // -- Exec & Check: an editing key is dropped.
     let changed = reduce(
         &mut state,
-        SystemEvent::KeyPressed {
+        UiInput::KeyPressed {
             key: Key::Char('a'),
         },
         None,
@@ -104,7 +93,7 @@ fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
 
     // -- Exec & Check: escape is not an editing key: it leaves insert mode and
     // arms the turn-cancel confirmation.
-    let changed = reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    let changed = reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert!(changed);
     assert_eq!(state.input.mode, InputMode::Normal);
     assert_eq!(state.phase, UiPhase::AbortPending);
@@ -113,7 +102,7 @@ fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
     let cancel_controller = CancelController::default();
     let changed = reduce(
         &mut state,
-        SystemEvent::KeyPressed { key: Key::CtrlC },
+        UiInput::KeyPressed { key: Key::CtrlC },
         Some(&cancel_controller),
     );
     assert!(changed);
@@ -135,7 +124,7 @@ fn test_map_terminal_event_resize_maps_to_resized_dimensions() {
     // -- Check
     assert_eq!(
         actual,
-        Some(SystemEvent::Resized {
+        Some(UiInput::Resized {
             width: 120,
             height: 42
         })
@@ -159,7 +148,7 @@ fn test_map_terminal_event_mouse_wheel_maps_to_wheel_scrolled() {
     // -- Exec & Check
     assert_eq!(
         map_terminal_event(&wheel_up),
-        Some(SystemEvent::WheelScrolled {
+        Some(UiInput::WheelScrolled {
             up: true,
             column: 9,
             row: 4
@@ -167,7 +156,7 @@ fn test_map_terminal_event_mouse_wheel_maps_to_wheel_scrolled() {
     );
     assert_eq!(
         map_terminal_event(&wheel_down),
-        Some(SystemEvent::WheelScrolled {
+        Some(UiInput::WheelScrolled {
             up: false,
             column: 2,
             row: 18

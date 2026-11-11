@@ -15,33 +15,36 @@ pub(super) use agent_client_protocol::schema::v1::{
     ToolCallUpdate,
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
-pub(super) use agnt_core::bus::{
-    Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
+pub(super) use agnt_kernel::{CompactionRecord, SessionRecord};
+pub(super) use agnt_runtime::bus::{Bus, CancelEvent, LifecycleEvent, LifecycleRx, OneshotTx};
+pub(super) use agnt_runtime::config::{AgentsConfig, Config, ModelsCache};
+pub(super) use agnt_runtime::conversation::contracts::DecisionSource;
+pub(super) use agnt_runtime::conversation::providers::CachedProviderClient;
+pub(super) use agnt_runtime::conversation::runtime_build::RuntimeBuildParams;
+pub(super) use agnt_runtime::conversation::runtime_parts::RuntimeParts;
+pub(super) use agnt_runtime::conversation::state::memory::MemoryState;
+pub(super) use agnt_runtime::conversation::state::{
+    MultiAgentState, PersonaState, ProviderState, ToolState,
 };
-pub(super) use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults};
-pub(super) use agnt_core::conversation::compaction::CompactionConfig;
-pub(super) use agnt_core::conversation::compaction::compactor::NuCompactor;
-pub(super) use agnt_core::conversation::managers::ProviderManager;
-pub(super) use agnt_core::conversation::providers::CachedProviderClient;
-pub(super) use agnt_core::conversation::state::{
-    McpState, MemoryState, MultiAgentState, PermissionState, PersonaState, ProviderState, ToolState,
-};
-pub(super) use agnt_core::hook::DoomLoopState;
-pub(super) use agnt_core::hook::output_repetition::RepetitionState;
-pub(super) use agnt_core::protocol::event::PermissionDecision;
-pub(super) use agnt_core::protocol::events::SystemEvent;
-pub(super) use agnt_core::session::{RigStoreConfig, StoreType};
-pub(super) use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
-pub(super) use agnt_core::tools::closure::ClosureRegistry;
-pub(super) use agnt_core::tools::handler::McpToolRegistry;
-pub(super) use agnt_core::tools::handler::builtin_tool::ToolRenderRegistry;
-pub(super) use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
-pub(super) use agnt_core::types::{Message, MockCompletionModel};
-pub(super) use rig::test_utils::MockStreamEvent;
+pub(super) use agnt_runtime::protocol::event::PermissionDecision;
+pub(super) use agnt_runtime::protocol::events::CompactionSource;
+pub(super) use agnt_runtime::session::{RigStoreConfig, StoreType};
+pub(super) use agnt_runtime::tools::authz::PermissionsConfig;
+pub(super) use agnt_runtime::tools::closure::ClosureRegistry;
+pub(super) use agnt_runtime::tools::handler::McpToolRegistry;
+pub(super) use agnt_runtime::types::Message;
+pub(super) use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::*;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The context window the mock runtime's active config declares.
+///
+/// The composed runtime derives the compaction threshold and the compactor's
+/// planning spec from it, so the mock scripts and the policy plan against the
+/// same window.
+const MOCK_CONTEXT_TOKENS: usize = 8_000;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -124,21 +127,19 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             hook_context,
         } = params;
         if let Some(captured) = &self.captured_client_fs {
-            captured.lock().unwrap().push(client_fs);
+            captured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(client_fs);
         }
         if let Some(captured) = &self.captured_agent_name {
-            captured.lock().unwrap().push(agent_name);
+            captured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(agent_name);
         }
 
-        let bus = self.bus.clone().unwrap_or_else(create_bus);
-        // A test can seed this session's cumulative usage, so two sessions can
-        // carry distinct totals.
-        let session_usage = agnt_core::hook::TurnUsage::default();
-        if let Some((id, input, output)) = &self.usage_for_session
-            && session_id.as_deref() == Some(id.as_str())
-        {
-            session_usage.add_call(*input, *output, Some(input + output), None, false);
-        }
+        let bus = self.bus.clone().unwrap_or_default();
         // The turn path always streams, so the model must script a streaming
         // turn: a unary-only script fails every prompt turn at the provider.
         // A test that also runs a compaction scripts one extra turn for the
@@ -159,72 +160,90 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             // real `[providers.ollama] catalog = "ollama-cloud"` block does.
             catalog: Some("ollama-cloud".to_string()),
             model: "llama3".to_string(),
+            // The composed runtime derives both the compaction threshold and the
+            // compactor's planning spec from this window. A small window lets a
+            // short conversation outgrow the policy's keep window.
+            model_context_tokens: Some(MOCK_CONTEXT_TOKENS),
+            max_output_tokens: Some(1_024),
             ..Config::default()
         };
-        let mut provider = ProviderState::with_client(config, CachedProviderClient::Mock(model));
-        let dyn_model = provider
-            .build_dyn_model()
-            .await
-            .map_err(|e| AcpError::Runtime(format!("failed to build mock model: {e}")))?;
-        let compactor = NuCompactor::from_shared_model(
-            Arc::new(Mutex::new(compactor_model.erase())),
-            bus.clone(),
-            rig_memory::CompactionPolicy::default(),
-            agnt_core::conversation::compaction::compactor::resolve_model_spec(
-                "openai",
-                "gpt-4o",
-                Some(8_000),
-                Some(1_024),
-            ),
-        );
+        let provider =
+            ProviderState::with_client(config.clone(), CachedProviderClient::Mock(model));
+        let engine: Arc<dyn agnt_runtime::tools::closure::EngineInterfaceLike> =
+            Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string()));
+        // The composed runtime derives the compaction threshold from the active
+        // config, so the builder states its token count as the fraction of that
+        // window the count is.
+        let proactive_threshold_pct = self
+            .threshold_tokens
+            .map(|tokens| tokens as f64 / MOCK_CONTEXT_TOKENS as f64);
 
-        Ok(AgentConversationRuntime {
-            runtime: runtime_handle,
-            tool_server_handle: agnt_core::types::ToolServer::new().run(),
-            store_latch: Default::default(),
-            provider,
-            tools: ToolState::new(Vec::new(), Vec::new(), ClosureRegistry::default()),
-            mcp_state: McpState::new(
-                None,
-                Vec::new(),
-                Vec::new(),
-                Some(cwd.clone()),
-                McpToolRegistry::empty(),
-                defaults::MAX_TOOL_RESULT_BYTES,
-                None,
-            ),
-            engine: Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string())),
-            final_session_id: session_id,
-            permission_state: PermissionState::new(
-                PermissionsConfig::safe_defaults(true),
-                PermissionsConfig::safe_defaults(true),
-                None,
-                SessionGrantCache::default(),
-                String::new(),
-            ),
-            session: MemoryState::new(rig),
-            persona: PersonaState::new(None, None, None, None, None, None),
-            multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
-            cwd,
-            paths,
-            interactive_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
-            renders_tool_previews: false,
-            circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: defaults::REPETITION_GUARD_ENABLED,
-            last_total_tokens: Arc::new(Mutex::new(None)),
-            session_usage,
-            bus,
-            render_registry: ToolRenderRegistry::default(),
-            hook_context,
-            dyn_model: Arc::new(Mutex::new(dyn_model)),
-            compaction: CompactionConfig {
-                compactor,
-                threshold_tokens: self.threshold_tokens,
-                threshold_pct: defaults::PROACTIVE_THRESHOLD_PCT,
+        let runtime = AgentConversationRuntime::compose(
+            RuntimeParts {
+                provider,
+                tools: ToolState::new(Vec::new(), Vec::new(), ClosureRegistry::default()),
+                session: MemoryState::new(rig.clone()),
+                persona: PersonaState::new(None, None, None, None, None, None),
+                multi: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
+                engine: Arc::clone(&engine),
+                bus: bus.clone(),
             },
-        })
+            RuntimeBuildParams {
+                runtime: runtime_handle,
+                config,
+                plugin_config: None,
+                tool_definitions: Vec::new(),
+                baseline_tool_definitions: Vec::new(),
+                closure_registry: ClosureRegistry::default(),
+                mcp_runtime: None,
+                tool_server_handle: agnt_runtime::types::ToolServer::new().run(),
+                mcp_lifecycle_projection: Vec::new(),
+                mcp_server_configs: Vec::new(),
+                mcp_caller_cwd: Some(cwd.clone()),
+                vault: None,
+                mcp_registry: McpToolRegistry::empty(),
+                engine,
+                rig,
+                final_session_id: session_id.clone(),
+                proactive_threshold_pct,
+                base_permissions: PermissionsConfig::safe_defaults(true),
+                effective_permissions: PermissionsConfig::safe_defaults(true),
+                cli_permissions_overlay: None,
+                permissions_startup_summary: String::new(),
+                persona_body: None,
+                agent_identity: None,
+                agent_description: None,
+                agent_icon: None,
+                cached_agents_chain: None,
+                cached_available_skills: None,
+                available_agents: Vec::new(),
+                agents_config: AgentsConfig::default(),
+                cwd,
+                paths,
+                bus,
+                hook_context,
+                compactor_model: Some(Arc::new(Mutex::new(compactor_model.erase()))),
+            },
+        )
+        .await
+        .map_err(|e| AcpError::Runtime(format!("failed to build mock runtime: {e}")))?;
+
+        // A test can seed this session's cumulative usage, so two sessions can
+        // carry distinct totals. The handle reads the same cells the runtime
+        // accumulates into.
+        if let Some((id, input, output)) = &self.usage_for_session
+            && session_id.as_deref() == Some(id.as_str())
+        {
+            runtime.session_usage_handle().add_call(
+                *input,
+                *output,
+                Some(input + output),
+                None,
+                false,
+            );
+        }
+
+        Ok(runtime.with_decision_source(Some(Arc::new(Mutex::new(HashMap::new())))))
     }
 }
 
@@ -253,9 +272,9 @@ pub(super) fn rig_config(dir: &Path) -> RigStoreConfig {
 ///
 /// The config file and the persona dir sit under `dir`, so the manager never
 /// reads the user's real config or persona files.
-pub(super) fn test_paths(dir: &Path) -> agnt_core::config::Paths {
+pub(super) fn test_paths(dir: &Path) -> agnt_runtime::config::Paths {
     let logs = dir.join("logs");
-    agnt_core::config::Paths {
+    agnt_runtime::config::Paths {
         config_path: dir.join("config.toml"),
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),
@@ -303,7 +322,7 @@ pub(super) fn session_cwd(dir: &Path, name: &str) -> Result<PathBuf> {
 /// A manager whose runtime builder uses `bus` for every session it builds.
 ///
 /// Lets a test subscribe to the session channel before a session is opened, so
-/// the `SessionEvent` the manager publishes is not missed.
+/// the `LifecycleEvent` the manager publishes is not missed.
 pub(super) async fn manager_with_bus(
     dir: &Path,
     bus: Bus,

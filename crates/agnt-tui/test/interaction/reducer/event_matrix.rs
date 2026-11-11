@@ -1,14 +1,29 @@
 use super::*;
 
-use agnt_core::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::events::{
+    NarrationEvent, PermissionRecord, RequestId, SessionRecord, ToolCall, ToolOutcome, Usage,
+};
+use agnt_runtime::session::tool_status::ToolStatus;
+
+/// One matrix row's fold input: a stream record or a narration event.
+///
+/// The record is boxed because a record is much larger than a narration event.
+enum CaseEvent {
+    Record(Box<SessionRecord>),
+    Narration(NarrationEvent),
+}
+
+/// A matrix row's stream record.
+fn record(record: SessionRecord) -> CaseEvent {
+    CaseEvent::Record(Box::new(record))
+}
 
 #[test]
 fn table_driven_ui_event_matrix_covers_all_variants() {
     struct Case {
         name: &'static str,
-        event: SystemEvent,
+        event: CaseEvent,
         pre: fn() -> AppState,
     }
 
@@ -32,14 +47,11 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         let mut state = busy_state_with_clean_transcript();
         reduce_ui(
             &mut state,
-            SystemEvent::ToolStarted {
-                call: ToolCall::new(
-                    ToolName("k8s__list_pods".to_string()),
-                    "mcp",
-                    r#"{"namespace":"prod"}"#,
-                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
-                ),
-            },
+            tool_started(ToolCall::new(
+                ToolName("k8s__list_pods".to_string()),
+                agnt_runtime::tools::handler::ToolSource::Mcp,
+                r#"{"namespace":"prod"}"#,
+            )),
         );
         state
     }
@@ -47,105 +59,89 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
     let cases = vec![
         Case {
             name: "llm_start_from_idle_moves_busy",
-            event: SystemEvent::InferenceStarted,
+            event: record(inference_started()),
             pre: idle,
         },
         Case {
             name: "llm_start_when_busy_is_noop",
-            event: SystemEvent::InferenceStarted,
-            pre: busy_with_status,
-        },
-        Case {
-            name: "tick_leaves_empty_status_empty",
-            event: SystemEvent::Tick,
-            pre: busy_empty_status,
-        },
-        Case {
-            name: "tick_preserves_existing_status",
-            event: SystemEvent::Tick,
+            event: record(inference_started()),
             pre: busy_with_status,
         },
         Case {
             name: "tool_start_leaves_status_empty",
-            event: SystemEvent::ToolStarted {
-                call: ToolCall::new(
-                    ToolName("k8s__list_pods".to_string()),
-                    "mcp",
-                    "{}",
-                    CallLine::from_json_summary("{}"),
-                ),
-            },
+            event: record(tool_started(ToolCall::new(
+                ToolName("k8s__list_pods".to_string()),
+                agnt_runtime::tools::handler::ToolSource::Mcp,
+                "{}",
+            ))),
             pre: busy_empty_status,
         },
         Case {
             name: "tool_end_updates_tool_line_without_status",
-            event: SystemEvent::ToolCompleted {
-                call: ToolCall::new(
+            event: record(tool_completed(
+                ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    "mcp",
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
-                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
                 ),
-                outcome: ToolOutcome {
-                    success: true,
+                ToolOutcome {
                     status: ToolStatus::Success,
-                    result: "[]".to_string(),
-                    display: None,
-                    error_kind: None,
+                    payload: None,
+                    text: "[]".to_string(),
                     message: None,
+                    kind: None,
                 },
-            },
+            )),
             pre: busy_with_running_tool_line,
         },
         Case {
             name: "llm_end_records_tokens_without_status_message",
-            event: SystemEvent::InferenceCompleted {
-                usage: Usage {
-                    response_chars: 12,
-                    tool_calls: 0,
-                    input_tokens: 4,
-                    output_tokens: 8,
-                    total_tokens: Some(12),
-                    cost: None,
-                    cost_complete: false,
+            event: record(SessionRecord::Inference(
+                agnt_runtime::protocol::events::InferenceRecord::Completed {
+                    usage: Usage {
+                        input_tokens: 4,
+                        output_tokens: 8,
+                        total_tokens: Some(12),
+                        cost: None,
+                        cost_complete: false,
+                    },
                 },
-            },
+            )),
             pre: busy_empty_status,
         },
         Case {
             name: "warning_sets_status_line",
-            event: SystemEvent::SystemMessage {
-                kind: SystemKind::Warning,
-                text: "warned".to_string(),
-            },
+            event: CaseEvent::Narration(system_message(
+                agnt_runtime::protocol::events::NoticeKind::Warning,
+                "warned",
+            )),
             pre: busy_empty_status,
         },
         Case {
             name: "assistant_message_trims_and_appends",
-            event: SystemEvent::InferenceChunk {
-                delta: "\nline 1\nline 2\n".to_string(),
-                aggregated: "\nline 1\nline 2\n".to_string(),
-            },
+            event: CaseEvent::Narration(inference_chunk(
+                "\nline 1\nline 2\n",
+                "\nline 1\nline 2\n",
+            )),
             pre: busy_empty_status,
         },
         Case {
             name: "completed_finalizes_cycle",
-            event: SystemEvent::TurnCompleted {
-                tool_calls: 1,
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: None,
-                cost: None,
-                cost_complete: true,
-                duration_ms: 0,
-            },
+            event: record(turn_completed(0)),
             pre: busy_with_status,
         },
     ];
 
     for case in cases {
         let mut state = (case.pre)();
-        reduce_ui(&mut state, case.event);
+        match case.event {
+            CaseEvent::Record(record) => {
+                reduce_ui(&mut state, (*record).clone());
+            }
+            CaseEvent::Narration(event) => {
+                reduce_narration(&mut state, event);
+            }
+        }
 
         match case.name {
             "llm_start_from_idle_moves_busy" => {
@@ -183,8 +179,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert!(state.status.message.status_line().is_empty());
             }
             "warning_sets_status_line" => {
-                // Warning is now handled by the SystemEvent dispatch, which routes
-                // to StatusState::reduce_warning_event and sets the status line.
+                // Warning is narrated, and the narration fold routes it to the
+                // status line.
                 assert_eq!(state.status.message.status_line(), "warned");
             }
             "assistant_message_trims_and_appends" => {
@@ -228,25 +224,23 @@ fn permission_request_table() -> Result<()> {
     let mut state = AppState::default();
     state.scroll.pane_focus = crate::state::PaneFocus::Input;
 
-    let context = PermissionRequestContext {
+    let request = SessionRecord::Permission(PermissionRecord::Requested {
+        request_id: RequestId::from_minted("ask-0000000000000001"),
+        call_id: agnt_runtime::protocol::events::ToolCallId::from_key(
+            "edit\n{\"file\":\"foo.rs\"}",
+        ),
         tool: "edit(file=foo.rs)".to_string(),
-        tool_key: "edit\n{\"file\":\"foo.rs\"}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
-        matched_rule_identity: "tool:edit".to_string(),
+        rule_identity: "tool:edit".to_string(),
         scope: "tool".to_string(),
         target_field: None,
         pattern: "edit".to_string(),
         summary: "→ {...}".to_string(),
-        pre_authorize_display: None,
-    };
-    reduce_ui(
-        &mut state,
-        SystemEvent::PermissionRequested {
-            request_id: RequestId::new("ask-0000000000000001"),
-            context,
-        },
-    );
+        shows_preview: false,
+        preview: None,
+    });
+    reduce_ui(&mut state, request);
 
     assert_eq!(state.scroll.pane_focus, crate::state::PaneFocus::Input);
     assert!(state.permission.has_prompt());
@@ -257,43 +251,30 @@ fn permission_request_table() -> Result<()> {
 
     reduce_ui(
         &mut state,
-        SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("edit".to_string()),
-                "builtin",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
-        },
+        tool_started(ToolCall::new(
+            ToolName("edit".to_string()),
+            agnt_runtime::tools::handler::ToolSource::Builtin,
+            r#"{"path":"test.rs"}"#,
+        )),
     );
     reduce_ui(
         &mut state,
-        SystemEvent::PermissionRequested {
-            request_id: RequestId::new("perm-1"),
-            context: PermissionRequestContext {
-                tool: "edit".to_string(),
-                tool_key: "edit\n{}".to_string(),
-                source: "builtin".to_string(),
-                mode: None,
-                matched_rule_identity: "tool:edit".to_string(),
-                scope: "tool".to_string(),
-                target_field: None,
-                pattern: "edit".to_string(),
-                summary: "test".to_string(),
-                pre_authorize_display: Some(ToolDisplay {
-                    title: Some("file (diff)".to_string()),
-                    sections: vec![ToolDisplaySection {
-                        label: Some("diff".to_string()),
-                        kind: agnt_core::transcript::ir::ContentKind::Diff {
-                            language: "diff".to_string(),
-                            path: "test.rs".to_string(),
-                        },
-                        content: "--- a\n+++ b\n".to_string(),
-                        stats: None,
-                    }],
-                }),
-            },
-        },
+        SessionRecord::Permission(PermissionRecord::Requested {
+            request_id: RequestId::from_minted("perm-1"),
+            call_id: agnt_runtime::protocol::events::ToolCallId::from_key(
+                "edit\n{\"path\":\"test.rs\"}",
+            ),
+            tool: "edit".to_string(),
+            source: "builtin".to_string(),
+            mode: None,
+            rule_identity: "tool:edit".to_string(),
+            scope: "tool".to_string(),
+            target_field: None,
+            pattern: "edit".to_string(),
+            summary: "test".to_string(),
+            shows_preview: true,
+            preview: Some("--- a\n+++ b\n".to_string()),
+        }),
     );
 
     // The preview lands on the pending tool entry in place, so there is
@@ -332,12 +313,12 @@ fn warning_dispatch_sets_status_line() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec
-    reduce_ui(
+    reduce_narration(
         &mut state,
-        SystemEvent::SystemMessage {
-            kind: SystemKind::Warning,
-            text: "test warning".to_string(),
-        },
+        system_message(
+            agnt_runtime::protocol::events::NoticeKind::Warning,
+            "test warning",
+        ),
     );
 
     // -- Check

@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// An assistant message event is appended as one raw-markdown block, projects
 /// its markdown, and flows after a user turn without a separator.
@@ -10,10 +10,7 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
     // -- Exec
-    coordinator.reduce_system_event(SystemEvent::InferenceChunk {
-        delta: "hello\nworld".to_string(),
-        aggregated: "hello\nworld".to_string(),
-    });
+    coordinator.fold_narration(&inference_chunk("hello\nworld", "hello\nworld"));
 
     // -- Check: one assistant block with the raw markdown.
     let blocks = coordinator.state().transcript.entries();
@@ -35,10 +32,7 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
     let fixture = markdown_fixture("lists_blockquote.md");
 
     // -- Exec
-    markdown.reduce_system_event(SystemEvent::InferenceChunk {
-        delta: fixture.clone(),
-        aggregated: fixture,
-    });
+    markdown.fold_narration(&inference_chunk(fixture.clone(), fixture));
 
     // -- Check: the projection produces list markers and quote rails.
     let raw_texts: Vec<String> = markdown
@@ -78,10 +72,7 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
         .take_next_prompt_for_execution();
     driver
         .coordinator_mut()
-        .reduce_system_event(SystemEvent::InferenceChunk {
-            delta: "world".to_string(),
-            aggregated: "world".to_string(),
-        });
+        .fold_narration(&inference_chunk("world", "world"));
 
     // -- Check: [User, Assistant] with no separator.
     assert_eq!(
@@ -122,25 +113,12 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
 
     // -- Exec
     driver.advance(&[key(TerminalKey::Char('x'))]).await?;
-    driver
-        .coordinator_mut()
-        .reduce_system_event(SystemEvent::Tick);
 
     // -- Check
     assert!(driver.state().status.message.status_line().is_empty());
 
     // -- Exec
-    driver
-        .coordinator_mut()
-        .reduce_system_event(SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        });
+    driver.coordinator_mut().fold_record(&turn_completed(0));
 
     // -- Check
     assert!(driver.state().status.message.status_line().is_empty());
@@ -152,8 +130,6 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     busy.advance(&[key(TerminalKey::Char('k')), key(TerminalKey::Char('9'))])
         .await?;
     busy.coordinator_mut().state.phase = UiPhase::Busy;
-    busy.coordinator_mut()
-        .reduce_system_event(SystemEvent::Tick);
 
     // -- Check: the status area reports busy.
     let status_lines =
@@ -161,16 +137,7 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     assert!(status_lines.join("\n").contains("(busy)"));
 
     // -- Exec
-    busy.coordinator_mut()
-        .reduce_system_event(SystemEvent::TurnCompleted {
-            tool_calls: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: None,
-            cost: None,
-            cost_complete: true,
-            duration_ms: 0,
-        });
+    busy.coordinator_mut().fold_record(&turn_completed(0));
 
     // -- Check: the status area reports idle; the input line is not polluted.
     let status_lines =

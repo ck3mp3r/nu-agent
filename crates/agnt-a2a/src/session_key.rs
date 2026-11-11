@@ -1,31 +1,25 @@
-//! Session-key derivation for A2A `contextId`-based routing.
+//! Resolution of an A2A `contextId`.
 //!
-//! The A2A `contextId` is a client-provided opaque string. The internal
-//! session-store key is derived from it as `{prefix}-{context_id}`, where
-//! `prefix` is the path-hash prefix that scopes sessions to a working
-//! directory. The key format IS the mapping — no registry is needed.
+//! The A2A `contextId` is a client-provided opaque string. An absent id means
+//! "start a fresh session" (A2A spec §3.4.1), so the server boundary mints one
+//! here — the single site that owns the rule — and carries the resolved id
+//! onward. The session-store key a host derives from that id is the host
+//! store's vocabulary, not this crate's.
 
 // region:    --- Functions
 
-/// Derive the internal session-store key for an A2A `contextId`.
+/// Return `context_id` unchanged, or mint a fresh UUID when it is absent, empty,
+/// or whitespace only.
 ///
-/// `prefix` is the path-hash prefix from `dir_prefix(cwd)`. The returned key
-/// is `{prefix}-{context_id}`.
-///
-/// # Arguments
-/// * `prefix` - Path-hash prefix scoping sessions to a working directory
-/// * `context_id` - Client-provided A2A context identifier
-///
-pub fn derive_session_key(prefix: &str, context_id: &str) -> String {
-    format!("{prefix}-{context_id}")
-}
-
-/// Return `context_id` unchanged, or mint a fresh UUID when it is absent.
-///
-/// An absent `contextId` means "start a fresh session" (A2A spec §3.4.1). The
+/// An absent `contextId` means "start a fresh session" (A2A spec §3.4.1). An
+/// empty or whitespace-only id carries no context either, so it takes the same
+/// path: carrying it would append every such send to one shared lineage. The
 /// minted UUID becomes the context handle the client can resume with.
 pub fn resolve_context_id(context_id: Option<String>) -> String {
-    context_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    match context_id {
+        Some(id) if !id.trim().is_empty() => id,
+        _ => uuid::Uuid::new_v4().to_string(),
+    }
 }
 
 // endregion: --- Functions

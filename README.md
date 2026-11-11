@@ -2,14 +2,12 @@
 
 Nushell plugin for running an LLM agent from pipelines.
 
-<!-- test edit: ok -->
-
 ## Quick Start
 
 ```bash
 cargo build --release
 plugin add target/release/nu_plugin_agent
-plugin use nu_plugin_agent
+plugin use agent
 ```
 
 Generate a starter config:

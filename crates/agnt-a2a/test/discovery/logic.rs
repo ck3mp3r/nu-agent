@@ -4,9 +4,7 @@ use mdns_sd::{Receiver, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInf
 use tokio::sync::mpsc;
 
 use crate::discovery::static_discovery::StaticPeerDiscovery;
-use crate::discovery::{
-    DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent, mdns_name_for_switch,
-};
+use crate::discovery::{DiscoveryService, PeerDiscoveryImpl, PeerEvent, mdns_name_for_switch};
 use crate::{AgentCard, Peer};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -41,9 +39,9 @@ fn peer_from_fields(name: &str, address: &str, port: u16, hostname: &str) -> Pee
 }
 
 /// Synthetic service info used by the ignored mDNS smoke tests.
-fn build_test_service_info(agent_name: &str, port: u16, mesh_key: &str) -> ServiceInfo {
+fn build_test_service_info(agent_name: &str, port: u16, mesh_key: &str) -> Result<ServiceInfo> {
     let props: Vec<(&str, &str)> = vec![("name", agent_name), ("mesh_key", mesh_key)];
-    ServiceInfo::new(
+    let info = ServiceInfo::new(
         "_nu-agent-a2a._tcp.local.",
         agent_name,
         &format!("{agent_name}.local."),
@@ -51,7 +49,8 @@ fn build_test_service_info(agent_name: &str, port: u16, mesh_key: &str) -> Servi
         port,
         props.as_slice(),
     )
-    .expect("synthetic ServiceInfo")
+    .map_err(|e| format!("{e:?}"))?;
+    Ok(info)
 }
 
 /// Await a resolved mDNS service whose fullname contains `needle`, within
@@ -82,7 +81,7 @@ fn wait_for_resolved(
 
 /// Verify the pure field-mapping function produces a correct [`Peer`].
 #[test]
-fn test_peer_from_fields_populates_correctly() {
+fn test_peer_from_fields_populates_correctly() -> Result<()> {
     let peer = peer_from_fields("my-agent", "192.168.1.10", 8080, "my-agent.local.");
 
     assert_eq!(peer.name, "my-agent");
@@ -90,14 +89,16 @@ fn test_peer_from_fields_populates_correctly() {
     assert_eq!(peer.host, "my-agent.local.");
     assert_eq!(peer.port, 8080);
     assert!(peer.card.is_none());
+    Ok(())
 }
 
 /// Verify the field-mapping function handles port 0.
 #[test]
-fn test_peer_from_fields_port_zero() {
+fn test_peer_from_fields_port_zero() -> Result<()> {
     let peer = peer_from_fields("zero-port", "127.0.0.1", 0, "zero-port.local.");
     assert_eq!(peer.port, 0);
     assert_eq!(peer.url, "http://127.0.0.1:0");
+    Ok(())
 }
 
 /// Verify that [`peer_url_from_service`] uses the TXT `url` property when
@@ -107,7 +108,7 @@ fn test_peer_from_fields_port_zero() {
 #[ignore]
 #[test]
 fn test_peer_url_from_txt_property() -> Result<()> {
-    let daemon = ServiceDaemon::new().expect("ServiceDaemon");
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
 
     // Register with a url TXT property that differs from the address-based URL.
     let props: Vec<(&str, &str)> = vec![
@@ -123,10 +124,12 @@ fn test_peer_url_from_txt_property() -> Result<()> {
         9999,
         props.as_slice(),
     )
-    .expect("synthetic ServiceInfo");
-    daemon.register(info).expect("register");
+    .map_err(|e| format!("{e:?}"))?;
+    daemon.register(info).map_err(|e| format!("{e:?}"))?;
 
-    let receiver = daemon.browse("_nu-agent-a2a._tcp.local.").expect("browse");
+    let receiver = daemon
+        .browse("_nu-agent-a2a._tcp.local.")
+        .map_err(|e| format!("{e:?}"))?;
 
     let resolved = wait_for_resolved(&receiver, "txt-url-agent", Duration::from_secs(3))
         .ok_or("Should discover txt-url-agent via mDNS")?;
@@ -140,34 +143,26 @@ fn test_peer_url_from_txt_property() -> Result<()> {
     Ok(())
 }
 
-/// Verify browse returns a live channel.
-///
-/// NOTE: Requires a working mDNS responder on the host.
-#[ignore]
-#[test]
-fn test_browse_returns_live_channel() {
-    let daemon = ServiceDaemon::new().unwrap();
-    let (_browser, rx) = DiscoveryBrowser::browse(daemon, "test-mesh", 52095).unwrap();
-    assert!(!rx.is_closed(), "receiver should be alive after browse()");
-}
-
 /// Integration test using raw mdns-sd daemon calls (no wrappers).
 ///
 /// NOTE: Requires a working mDNS responder on the host.
 #[ignore]
 #[test]
-fn test_raw_mdns_sd_register_and_browse() {
-    let daemon = ServiceDaemon::new().expect("ServiceDaemon");
+fn test_raw_mdns_sd_register_and_browse() -> Result<()> {
+    let daemon = ServiceDaemon::new().map_err(|e| format!("{e:?}"))?;
 
-    let info = build_test_service_info("raw-test-agent", 6666, "test-mesh");
-    daemon.register(info).expect("register");
+    let info = build_test_service_info("raw-test-agent", 6666, "test-mesh")?;
+    daemon.register(info).map_err(|e| format!("{e:?}"))?;
 
-    let receiver = daemon.browse("_nu-agent-a2a._tcp.local.").expect("browse");
+    let receiver = daemon
+        .browse("_nu-agent-a2a._tcp.local.")
+        .map_err(|e| format!("{e:?}"))?;
 
     // Wait up to 3 seconds for our own service.
     let found = wait_for_resolved(&receiver, "raw-test-agent", Duration::from_secs(3)).is_some();
     assert!(found, "Should discover raw-test-agent via mDNS");
     let _ = daemon.shutdown();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -176,12 +171,13 @@ fn test_raw_mdns_sd_register_and_browse() {
 
 /// Verify that [`PeerDiscoveryImpl::Noop`] can be created and all methods
 /// are safe no-ops.
-#[test]
-fn test_peer_discovery_impl_noop() {
+#[tokio::test]
+async fn test_peer_discovery_impl_noop() -> Result<()> {
     let mut discovery = PeerDiscoveryImpl::Noop;
     discovery.start("noop", 0, &AgentCard::default(), "mesh");
     assert!(discovery.take_peer_rx().is_none());
     discovery.shutdown();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -204,10 +200,11 @@ fn test_static_discovery_empty_peers() -> Result<()> {
 /// Verify that [`StaticPeerDiscovery::start`] and [`shutdown`] are safe
 /// no-ops.
 #[test]
-fn test_static_discovery_start_shutdown_noop() {
+fn test_static_discovery_start_shutdown_noop() -> Result<()> {
     let mut discovery = StaticPeerDiscovery::new(vec![]);
     discovery.start("any", 0, &AgentCard::default(), "mesh");
     discovery.shutdown();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -215,60 +212,37 @@ fn test_static_discovery_start_shutdown_noop() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_mdns_name_for_switch_appends_port_suffix_when_old_name_had_it() {
+fn test_mdns_name_for_switch_appends_port_suffix_when_old_name_had_it() -> Result<()> {
     // When the old mDNS name ends with `-{port}`, the new name must also
     // carry the suffix.
     let result = mdns_name_for_switch("researcher-12345", "reviewer", 12345);
     assert_eq!(result, "reviewer-12345");
+    Ok(())
 }
 
 #[test]
-fn test_mdns_name_for_switch_does_not_append_port_suffix_when_old_name_lacks_it() {
+fn test_mdns_name_for_switch_does_not_append_port_suffix_when_old_name_lacks_it() -> Result<()> {
     // When the old mDNS name does NOT end with `-{port}`, the new name is
     // used verbatim.
     let result = mdns_name_for_switch("researcher", "reviewer", 12345);
     assert_eq!(result, "reviewer");
+    Ok(())
 }
 
 #[test]
-fn test_mdns_name_for_switch_handles_partial_port_match() {
+fn test_mdns_name_for_switch_handles_partial_port_match() -> Result<()> {
     // The suffix must match the full `-{port}` pattern, not just a substring.
     let result = mdns_name_for_switch("researcher-123", "reviewer", 12345);
     assert_eq!(result, "reviewer");
+    Ok(())
 }
 
 #[test]
-fn test_mdns_name_for_switch_handles_same_name_different_port() {
+fn test_mdns_name_for_switch_handles_same_name_different_port() -> Result<()> {
     // Same name but different port — suffix should not be appended.
     let result = mdns_name_for_switch("agent-8080", "agent", 9090);
     assert_eq!(result, "agent");
-}
-
-// ---------------------------------------------------------------------------
-// MdnsPeerDiscovery — fullname tracking
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_mdns_peer_discovery_fullname_starts_none() {
-    let mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::default();
-    assert!(mdns.fullname().is_none());
-}
-
-#[test]
-fn test_mdns_peer_discovery_fullname_after_start() {
-    // We can't easily test the full start() path (needs a real daemon), but
-    // we can verify that the fullname field is set correctly by calling
-    // rename() which sets it.
-    let mut mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::default();
-    // Without a daemon, rename() is a no-op and fullname stays None.
-    mdns.rename(
-        "old._nu-agent-a2a._tcp.local.",
-        "new-name",
-        12345,
-        &test_card("new-name", 12345),
-        "test-mesh",
-    );
-    assert!(mdns.fullname().is_none());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -276,19 +250,21 @@ fn test_mdns_peer_discovery_fullname_after_start() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_peer_discovery_impl_fullname_noop() {
+fn test_peer_discovery_impl_fullname_noop() -> Result<()> {
     let impl_ = PeerDiscoveryImpl::Noop;
     assert!(impl_.fullname().is_none());
+    Ok(())
 }
 
 #[test]
-fn test_peer_discovery_impl_fullname_static() {
+fn test_peer_discovery_impl_fullname_static() -> Result<()> {
     let impl_ = PeerDiscoveryImpl::Static(StaticPeerDiscovery::new(vec![]));
     assert!(impl_.fullname().is_none());
+    Ok(())
 }
 
 #[test]
-fn test_peer_discovery_impl_rename_noop_does_not_panic() {
+fn test_peer_discovery_impl_rename_noop_does_not_panic() -> Result<()> {
     let mut impl_ = PeerDiscoveryImpl::Noop;
     impl_.rename(
         "old._nu-agent-a2a._tcp.local.",
@@ -298,10 +274,11 @@ fn test_peer_discovery_impl_rename_noop_does_not_panic() {
         "test-mesh",
     );
     // Should not panic — no-op is fine.
+    Ok(())
 }
 
 #[test]
-fn test_peer_discovery_impl_rename_static_does_not_panic() {
+fn test_peer_discovery_impl_rename_static_does_not_panic() -> Result<()> {
     let mut impl_ = PeerDiscoveryImpl::Static(StaticPeerDiscovery::new(vec![]));
     impl_.rename(
         "old._nu-agent-a2a._tcp.local.",
@@ -311,6 +288,7 @@ fn test_peer_discovery_impl_rename_static_does_not_panic() {
         "test-mesh",
     );
     // Should not panic — no-op is fine.
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -318,9 +296,10 @@ fn test_peer_discovery_impl_rename_static_does_not_panic() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn discovery_service_noop_does_not_crash() {
+fn discovery_service_noop_does_not_crash() -> Result<()> {
     let service = DiscoveryService { _daemon: None };
     drop(service);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +313,9 @@ async fn test_peer_event_roundtrip_discovered() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
     let peer = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
-    tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
+    tx.send(PeerEvent::PeerDiscovered(peer))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     drop(tx);
 
     let event = rx
@@ -353,13 +334,17 @@ async fn test_peer_event_roundtrip_discovered() -> Result<()> {
 
 /// Verify that sending multiple discovered events in sequence works.
 #[tokio::test]
-async fn test_peer_event_roundtrip_multiple() {
+async fn test_peer_event_roundtrip_multiple() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
     let alpha = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
     let beta = Box::new(peer_from_fields("beta", "10.0.0.2", 9002, "beta.local."));
-    tx.send(PeerEvent::PeerDiscovered(alpha)).await.unwrap();
-    tx.send(PeerEvent::PeerDiscovered(beta)).await.unwrap();
+    tx.send(PeerEvent::PeerDiscovered(alpha))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    tx.send(PeerEvent::PeerDiscovered(beta))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     drop(tx);
 
     let mut names = Vec::new();
@@ -371,11 +356,12 @@ async fn test_peer_event_roundtrip_multiple() {
 
     assert!(names.iter().any(|n| n == "alpha"));
     assert!(names.iter().any(|n| n == "beta"));
+    Ok(())
 }
 
 /// Verify that sending a [`PeerEvent::PeerLost`] is received correctly.
 #[tokio::test]
-async fn test_peer_event_roundtrip_lost() {
+async fn test_peer_event_roundtrip_lost() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
     let peer = Box::new(peer_from_fields(
@@ -384,10 +370,12 @@ async fn test_peer_event_roundtrip_lost() {
         9001,
         "removable.local.",
     ));
-    tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
+    tx.send(PeerEvent::PeerDiscovered(peer))
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     tx.send(PeerEvent::PeerLost("removable".to_string()))
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     drop(tx);
 
     let mut discovered = false;
@@ -410,6 +398,7 @@ async fn test_peer_event_roundtrip_lost() {
 
     assert!(discovered, "Should have received PeerDiscovered");
     assert!(lost, "Should have received PeerLost");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn test_sender_url_populates_peer_cache() {
+async fn test_sender_url_populates_peer_cache() -> Result<()> {
     let cache = Arc::new(PeerCache::default());
     let card = AgentCard {
         name: "test".into(),
@@ -10,10 +10,9 @@ async fn test_sender_url_populates_peer_cache() {
     };
     let server =
         A2aServer::start_with_blocking_timeout(card, cache.clone(), 0, TEST_BLOCKING_TIMEOUT)
-            .await
-            .unwrap();
+            .await?;
 
-    let client = test_client();
+    let client = test_client()?;
 
     // Send a task with senderUrl
     let resp = client
@@ -26,8 +25,7 @@ async fn test_sender_url_populates_peer_cache() {
             "senderUrl": "http://sender.local:12345"
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     // Verify peer cache has the sender
@@ -38,10 +36,11 @@ async fn test_sender_url_populates_peer_cache() {
     assert_eq!(peers[0].port, 12345);
 
     server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_sender_url_empty_does_not_populate_cache() {
+async fn test_sender_url_empty_does_not_populate_cache() -> Result<()> {
     let cache = Arc::new(PeerCache::default());
     let card = AgentCard {
         name: "test".into(),
@@ -50,10 +49,9 @@ async fn test_sender_url_empty_does_not_populate_cache() {
     };
     let server =
         A2aServer::start_with_blocking_timeout(card, cache.clone(), 0, TEST_BLOCKING_TIMEOUT)
-            .await
-            .unwrap();
+            .await?;
 
-    let client = test_client();
+    let client = test_client()?;
 
     // Send a task without senderUrl
     let resp = client
@@ -65,8 +63,7 @@ async fn test_sender_url_empty_does_not_populate_cache() {
             }
         }))
         .send()
-        .await
-        .unwrap();
+        .await?;
     assert_eq!(resp.status(), 200);
 
     // Verify peer cache is empty
@@ -78,4 +75,5 @@ async fn test_sender_url_empty_does_not_populate_cache() {
     );
 
     server.shutdown().await;
+    Ok(())
 }

@@ -94,7 +94,7 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.reduce_system_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
+    coordinator.fold_record(&llm_completed(40, 2_500, Some(3_000), None, false));
 
     // -- Exec & Check: the configured path resolves the max without a fallback.
     let lane_2 = crate::runtime::lane_2_status_line_for_test(coordinator.state(), 120);
@@ -109,7 +109,7 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(100));
-    updating.reduce_system_event(llm_completed(12, 0, 2, 8, Some(10), None, false));
+    updating.fold_record(&llm_completed(12, 2, Some(10), None, false));
 
     // -- Exec & Check: the first turn.
     let first = crate::runtime::lane_2_status_line_for_test(updating.state(), 120);
@@ -117,7 +117,7 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
     assert!(first_text.ends_with("10 (10%)"));
 
     // -- Exec & Check: the second turn does not stale.
-    updating.reduce_system_event(llm_completed(20, 0, 8, 32, Some(40), None, false));
+    updating.fold_record(&llm_completed(20, 8, Some(40), None, false));
     let second = crate::runtime::lane_2_status_line_for_test(updating.state(), 120);
     let second_text: String = second.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(second_text.ends_with("40 (40%)"));

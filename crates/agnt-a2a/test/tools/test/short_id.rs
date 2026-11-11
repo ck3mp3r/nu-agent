@@ -8,7 +8,7 @@ use super::*;
 #[tokio::test]
 async fn test_handle_tasks_get_with_unique_prefix() -> Result<()> {
     // -- Setup & Fixtures
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
     let task_id = server.task_store().create_task(None, None, None).id;
     let prefix = task_id
@@ -36,7 +36,7 @@ async fn test_handle_tasks_get_with_unique_prefix() -> Result<()> {
 #[tokio::test]
 async fn test_handle_tasks_cancel_with_unique_prefix() -> Result<()> {
     // -- Setup & Fixtures
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
     let task_id = server.task_store().create_task(None, None, None).id;
     let prefix = task_id
@@ -64,7 +64,7 @@ async fn test_handle_tasks_cancel_with_unique_prefix() -> Result<()> {
 #[tokio::test]
 async fn test_handle_tasks_get_with_unknown_prefix() -> Result<()> {
     // -- Setup & Fixtures
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
     let task_id = server.task_store().create_task(None, None, None).id;
     // Flip the last hex digit of the only task's prefix: with one task in the
@@ -98,7 +98,7 @@ async fn test_handle_tasks_get_with_unknown_prefix() -> Result<()> {
 #[tokio::test]
 async fn test_handle_tasks_get_with_prefix_shorter_than_eight() -> Result<()> {
     // -- Setup & Fixtures
-    let server = test_server().await;
+    let server = test_server().await?;
     let ctx = tool_ctx(&server);
     let task_id = server.task_store().create_task(None, None, None).id;
     let too_short = task_id

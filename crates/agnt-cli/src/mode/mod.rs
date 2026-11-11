@@ -9,9 +9,11 @@
 
 mod stderr;
 mod tui;
+mod turn_terminal;
 
 pub use stderr::run_stderr_mode;
 pub use tui::run_tui_mode;
+pub use turn_terminal::{TaskTerminal, apply_turn_event_to_store, apply_turn_terminal};
 
 // endregion: --- Modules
 
@@ -21,17 +23,15 @@ use std::sync::Arc;
 use agnt_a2a::{
     A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache, PeerDiscoveryImpl,
 };
-use agnt_core::bus::{AgentEvent, AgentTx, Bus, TurnEvent};
-use agnt_core::config::{PluginConfig, ResolvedHook};
-use agnt_core::conversation::runtime::AgentConversationRuntime;
-use agnt_core::hooks::{
-    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, NuProcess, spawn_agent_hook_runner,
-    spawn_hook_runner,
+use agnt_runtime::bus::{AgentEvent, AgentTx};
+use agnt_runtime::config::{PluginConfig, ResolvedHook};
+use agnt_runtime::hooks::{
+    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
+    spawn_agent_hook_runner, spawn_hook_runner,
 };
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::session_management::SessionPersistence;
-use agnt_core::utils::value_ext::extract_response_text_from_value;
-use nu_protocol::Value;
+use agnt_runtime::orchestrator::external::{ExternalCompletion, ExternalTask, ExternalTaskStore};
+use agnt_runtime::protocol::contracts::UiMessageSnapshot;
+use agnt_runtime::session::management::SessionPersistence;
 use tokio::task::JoinHandle;
 
 use crate::error::Result;
@@ -62,10 +62,19 @@ pub struct TuiHydrationInput {
 /// there; the `Default` impl supplies that empty context.
 #[derive(Default)]
 pub struct A2aContext {
+    /// Raw incoming tasks, as the server delivers them.
     pub task_rx: Option<tokio::sync::mpsc::Receiver<IncomingTask>>,
+    /// Raw completion notifications, as the client delivers them.
     pub completion_rx: Option<tokio::sync::mpsc::Receiver<A2aCompletionEvent>>,
     pub task_cancel_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub task_store: Option<Arc<InMemoryTaskStore>>,
+    /// Bridged incoming tasks. Filled by [`A2aContext::bridge_a2a_channels`];
+    /// the raw `task_rx` has no consumer once this is set.
+    pub external_task_rx: Option<tokio::sync::mpsc::Receiver<ExternalTask>>,
+    /// Bridged completion notifications.
+    pub external_completion_rx: Option<tokio::sync::mpsc::Receiver<ExternalCompletion>>,
+    /// Rejection seam over the raw task store, for tasks that cannot run.
+    pub(crate) gate: Option<Arc<A2aExternalTaskGate>>,
     /// Handle to the server's mutable AgentCard, for updating on agent switch.
     pub card_handle: Option<Arc<std::sync::RwLock<AgentCard>>>,
     /// Shared peer cache, for updating the self-entry on agent switch.
@@ -77,6 +86,14 @@ pub struct A2aContext {
     /// The mesh key for mDNS discovery isolation.
     pub mesh_key: Option<String>,
 }
+
+/// The runtime's external-task rejection seam over the raw A2A task store.
+///
+/// A task whose caller already moved it to a running state must reach a
+/// terminal state even when no turn can run for it. The loop reports that
+/// through this adapter, which transitions the task in the store the server
+/// owns.
+pub(crate) struct A2aExternalTaskGate(Arc<InMemoryTaskStore>);
 
 /// Extra TUI-mode options bundled to keep `run_tui_mode` under the clippy
 /// argument-count limit.
@@ -99,7 +116,7 @@ pub struct TuiModeOptions {
 /// script joins it.
 pub fn spawn_configured_hooks<P>(
     config: Option<&PluginConfig>,
-    bus: &Bus,
+    sources: HookSources<'_>,
     cwd: &Path,
     config_dir: &Path,
     context: &HookAgentContext,
@@ -113,7 +130,7 @@ where
         return Vec::new();
     }
     log::debug!("Starting {} hook runner(s)", hooks.len());
-    spawn_hook_runner(bus, &hooks, cwd, context, process)
+    spawn_hook_runner(sources, &hooks, cwd, context, process)
 }
 
 /// Resolve the configured hooks, or an empty list when the config is absent or
@@ -128,7 +145,7 @@ fn resolve_hooks_or_empty(config: Option<&PluginConfig>, config_dir: &Path) -> V
     if config.hooks.is_empty() {
         return Vec::new();
     }
-    match agnt_core::config::resolve_hooks(config, config_dir) {
+    match agnt_runtime::config::resolve_hooks(config, config_dir) {
         Ok(hooks) => hooks,
         Err(e) => {
             log::warn!("Failed to resolve hooks: {e}");
@@ -171,81 +188,28 @@ where
 /// Start the configured hooks with the production [`NuProcess`].
 pub fn spawn_configured_hooks_with_nu(
     config: Option<&PluginConfig>,
-    bus: &Bus,
+    sources: HookSources<'_>,
     cwd: &Path,
     config_dir: &Path,
     context: &HookAgentContext,
 ) -> Vec<JoinHandle<()>> {
-    spawn_configured_hooks(config, bus, cwd, config_dir, context, NuProcess)
-}
-
-/// Auto-complete an A2A task based on the LLM execution result.
-///
-/// Extracts the final text from the LLM response (handles both
-/// `Value::String` and `Value::Record` with a `"response"` field)
-/// and calls `store.complete_task()`. Logs a warning if the
-/// completion call fails.
-pub fn auto_complete_a2a_task(store: &InMemoryTaskStore, task_id: &str, response: &Value) {
-    let final_text = extract_response_text_from_value(response);
-    if let Err(e) = store.complete_task(task_id, &final_text) {
-        log::warn!("Failed to auto-complete A2A task {task_id}: {e}");
-    }
-}
-
-/// Auto-fail an A2A task with the turn's error message.
-///
-/// Mirrors [`auto_complete_a2a_task`]: transitions the task to `Failed` with
-/// `error` as the status message. Logs a warning if the transition fails.
-pub fn auto_fail_a2a_task(store: &InMemoryTaskStore, task_id: &str, error: &str) {
-    if let Err(e) = store.fail_task(task_id, error) {
-        log::warn!("Failed to auto-fail A2A task {task_id}: {e}");
-    }
-}
-
-/// Apply a turn-outcome event to the A2A task store.
-///
-/// `TaskCompleted` completes the task with the turn output; `TaskFailed` fails
-/// it with the error text. Every other variant is ignored. Store errors are
-/// logged, never propagated.
-pub fn apply_turn_event_to_store(store: &InMemoryTaskStore, event: &TurnEvent) {
-    match event {
-        TurnEvent::TaskCompleted { output, task_id } => {
-            if let Err(e) = store.complete_task(task_id, output) {
-                log::warn!("auto-complete failed for task {task_id}: {e}");
-            }
-        }
-        TurnEvent::TaskFailed { task_id, error } => {
-            if let Err(e) = store.fail_task(task_id, error) {
-                log::warn!("auto-fail failed for task {task_id}: {e}");
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Apply an A2A turn result to the task store.
-///
-/// A successful turn completes the task; a failed turn fails it with the
-/// error message. Mirrors the TUI listener's outcome handling for stderr mode.
-pub fn apply_a2a_turn_result(store: &InMemoryTaskStore, task_id: &str, result: &Result<Value>) {
-    match result {
-        Ok(response) => auto_complete_a2a_task(store, task_id, response),
-        Err(error) => auto_fail_a2a_task(store, task_id, &error.to_string()),
-    }
+    spawn_configured_hooks(config, sources, cwd, config_dir, context, NuProcess)
 }
 
 /// Attach the session derived from an A2A `contextId`.
 ///
-/// Derives the session-store key as `{prefix}-{context_id}` (where `prefix` is
-/// the path-hash prefix of the runtime's working directory) and attaches that
-/// session, creating it when it does not exist yet. Logs a warning when the
-/// attach fails; the turn still runs against the current session.
-pub async fn attach_a2a_context_session(
-    runtime_impl: &mut AgentConversationRuntime,
+/// The session store's key mapping is the runtime's vocabulary: the key is
+/// [`external_session_key`](agnt_runtime::orchestrator::external::external_session_key)
+/// of the path-hash prefix of the runtime's working directory and the context
+/// id. Attaches that session, creating it when it does not exist yet. Logs a
+/// warning when the attach fails; the turn still runs against the current
+/// session.
+pub async fn attach_a2a_context_session<R: SessionPersistence>(
+    runtime_impl: &mut R,
     context_id: &str,
 ) {
-    let prefix = agnt_core::session::prefix::dir_prefix(runtime_impl.cwd());
-    let key = agnt_a2a::derive_session_key(&prefix, context_id);
+    let prefix = agnt_runtime::session::prefix::dir_prefix(runtime_impl.cwd());
+    let key = agnt_runtime::orchestrator::external::external_session_key(&prefix, context_id);
     log::info!("A2A context {context_id} -> session {key}");
     if let Err(e) = runtime_impl.attach_session(&key).await {
         log::warn!("Failed to attach A2A context session '{key}': {e}");
@@ -253,6 +217,91 @@ pub async fn attach_a2a_context_session(
 }
 
 // endregion: --- Functions
+
+// region:    --- A2aBridge
+
+/// Capacity of each bridged channel.
+///
+/// The server hands one task to the loop at a time, so this absorbs a burst
+/// without back-pressuring a forwarder.
+const A2A_BRIDGE_CAPACITY: usize = 64;
+
+impl A2aContext {
+    /// Move the raw A2A channels onto the runtime's external-task vocabulary.
+    ///
+    /// Each forwarder is the only consumer of its raw channel. The task
+    /// forwarder forwards the context id the server boundary has already
+    /// resolved: the boundary's send handlers mint an absent id (A2A spec
+    /// §3.4.1) before they publish, so the bridge never mints one, and the
+    /// prompt footer names the same context the loop attaches the session for.
+    /// A context without raw channels keeps its bridged fields unset, so the
+    /// call is idempotent.
+    pub(crate) fn bridge_a2a_channels(&mut self) {
+        if let Some(mut raw) = self.task_rx.take() {
+            let (tx, rx) = tokio::sync::mpsc::channel(A2A_BRIDGE_CAPACITY);
+            tokio::spawn(async move {
+                while let Some(incoming) = raw.recv().await {
+                    let task_id = incoming.task_id.clone();
+                    // The boundary resolves the id before it publishes, so a
+                    // carried id is never absent here. A task that carries none
+                    // cannot name a session, so it takes the same drop path as
+                    // a failed forward instead of minting a detached context.
+                    let Some(context_id) = incoming.context_id.clone() else {
+                        log::warn!(
+                            "A2A task {task_id} carries no context id; dropping it instead of minting one"
+                        );
+                        break;
+                    };
+                    let task = ExternalTask {
+                        task_id,
+                        context_id,
+                        prompt: incoming.to_prompt(),
+                    };
+                    if tx.send(task).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            self.external_task_rx = Some(rx);
+        }
+        if let Some(mut raw) = self.completion_rx.take() {
+            let (tx, rx) = tokio::sync::mpsc::channel(A2A_BRIDGE_CAPACITY);
+            tokio::spawn(async move {
+                while let Some(event) = raw.recv().await {
+                    let completion = ExternalCompletion {
+                        task_id: event.task_id.clone(),
+                        prompt: event.to_prompt(),
+                    };
+                    if tx.send(completion).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            self.external_completion_rx = Some(rx);
+        }
+        if let Some(store) = &self.task_store {
+            self.gate = Some(Arc::new(A2aExternalTaskGate::new(Arc::clone(store))));
+        }
+    }
+}
+
+impl A2aExternalTaskGate {
+    /// Adapt `store` to the runtime's external-task rejection seam.
+    pub(crate) fn new(store: Arc<InMemoryTaskStore>) -> Self {
+        Self(store)
+    }
+}
+
+impl ExternalTaskStore for A2aExternalTaskGate {
+    fn reject_task(&self, task_id: &str, reason: &str) -> core::result::Result<(), String> {
+        self.0
+            .reject_task(task_id, reason)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+// endregion: --- A2aBridge
 
 // region:    --- AgentLifecycle
 

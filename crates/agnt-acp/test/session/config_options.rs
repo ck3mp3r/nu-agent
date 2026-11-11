@@ -198,8 +198,8 @@ async fn test_session_manager_set_model_build_failure_restores_config() -> Resul
             .get_session(&session_id)
             .ok_or("session must exist")?;
         let mut runtime = session.runtime().lock().await;
-        runtime.provider.invalidate_cache();
-        let config = runtime.provider.provider_config_mut();
+        runtime.invalidate_provider_cache();
+        let config = runtime.provider_config_mut();
         config.provider = "bad-provider".to_string();
         // The sabotaged block declares no catalog, so its name is its section.
         config.catalog = None;

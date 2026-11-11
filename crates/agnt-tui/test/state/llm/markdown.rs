@@ -12,9 +12,9 @@ fn assistant_markdown_projection_and_streaming_replace() -> Result<()> {
 
     // -- Check: the raw markdown is stored and projects to MdBold.
     assert!(assistant_markdown_entries(&bold).iter().any(|md| {
-        project_spans(md)
-            .iter()
-            .any(|(t, h)| t == "bold" && matches!(h, agnt_core::transcript::ir::StyleHint::MdBold))
+        project_spans(md).iter().any(|(t, h)| {
+            t == "bold" && matches!(h, agnt_render::transcript::ir::StyleHint::MdBold)
+        })
     }));
 
     // -- Setup & Fixtures: streaming.

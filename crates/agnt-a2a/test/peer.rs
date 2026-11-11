@@ -122,7 +122,7 @@ fn test_card_nonexistent() {
 }
 
 #[test]
-fn test_concurrent_access() {
+fn test_concurrent_access() -> Result<()> {
     use std::sync::Arc;
     let cache = Arc::new(PeerCache::default());
     let mut handles = vec![];
@@ -137,9 +137,10 @@ fn test_concurrent_access() {
         }));
     }
     for h in handles {
-        h.join().unwrap();
+        h.join().map_err(|_| "worker thread panicked")?;
     }
     assert_eq!(cache.list().len(), 10);
+    Ok(())
 }
 
 #[test]

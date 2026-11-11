@@ -1,9 +1,11 @@
 use std::time::Duration;
 
 use mdns_sd::ServiceDaemon;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use crate::AgentCard;
+use crate::client::A2aClient;
 use crate::discovery::{
     DiscoveryBrowser, DiscoveryService, PeerEvent, SERVICE_TYPE, build_service_info,
 };
@@ -14,7 +16,6 @@ use crate::discovery::{
 /// advertising this agent, and the [`DiscoveryBrowser`] for discovering
 /// peers.  All three share the same daemon so that registration and browsing
 /// go through a single mDNS responder.
-#[derive(Default)]
 pub struct MdnsPeerDiscovery {
     daemon: Option<ServiceDaemon>,
     service: Option<DiscoveryService>,
@@ -30,9 +31,37 @@ pub struct MdnsPeerDiscovery {
     port: Option<u16>,
     /// The mesh key for discovery isolation.
     mesh_key: Option<String>,
+    /// The composition root's A2A client: the browse thread fetches peer cards
+    /// with it. It arrives at construction because every browse — including the
+    /// one a rediscover starts — needs it.
+    card_client: A2aClient,
+    /// The handle of the runtime that owns this agent. The browse thread enters
+    /// it to fetch, and a rediscover re-enters `browse` long after `start`
+    /// returned, so the handle is owned from construction.
+    runtime_handle: Handle,
 }
 
 impl MdnsPeerDiscovery {
+    /// Create a discovery backend over the composition root's browse facts.
+    ///
+    /// `card_client` and `runtime_handle` belong to the browse thread: it is a
+    /// bare `std::thread`, so the handle is how it enters the runtime that owns
+    /// the agent, and the client is what it fetches a peer's card with.
+    pub fn new(card_client: A2aClient, runtime_handle: Handle) -> Self {
+        Self {
+            daemon: None,
+            service: None,
+            browser: None,
+            peer_rx: None,
+            fullname: None,
+            instance_name: None,
+            port: None,
+            mesh_key: None,
+            card_client,
+            runtime_handle,
+        }
+    }
+
     /// Start mDNS advertising and browsing.
     ///
     /// Creates a shared [`ServiceDaemon`], registers this agent as an mDNS
@@ -78,7 +107,13 @@ impl MdnsPeerDiscovery {
         }
 
         // ── mDNS discovery browser ────────────────────────────────────────
-        let (browser, peer_rx) = match DiscoveryBrowser::browse(daemon.clone(), mesh_key, port) {
+        let (browser, peer_rx) = match DiscoveryBrowser::browse(
+            daemon.clone(),
+            mesh_key,
+            port,
+            self.card_client.clone(),
+            self.runtime_handle.clone(),
+        ) {
             Ok((b, rx)) => {
                 log::info!("mDNS browsing started for mesh '{mesh_key}'");
                 (Some(b), Some(rx))
@@ -214,6 +249,8 @@ impl MdnsPeerDiscovery {
                 return None;
             }
         };
+        let card_client = self.card_client.clone();
+        let runtime_handle = self.runtime_handle.clone();
 
         // stop_browse is the canonical unsubscribe: it drops the querier sender
         // and purges every pending retransmission, which otherwise keeps a
@@ -223,7 +260,7 @@ impl MdnsPeerDiscovery {
             log::warn!("mDNS rediscover: stop_browse failed for '{SERVICE_TYPE}': {e}");
         }
 
-        match DiscoveryBrowser::browse(daemon, &mesh_key, port) {
+        match DiscoveryBrowser::browse(daemon, &mesh_key, port, card_client, runtime_handle) {
             Ok((browser, rx)) => {
                 // Replacing the browser drops the previous one, which joins the
                 // superseded browse thread before this call returns.

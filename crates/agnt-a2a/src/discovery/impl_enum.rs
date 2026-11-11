@@ -20,6 +20,10 @@ pub enum PeerDiscoveryImpl {
 
 impl PeerDiscoveryImpl {
     /// Start advertising and browsing.
+    ///
+    /// The mDNS arm owns its browse facts — the transport and the handle of the
+    /// runtime that owns this agent — from construction. The ignorer arms never
+    /// need a hand.
     pub fn start(&mut self, agent_name: &str, port: u16, card: &AgentCard, mesh_key: &str) {
         match self {
             PeerDiscoveryImpl::Mdns(m) => m.start(agent_name, port, card, mesh_key),

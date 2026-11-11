@@ -10,20 +10,20 @@ pub(super) use crate::*;
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Start a loopback A2A server for tool handler tests.
-pub(super) async fn test_server() -> A2aServer {
+pub(super) async fn test_server() -> Result<A2aServer> {
     let card = AgentCard {
         name: "test-agent".into(),
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    A2aServer::start_with_blocking_timeout(
+    let server = A2aServer::start_with_blocking_timeout(
         card,
         Arc::new(PeerCache::default()),
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap()
+    .await?;
+    Ok(server)
 }
 
 /// Build a tool context bound to `server`, with a default own card.
@@ -35,7 +35,7 @@ pub(super) fn tool_ctx(server: &A2aServer) -> A2aToolContext {
 pub(super) fn tool_ctx_with(server: &A2aServer, own_card: AgentCard) -> A2aToolContext {
     let ctx = A2aToolContext {
         cache: Arc::new(PeerCache::default()),
-        client: A2aClient::new().unwrap(),
+        client: A2aClient::new(crate::test_support::test_transport()),
         own_card,
         task_store: None,
         completion_tx: None,

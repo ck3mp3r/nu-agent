@@ -7,17 +7,17 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Create a [`reqwest::Client`] that sends `A2A-Version: 1.0` on every
 /// request, matching what the middleware expects on A2A API paths.
-pub fn test_client() -> reqwest::Client {
-    crate::discovery::card::ensure_crypto_provider();
+pub fn test_client() -> Result<reqwest::Client> {
+    crate::test_support::install_crypto_provider();
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::HeaderName::from_static("a2a-version"),
         reqwest::header::HeaderValue::from_static(crate::A2A_VERSION),
     );
-    reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .default_headers(headers)
-        .build()
-        .unwrap()
+        .build()?;
+    Ok(client)
 }
 
 /// Parse the `data:` payloads of an SSE body into JSON values.
@@ -98,7 +98,7 @@ pub fn assert_task_timestamps_have_z_suffix(task: &serde_json::Value) {
     }
 }
 
-pub async fn test_server() -> (A2aServer, reqwest::Client) {
+pub async fn test_server() -> Result<(A2aServer, reqwest::Client)> {
     let card = AgentCard {
         name: "test-agent".into(),
         url: "http://127.0.0.1:0".into(),
@@ -118,20 +118,22 @@ pub async fn test_server() -> (A2aServer, reqwest::Client) {
         }],
         ..Default::default()
     };
-    let server = A2aServer::start_with_blocking_timeout(
+    let server = A2aServer::start_with_transport(
         card,
         Arc::new(PeerCache::default()),
         0,
         TEST_BLOCKING_TIMEOUT,
+        Some(crate::test_support::test_transport()),
     )
-    .await
-    .unwrap();
-    let client = test_client();
-    (server, client)
+    .await?;
+    let client = test_client()?;
+    Ok((server, client))
 }
 
 /// Start a server whose blocking deadline is short enough for tests.
-pub async fn test_server_with_blocking_timeout(timeout: Duration) -> (A2aServer, reqwest::Client) {
+pub async fn test_server_with_blocking_timeout(
+    timeout: Duration,
+) -> Result<(A2aServer, reqwest::Client)> {
     let card = AgentCard {
         name: "test-agent".into(),
         url: "http://127.0.0.1:0".into(),
@@ -140,14 +142,15 @@ pub async fn test_server_with_blocking_timeout(timeout: Duration) -> (A2aServer,
     };
     let server =
         A2aServer::start_with_blocking_timeout(card, Arc::new(PeerCache::default()), 0, timeout)
-            .await
-            .unwrap();
-    let client = test_client();
-    (server, client)
+            .await?;
+    let client = test_client()?;
+    Ok((server, client))
 }
 
 /// Start a server whose card advertises the given `defaultOutputModes`.
-pub async fn test_server_with_output_modes(modes: Vec<String>) -> (A2aServer, reqwest::Client) {
+pub async fn test_server_with_output_modes(
+    modes: Vec<String>,
+) -> Result<(A2aServer, reqwest::Client)> {
     let card = AgentCard {
         name: "test-agent".into(),
         url: "http://127.0.0.1:0".into(),
@@ -161,10 +164,9 @@ pub async fn test_server_with_output_modes(modes: Vec<String>) -> (A2aServer, re
         0,
         TEST_BLOCKING_TIMEOUT,
     )
-    .await
-    .unwrap();
-    let client = test_client();
-    (server, client)
+    .await?;
+    let client = test_client()?;
+    Ok((server, client))
 }
 
 /// Receiver end of the local webhook test server's payload channel.

@@ -13,7 +13,7 @@ mod session_flags_tests {
     #[test]
     fn agent_command_signature_has_session_flag() -> Result<()> {
         // RED: Test that --session flag exists
-        let (agent, _temp_dir) = create_test_agent();
+        let agent = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let session_flag = sig.named.iter().find(|f| f.long == "session");
@@ -31,7 +31,7 @@ mod session_flags_tests {
 
     #[test]
     fn agent_command_signature_has_agent_flag() -> Result<()> {
-        let (agent, _temp_dir) = create_test_agent();
+        let agent = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let agent_flag = sig.named.iter().find(|f| f.long == "agent");
@@ -49,7 +49,7 @@ mod session_flags_tests {
 
     #[test]
     fn agent_command_signature_has_name_flag() -> Result<()> {
-        let (agent, _temp_dir) = create_test_agent();
+        let agent = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let name_flag = sig.named.iter().find(|f| f.long == "name");
@@ -114,7 +114,7 @@ mod session_validation_tests {
 
 #[cfg(test)]
 mod tui_session_resolution_tests {
-    use agnt_core::session::resolver::{
+    use agnt_runtime::session::resolver::{
         SessionRequest, generate_session_id, resolve_session_request,
     };
     use nu_protocol::{Span, Value};
@@ -389,7 +389,7 @@ mod tool_timeout_tests {
     #[test]
     fn agent_signature_has_tool_timeout_flag() -> Result<()> {
         // Test that the signature includes --tool-timeout flag
-        let (agent, _temp_dir) = create_test_agent();
+        let agent = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let flag = sig.named.iter().find(|f| f.long == "tool-timeout");

@@ -8,13 +8,13 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn agent_command_has_correct_name() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     assert_eq!(SimplePluginCommand::name(&agent), "agent");
 }
 
 #[test]
 fn agent_command_signature_accepts_string() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     // Verify the command name
@@ -23,7 +23,7 @@ fn agent_command_signature_accepts_string() {
 
 #[test]
 fn agent_command_signature_does_not_expose_removed_provider_flag() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let provider_flag = sig.named.iter().find(|f| f.long == "provider");
@@ -35,7 +35,7 @@ fn agent_command_signature_does_not_expose_removed_provider_flag() {
 
 #[test]
 fn agent_command_signature_has_model_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let model_flag = sig.named.iter().find(|f| f.long == "model");
@@ -54,7 +54,7 @@ fn agent_command_signature_has_model_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_api_key_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "api-key");
@@ -70,7 +70,7 @@ fn agent_command_signature_has_api_key_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_base_url_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "base-url");
@@ -86,7 +86,7 @@ fn agent_command_signature_has_base_url_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_temperature_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "temperature");
@@ -102,7 +102,7 @@ fn agent_command_signature_has_temperature_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_does_not_expose_removed_max_tokens_flag() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-tokens");
@@ -114,7 +114,7 @@ fn agent_command_signature_does_not_expose_removed_max_tokens_flag() {
 
 #[test]
 fn agent_command_signature_help_text_excludes_removed_flags() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
     let rendered = format!("{sig:?}");
 
@@ -130,10 +130,10 @@ fn agent_command_signature_help_text_excludes_removed_flags() {
 #[test]
 fn invocation_agent_provider_flag_is_rejected_with_unknown_option_and_help_guidance() -> Result<()>
 {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
     let parse_errors =
-        parse_agent_invocation_with_signature(sig.clone(), "agent --provider openai");
+        parse_agent_invocation_with_signature(sig.clone(), "agent --provider openai")?;
 
     let (cmd, flag, help) = first_unknown_flag_error(&parse_errors)
         .ok_or("should have unknown flag error for --provider")?;
@@ -156,11 +156,11 @@ fn invocation_agent_provider_flag_is_rejected_with_unknown_option_and_help_guida
 #[test]
 fn invocation_agent_max_tokens_flag_is_rejected_with_unknown_option_and_help_guidance() -> Result<()>
 {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let parse_errors = parse_agent_invocation_with_signature(
         SimplePluginCommand::signature(&agent),
         "agent --max-tokens 4096",
-    );
+    )?;
 
     let (cmd, flag, help) = first_unknown_flag_error(&parse_errors)
         .ok_or("should have unknown flag error for --max-tokens")?;
@@ -175,7 +175,7 @@ fn invocation_agent_max_tokens_flag_is_rejected_with_unknown_option_and_help_gui
 
 #[test]
 fn agent_command_signature_has_max_context_tokens_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-context-tokens");
@@ -191,7 +191,7 @@ fn agent_command_signature_has_max_context_tokens_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_max_output_tokens_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-output-tokens");
@@ -207,7 +207,7 @@ fn agent_command_signature_has_max_output_tokens_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_max_turns_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-turns");
@@ -223,7 +223,7 @@ fn agent_command_signature_has_max_turns_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_tools_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "tools");
@@ -239,7 +239,7 @@ fn agent_command_signature_has_tools_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_permissions_flag_as_record() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "permissions");
@@ -255,7 +255,7 @@ fn agent_command_signature_has_permissions_flag_as_record() -> Result<()> {
 
 #[test]
 fn agent_command_signature_does_not_expose_the_repeated_permission_flag() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let repeated = sig.named.iter().find(|f| f.long == "permission");
@@ -267,7 +267,7 @@ fn agent_command_signature_does_not_expose_the_repeated_permission_flag() {
 
 #[test]
 fn agent_command_signature_has_quiet_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let quiet_flag = sig.named.iter().find(|f| f.long == "quiet");
@@ -281,7 +281,7 @@ fn agent_command_signature_has_quiet_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_has_log_level_flag() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
     let flag = sig.named.iter().find(|f| f.long == "log-level");
     assert!(flag.is_some(), "Missing --log-level flag");
@@ -296,7 +296,7 @@ fn agent_command_signature_has_log_level_flag() -> Result<()> {
 
 #[test]
 fn agent_command_signature_does_not_expose_tui_switch() {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let tui_flag = sig.named.iter().find(|f| f.long == "tui");
@@ -305,7 +305,7 @@ fn agent_command_signature_does_not_expose_tui_switch() {
 
 #[test]
 fn agent_command_signature_updates_verbose_description_for_progressive_levels() -> Result<()> {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let verbose_flag = sig.named.iter().find(|f| f.long == "verbose");
@@ -321,7 +321,7 @@ fn agent_command_signature_updates_verbose_description_for_progressive_levels() 
 #[test]
 fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behavior() -> Result<()>
 {
-    let (agent, _temp_dir) = create_test_agent();
+    let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let quiet = sig

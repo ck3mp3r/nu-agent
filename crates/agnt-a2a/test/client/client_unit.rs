@@ -6,13 +6,7 @@ use super::A2aClient;
 
 #[test]
 fn test_default_client() {
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     // Just verify it doesn't panic
-    let _ = client;
-}
-
-#[test]
-fn test_default_trait() {
-    let client = A2aClient::default();
     let _ = client;
 }

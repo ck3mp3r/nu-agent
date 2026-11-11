@@ -13,7 +13,7 @@ async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o".to_string(),
                 identity: "openai/gpt-4o".to_string(),
@@ -25,7 +25,7 @@ async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),
@@ -93,7 +93,7 @@ async fn model_picker_renders_context_window_column() -> Result<()> {
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o".to_string(),
                 identity: "openai/gpt-4o".to_string(),
@@ -105,7 +105,7 @@ async fn model_picker_renders_context_window_column() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: None,
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),
@@ -164,7 +164,7 @@ async fn model_picker_renders_cost_column() -> Result<()> {
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
         vec![
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "openai".to_string(),
                 model: "gpt-4o".to_string(),
                 identity: "openai/gpt-4o".to_string(),
@@ -176,7 +176,7 @@ async fn model_picker_renders_cost_column() -> Result<()> {
                 provider_display_name: String::new(),
                 cost: Some("$3.00/$15.00".to_string()),
             },
-            agnt_core::protocol::picker::ModelPickerOption {
+            agnt_runtime::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
                 model: "claude-3-5-sonnet".to_string(),
                 identity: "anthropic/claude-3-5-sonnet".to_string(),
@@ -234,7 +234,7 @@ async fn model_picker_renders_wide_cost_cell_untruncated() -> Result<()> {
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: "openai/gpt-4o".to_string(),
@@ -288,7 +288,7 @@ async fn model_picker_renders_cost_cell_right_aligned() -> Result<()> {
         .active_model_identity = "openai/gpt-4o".to_string();
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: "openai/gpt-4o".to_string(),
@@ -351,7 +351,7 @@ async fn model_picker_renders_right_aligned_numeric_gutters() -> Result<()> {
         .active_model_identity = "openai/gpt-4o".to_string();
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: "openai/gpt-4o".to_string(),
@@ -414,7 +414,7 @@ async fn model_picker_renders_tight_context_price_gap() -> Result<()> {
         .active_model_identity = "openai/gpt-4o".to_string();
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Model,
-        vec![agnt_core::protocol::picker::ModelPickerOption {
+        vec![agnt_runtime::protocol::picker::ModelPickerOption {
             provider: "openai".to_string(),
             model: "gpt-4o".to_string(),
             identity: "openai/gpt-4o".to_string(),

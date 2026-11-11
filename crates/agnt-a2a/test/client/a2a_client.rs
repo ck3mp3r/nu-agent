@@ -30,7 +30,7 @@ async fn test_list_peers() {
         discovered_at: std::time::Instant::now(),
     });
 
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let peers = client.list_peers(&cache);
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].name, "alice");
@@ -42,7 +42,7 @@ async fn test_list_peers() {
 
 #[tokio::test]
 async fn test_subscribe_task_terminal_returns_error() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     // Send a task, then cancel it so it's in a terminal state
     let msg = Message {
@@ -72,19 +72,20 @@ async fn test_subscribe_task_terminal_returns_error() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_subscribe_task_not_found() {
-    let (_server, client, url) = test_setup().await;
+async fn test_subscribe_task_not_found() -> Result<()> {
+    let (_server, client, url) = test_setup().await?;
 
     let result = client.subscribe_task(&url, "nonexistent-id").await;
     assert!(
         matches!(result, Err(A2aError::TaskNotFound(_))),
         "Expected TaskNotFound, got: {result:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
 async fn test_subscribe_task_connection_refused() {
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
 
     let result = client.subscribe_task("http://127.0.0.1:1", "some-id").await;
     assert!(
@@ -95,7 +96,7 @@ async fn test_subscribe_task_connection_refused() {
 
 #[tokio::test]
 async fn test_subscribe_task_streams_lifecycle() -> Result<()> {
-    let (server, client, url) = test_setup().await;
+    let (server, client, url) = test_setup().await?;
 
     // Send a task
     let msg = Message {
@@ -190,7 +191,7 @@ async fn test_client_sends_a2a_version_header() -> Result<()> {
         .mount(&server)
         .await;
 
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new(crate::test_support::test_transport());
     let msg = Message {
         role: Role::User,
         parts: vec![Part::Text {
@@ -306,7 +307,7 @@ async fn test_subscribe_task_sse_chunk_split_mid_utf8_char_no_data_loss() -> Res
     });
 
     let url = format!("http://127.0.0.1:{}", addr.port());
-    let client = A2aClient::new().map_err(|e| format!("client should build: {e:?}"))?;
+    let client = A2aClient::new(crate::test_support::test_transport());
 
     // -- Exec
     let task = client

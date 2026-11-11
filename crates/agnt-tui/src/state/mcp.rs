@@ -354,15 +354,4 @@ impl McpSkillsState {
             .count();
         (configured, enabled, disabled, failed)
     }
-
-    pub(crate) fn set_mcp_server_state_with_details(
-        &mut self,
-        server_name: &str,
-        state: McpServerUsabilityState,
-        reason: Option<String>,
-        llm_visible_mcp_tool_count: usize,
-    ) {
-        self.set_llm_visible_mcp_tool_count(llm_visible_mcp_tool_count);
-        self.set_mcp_server_state_by_name_with_reason(server_name, state, reason);
-    }
 }

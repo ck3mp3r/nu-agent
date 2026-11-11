@@ -1,8 +1,8 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
-use agnt_core::config::copilot_tokens::read_copilot_token_record;
-use agnt_core::config::vault::Vault;
+use agnt_runtime::config::copilot_tokens::read_copilot_token_record;
+use agnt_runtime::config::vault::Vault;
 
 use crate::plugin::AgentPlugin;
 
@@ -67,7 +67,7 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         let name: String = call.req(0)?;
-        let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
             .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
 
         // github-copilot stores its tokens in files, not the vault.

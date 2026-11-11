@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_list_tasks() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     // Send a couple of tasks
     let msg = Message {
@@ -41,7 +41,7 @@ async fn test_list_tasks() -> Result<()> {
 
 #[tokio::test]
 async fn test_list_tasks_filtered() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     // Send a task (it starts Submitted then transitions to Working)
     let send_resp = send_task(
@@ -99,7 +99,7 @@ async fn test_list_tasks_filtered() -> Result<()> {
 
 #[tokio::test]
 async fn test_full_lifecycle() -> Result<()> {
-    let (_server, client, url) = test_setup().await;
+    let (_server, client, url) = test_setup().await?;
 
     // Send
     let msg = Message {

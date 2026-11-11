@@ -4,7 +4,7 @@
 //! The entry enum selects the family widget; dispatch stays static. The pane
 //! resets the buffer once per frame and blits it to the terminal.
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::{RenderBackend, RowRect, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
