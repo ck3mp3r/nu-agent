@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use super::super::test::{
-    default_circuit_breaker, default_doom_state, default_last_total_tokens,
-    default_output_repetition, default_repetition_guard,
+    default_circuit_breaker, default_doom_state, default_meter, default_output_repetition,
+    default_repetition_guard,
 };
 use super::test_utils::{message_text, test_compaction_config};
 use super::*;
@@ -36,6 +36,7 @@ pub(super) fn make_memory_state_on_disk(temp_dir: &tempfile::TempDir) -> MemoryS
 pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
     ToolInfra {
         store_latch: Default::default(),
+        pending_summary: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -44,7 +45,7 @@ pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
-        last_total_tokens: default_last_total_tokens(),
+        meter: default_meter(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,

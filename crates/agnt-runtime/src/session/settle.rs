@@ -97,7 +97,7 @@ impl FactStore {
     /// # Errors
     ///
     /// [`super::RigStoreError`] when the database cannot be opened.
-    pub async fn open(config: &RigStoreConfig) -> Result<Self, super::RigStoreError> {
+    pub(crate) async fn open(config: &RigStoreConfig) -> Result<Self, super::RigStoreError> {
         let config = config.clone();
         let storage = on_pool(move || config.facts_blocking())
             .await

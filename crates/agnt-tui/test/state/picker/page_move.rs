@@ -140,7 +140,7 @@ fn inline_slash_line_moves_share_the_picker_key_set() -> Result<()> {
             .ok_or("picker should be open")?
             .options
             .len(),
-        10,
+        11,
         "the canonical slash list"
     );
 

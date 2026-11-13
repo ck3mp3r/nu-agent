@@ -488,6 +488,9 @@ pub enum CompactionRecord {
         source: CompactionSource,
         message: String,
     },
+    /// The newest compaction was undone: the entries it replaced are back in
+    /// the transcript.
+    Uncompacted { source: CompactionSource },
 }
 
 /// Identity of one session.

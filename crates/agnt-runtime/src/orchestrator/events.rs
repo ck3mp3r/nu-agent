@@ -75,6 +75,20 @@ pub enum UiRequest {
     },
 }
 
+impl UiRequest {
+    /// The words that name this request in a log line.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::SwitchModel { .. } => "model switch",
+            Self::SwitchAgent { .. } => "agent switch",
+            Self::SwitchSession { .. } => "session switch",
+            Self::ToggleMcp { .. } => "MCP toggle",
+            Self::RefreshSessionPicker { .. } => "session picker refresh",
+            Self::RefreshAgentPicker { .. } => "agent picker refresh",
+        }
+    }
+}
+
 /// Per-type response to a `UiRequest`.
 #[derive(Debug)]
 pub enum UiRequestResponse {
@@ -109,7 +123,13 @@ pub enum WorkerCommand {
         request: UiRequest,
         response_tx: mpsc::Sender<UiRequestResponse>,
     },
+    /// Run a compaction the loop dispatched. Manual only: the automatic ladder
+    /// completes its compaction on the turn itself and never reaches the worker.
     RunCompaction {
+        source: CompactionSource,
+    },
+    /// Undo the newest compaction of the session.
+    RunUncompact {
         source: CompactionSource,
     },
     /// Attach the session derived from an A2A `contextId`.

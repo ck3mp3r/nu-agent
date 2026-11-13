@@ -1,8 +1,12 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+
 use super::super::managers::ProviderManager;
 use super::super::providers::{
     CachedProviderClient, ClientCacheKey, build_anthropic_client, build_copilot_client,
     build_ollama_client, build_openai_client,
 };
+use crate::config::models_cache::ModelCost;
 use crate::config::pricing::PricingView;
 use crate::config::{Config, ModelRoleConfig, PluginConfig};
 use nu_protocol::LabeledError;
@@ -147,19 +151,116 @@ impl ProviderState {
             .cached_client
             .as_ref()
             .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?;
-        let cache = self
-            .startup_plugin_config
-            .as_ref()
-            .and_then(|config| config.models_cache.as_ref());
-        let pricing = cache.map(PricingView::new);
+        let (pricing, config_pricing) = self.model_pricing();
         client.build_dyn_model(
             &self.config.model,
             self.config.cache_section(),
             pricing.as_ref(),
-            self.config.pricing.as_ref(),
+            config_pricing,
         )
     }
+
+    /// The price ladder over the startup models cache and the configured price
+    /// for the active model: what a wire is bound to when it is built.
+    fn model_pricing(&self) -> (Option<PricingView<'_>>, Option<&ModelCost>) {
+        let cache = self
+            .startup_plugin_config
+            .as_ref()
+            .and_then(|config| config.models_cache.as_ref());
+        (cache.map(PricingView::new), self.config.pricing.as_ref())
+    }
 }
+
+// region:    --- ModelSlot
+
+/// The erased completion model, and whether it still matches the active config.
+///
+/// The runtime and the compactor share one slot: every turn's agent is built
+/// from it, and the compactor summarizes with it. A model switch only marks the
+/// slot stale ([`Self::mark_pending`]); the provider client and the model erased
+/// from it build at the slot's next use ([`Self::ensure`]), never inside the
+/// switch. A switch therefore awaits no transport: a provider whose client takes
+/// seconds to answer, or never answers, cannot wedge the surface.
+#[derive(Clone)]
+pub struct ModelSlot {
+    cell: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
+    pending: Arc<AtomicBool>,
+}
+
+impl ModelSlot {
+    /// A slot holding a built model, with nothing pending.
+    pub fn from_model(model: rig::DynModel<rig::operation::Completion>) -> Self {
+        Self {
+            cell: Arc::new(Mutex::new(model)),
+            pending: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The model the slot holds now, cloned.
+    ///
+    /// After [`Self::mark_pending`] this is the model in use before the switch:
+    /// an in-flight turn keeps it, and a reader that asks before the next use
+    /// sees the previous identity. Neither can be served from an empty slot,
+    /// which is why the cell keeps the superseded model rather than clearing.
+    pub fn model(&self) -> rig::DynModel<rig::operation::Completion> {
+        self.lock().clone()
+    }
+
+    /// The shared model cell, for a consumer that holds the raw handle (the
+    /// turn executor and the compactor).
+    pub fn cell(&self) -> Arc<Mutex<rig::DynModel<rig::operation::Completion>>> {
+        Arc::clone(&self.cell)
+    }
+
+    /// Whether a switch left the slot stale, so its next use must build.
+    pub fn is_pending(&self) -> bool {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    /// Record that the config no longer matches the model in the slot.
+    ///
+    /// This is a switch's only model write: no client is created and nothing is
+    /// awaited.
+    pub fn mark_pending(&self) {
+        self.pending.store(true, Ordering::SeqCst);
+    }
+
+    /// Install `model` and clear the staleness.
+    pub fn install(&self, model: rig::DynModel<rig::operation::Completion>) {
+        *self.lock() = model;
+        self.pending.store(false, Ordering::SeqCst);
+    }
+
+    /// The model the active config names, built when the slot is stale.
+    ///
+    /// `build` is the provider's own construction ([`ProviderState::build_dyn_model`]),
+    /// so the provider client is created here, at first use. A failed build
+    /// leaves the slot stale, so the next use tries again.
+    pub async fn ensure<F, Fut>(
+        &self,
+        build: F,
+    ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<
+                Output = Result<rig::DynModel<rig::operation::Completion>, LabeledError>,
+            >,
+    {
+        if !self.is_pending() {
+            return Ok(self.model());
+        }
+        let model = build().await?;
+        self.install(model.clone());
+        Ok(model)
+    }
+
+    /// The shared cell, recovered if a switch panicked mid-write.
+    fn lock(&self) -> std::sync::MutexGuard<'_, rig::DynModel<rig::operation::Completion>> {
+        self.cell.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+// endregion: --- ModelSlot
 
 impl ProviderManager for ProviderState {
     fn provider_config(&self) -> &Config {

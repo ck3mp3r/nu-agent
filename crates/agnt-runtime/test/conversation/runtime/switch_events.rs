@@ -1,10 +1,12 @@
-//! Integration-gated switch-event publish tests for `AgentRuntime`.
+//! Switch-event publish tests for `AgentRuntime`.
 //!
 //! The publishes live in `ModelSwitching::switch_model` and `switch_agent`, so
 //! proving them needs a runtime whose provider can actually switch — the
 //! `fixture_with_two_limits` harness. The ACP session harness cannot reach
 //! these sites: its provider state has no startup plugin config, so
 //! `switch_model` is unavailable there.
+//!
+//! A switch builds nothing, so these need no transport and no feature gate.
 
 use super::harness::*;
 use super::switch_support::*;

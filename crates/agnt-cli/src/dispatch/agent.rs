@@ -28,9 +28,8 @@ use crate::error::{Error, Result};
 use crate::mode::{A2aContext, TuiHydrationInput, TuiModeOptions, run_stderr_mode, run_tui_mode};
 
 use super::config::{
-    apply_cli_flags_from_clap, extract_compaction_flags_from_clap, extract_tool_timeout_from_clap,
-    resolve_config_from_clap, resolve_store_type_from_clap, resolve_theme_from_clap,
-    resolve_ui_policy_from_clap,
+    apply_cli_flags_from_clap, extract_tool_timeout_from_clap, resolve_config_from_clap,
+    resolve_store_type_from_clap, resolve_theme_from_clap, resolve_ui_policy_from_clap,
 };
 use super::permissions::resolve_effective_permissions_from_clap;
 use super::persona::resolve_persona_from_clap;
@@ -209,11 +208,12 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
 
     let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
 
-    let cli_compaction = extract_compaction_flags_from_clap(args)?;
-    let merged_compaction =
-        merge_compaction_configs(plugin_config.compaction.as_ref(), &cli_compaction);
+    let merged_compaction = merge_compaction_configs(
+        plugin_config.compaction.as_ref(),
+        &agnt_runtime::config::CompactionConfig::default(),
+    );
 
-    let BuildArtifacts { merged_compaction } = AgentRuntimeBuilder::new(BuildInput {
+    let BuildArtifacts { .. } = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
         closure_registry: &closure_registry,
         cwd: cwd.clone(),
@@ -252,7 +252,6 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         engine,
         rig,
         final_session_id: session_resolution.final_session_id.clone(),
-        proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
         base_permissions,
         effective_permissions,
         cli_permissions_overlay,

@@ -13,6 +13,7 @@ fn model_spec(model_id: &str) -> ModelSpec {
         limit: ModelLimit {
             context: 128_000,
             output: 4_096,
+            input: None,
         },
         cost: None,
         modalities: None,
@@ -37,6 +38,7 @@ fn make_test_cache() -> ModelsCache {
                         limit: ModelLimit {
                             context: 128000,
                             output: 4096,
+                            input: None,
                         },
                         cost: None,
                         modalities: None,
@@ -290,5 +292,77 @@ fn test_models_cache_cost_round_trip_preserves_cache_fields() -> Result<()> {
 
     // -- Check
     assert_eq!(restored, cost);
+    Ok(())
+}
+
+/// models.dev lists a model's request-input limit as `limit.input` when it is
+/// narrower than the window.
+#[test]
+fn test_models_cache_parse_limit_input_when_listed() -> Result<()> {
+    // -- Setup & Fixtures
+    let json = r#"{
+        "openai": {
+            "id": "openai",
+            "name": "OpenAI",
+            "models": {
+                "gpt-4": {
+                    "id": "gpt-4",
+                    "name": "GPT-4",
+                    "limit": { "context": 128000, "output": 4096, "input": 100000 }
+                }
+            }
+        }
+    }"#;
+
+    // -- Exec
+    let cache: ModelsCache = serde_json::from_str(json)?;
+
+    // -- Check
+    let limit = cache
+        .get_spec("openai", "gpt-4")
+        .ok_or("spec should be found")?
+        .limit
+        .clone();
+    assert_eq!(limit.context, 128_000);
+    assert_eq!(
+        limit.input,
+        Some(100_000),
+        "a listed limit.input must parse into the row"
+    );
+    Ok(())
+}
+
+/// A row that lists no `limit.input` parses unchanged: the limit is `None`,
+/// so cache files written before the field existed still load.
+#[test]
+fn test_models_cache_parse_limit_input_absent_is_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let json = r#"{
+        "openai": {
+            "id": "openai",
+            "name": "OpenAI",
+            "models": {
+                "gpt-4": {
+                    "id": "gpt-4",
+                    "name": "GPT-4",
+                    "limit": { "context": 128000, "output": 4096 }
+                }
+            }
+        }
+    }"#;
+
+    // -- Exec
+    let cache: ModelsCache = serde_json::from_str(json)?;
+
+    // -- Check
+    let limit = cache
+        .get_spec("openai", "gpt-4")
+        .ok_or("spec should be found")?
+        .limit
+        .clone();
+    assert_eq!(
+        limit.input, None,
+        "a row without limit.input must parse to no input limit"
+    );
     Ok(())
 }

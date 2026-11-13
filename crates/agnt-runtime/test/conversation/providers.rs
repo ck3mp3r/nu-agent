@@ -419,6 +419,9 @@ async fn copilot_oauth_keeps_an_explicit_base_url() -> Result<()> {
 
 // region:    --- Modules
 
+#[path = "providers/base_spec.rs"]
+mod base_spec;
+
 #[path = "providers/pricing.rs"]
 mod pricing;
 

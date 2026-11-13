@@ -5,8 +5,8 @@ use std::sync::Arc;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::test::{
-    default_circuit_breaker, default_doom_state, default_last_total_tokens,
-    default_output_repetition, default_repetition_guard,
+    default_circuit_breaker, default_doom_state, default_meter, default_output_repetition,
+    default_repetition_guard,
 };
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
@@ -59,6 +59,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
         &mut memory_state,
         ToolInfra {
             store_latch: Default::default(),
+            pending_summary: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
@@ -72,7 +73,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
             doom_state: default_doom_state(),
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
-            last_total_tokens: default_last_total_tokens(),
+            meter: default_meter(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::Bus::default(),
@@ -220,6 +221,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
         &mut memory_state,
         ToolInfra {
             store_latch: Default::default(),
+            pending_summary: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
@@ -233,7 +235,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
             doom_state: default_doom_state(),
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
-            last_total_tokens: default_last_total_tokens(),
+            meter: default_meter(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::Bus::default(),
@@ -360,6 +362,7 @@ async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<(
         &mut memory_state,
         ToolInfra {
             store_latch: Default::default(),
+            pending_summary: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
@@ -373,7 +376,7 @@ async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<(
             doom_state: default_doom_state(),
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
-            last_total_tokens: default_last_total_tokens(),
+            meter: default_meter(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::Bus::default(),

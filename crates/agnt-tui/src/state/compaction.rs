@@ -57,6 +57,25 @@ impl CompactionState {
         self.failed_impl(store, status, source, message)
     }
 
+    /// Fold an `Uncompacted` record: close the block and say the newest
+    /// compaction was undone, so the row the summary left is not read as the
+    /// context the next turn runs on.
+    pub fn uncompacted(
+        &mut self,
+        store: &mut TranscriptStore,
+        status: &mut StatusState,
+        source: &str,
+    ) -> bool {
+        self.finish_block(store, source, CompactionStatus::Done);
+        store.push_entry(TranscriptEntry::Notice(NoticeEntry {
+            kind: NoticeKind::System,
+            text: "Compaction undone: the restored messages are the context the next turn runs on"
+                .to_string(),
+        }));
+        status.message.clear();
+        true
+    }
+
     pub(crate) fn start_block(&mut self, store: &mut TranscriptStore, source: &str) {
         self.ensure_block(source);
         self.ensure_task(store, source, ItemStatus::InProgress);

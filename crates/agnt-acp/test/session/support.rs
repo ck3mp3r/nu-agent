@@ -152,7 +152,20 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 ]
             })
             .collect();
-        let model = MockCompletionModel::from_stream_turns(script);
+        // The wire answers as a model whose input limit is the fixture's window:
+        // the chain's trigger judges the request against the model it is sent to,
+        // and a model the catalog does not list has no limit to cross.
+        let scripted = MockCompletionModel::from_stream_turns(script);
+        let model = match agnt_runtime::conversation::compaction::compactor::resolve_model_spec(
+            "ollama",
+            "llama3",
+            Some(MOCK_CONTEXT_TOKENS as u32),
+            Some(1_024),
+            None,
+        ) {
+            Some(spec) => scripted.priced_as(spec),
+            None => scripted,
+        };
         let compactor_model = model.clone();
         let config = Config {
             provider: "ollama".to_string(),
@@ -171,12 +184,19 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             ProviderState::with_client(config.clone(), CachedProviderClient::Mock(model));
         let engine: Arc<dyn agnt_runtime::tools::closure::EngineInterfaceLike> =
             Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string()));
-        // The composed runtime derives the compaction threshold from the active
-        // config, so the builder states its token count as the fraction of that
-        // window the count is.
-        let proactive_threshold_pct = self
-            .threshold_tokens
-            .map(|tokens| tokens as f64 / MOCK_CONTEXT_TOKENS as f64);
+        // The composed runtime derives the compaction room from the block's
+        // `reserve_pct` and the turn's own spec, so the builder states its token
+        // count as the percent of that window the count leaves free.
+        let reserve_pct = self.threshold_tokens.map(|tokens| {
+            ((MOCK_CONTEXT_TOKENS.saturating_sub(tokens)) * 100 / MOCK_CONTEXT_TOKENS) as u32
+        });
+        let plugin_config = agnt_runtime::config::PluginConfig {
+            compaction: Some(agnt_runtime::config::CompactionConfig {
+                reserve_pct,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
         let runtime = AgentConversationRuntime::compose(
             RuntimeParts {
@@ -191,7 +211,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             RuntimeBuildParams {
                 runtime: runtime_handle,
                 config,
-                plugin_config: None,
+                plugin_config: Some(plugin_config),
                 tool_definitions: Vec::new(),
                 baseline_tool_definitions: Vec::new(),
                 closure_registry: ClosureRegistry::default(),
@@ -205,7 +225,6 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 engine,
                 rig,
                 final_session_id: session_id.clone(),
-                proactive_threshold_pct,
                 base_permissions: PermissionsConfig::safe_defaults(true),
                 effective_permissions: PermissionsConfig::safe_defaults(true),
                 cli_permissions_overlay: None,

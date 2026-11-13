@@ -65,8 +65,10 @@ pub enum ControlCommand {
         request_id: RequestId,
         decision: PermissionDecision,
     },
-    /// The conversation asked for a compaction sweep.
+    /// A surface asked for a compaction sweep (`/compact`), never the automatic ladder.
     CompactionRequested { source: CompactionSource },
+    /// A surface asked to undo the newest compaction (`/uncompact`).
+    UncompactRequested { source: CompactionSource },
     /// A surface asked for one of its own panels to open.
     SharedUiAction { action: SharedUiAction },
 }
@@ -143,6 +145,13 @@ pub enum LifecycleEvent {
     },
     /// A compaction sweep failed; the region is untouched.
     CompactionFailed {
+        source: CompactionSource,
+        message: String,
+    },
+    /// The newest compaction was undone; the entries it replaced are back.
+    Uncompacted { source: CompactionSource },
+    /// The uncompaction finished with nothing restored; the state is untouched.
+    UncompactFailed {
         source: CompactionSource,
         message: String,
     },

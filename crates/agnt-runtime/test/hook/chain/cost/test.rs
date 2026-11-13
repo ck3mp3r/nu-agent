@@ -71,7 +71,7 @@ fn pricing_less_summarizer() -> MockCompletionModel {
 struct TurnHook {
     hook: HookChain<PolicyPermissionResolver>,
     bus: Bus,
-    last_total_tokens: Arc<Mutex<Option<u64>>>,
+    meter: crate::hook::AnchorMeter,
     turn_usage: crate::hook::TurnUsage,
 }
 
@@ -86,7 +86,7 @@ fn turn_hook(
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
-    let last_total_tokens = Arc::new(Mutex::new(None));
+    let meter = crate::hook::AnchorMeter::default();
     let turn_usage = crate::hook::TurnUsage::default();
     let compactor = NuCompactor::new(
         compactor_model.erase(),
@@ -119,20 +119,20 @@ fn turn_hook(
             conversation_id: "cost-test-conv".to_string(),
             compaction: CompactionConfig {
                 compactor,
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: model.clone().erase(),
-            last_total_tokens: last_total_tokens.clone(),
+            meter: meter.clone(),
             turn_usage: turn_usage.clone(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     );
     Ok(TurnHook {
         hook,
         bus,
-        last_total_tokens,
+        meter,
         turn_usage,
     })
 }

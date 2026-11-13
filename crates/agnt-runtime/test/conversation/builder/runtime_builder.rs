@@ -162,7 +162,7 @@ async fn build_applies_the_merged_compaction_config() -> Result<()> {
     // -- Setup & Fixtures
     let registry = ClosureRegistry::default();
     let merged = CompactionConfig {
-        proactive_threshold_pct: Some(0.5),
+        reserve_pct: Some(40),
         ..CompactionConfig::default()
     };
 
@@ -170,9 +170,6 @@ async fn build_applies_the_merged_compaction_config() -> Result<()> {
     let (_handle, artifacts, _temp) = build_with(&registry, merged).await?;
 
     // -- Check
-    assert_eq!(
-        artifacts.merged_compaction.proactive_threshold_pct,
-        Some(0.5)
-    );
+    assert_eq!(artifacts.merged_compaction.reserve_pct, Some(40));
     Ok(())
 }

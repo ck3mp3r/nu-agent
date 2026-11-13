@@ -7,9 +7,18 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentHandle;
+use crate::discovery::PeerDiscoveryImpl;
 use crate::discovery::mdns_discovery::MdnsPeerDiscovery;
-use crate::discovery::{PeerDiscoveryImpl, PeerEvent};
 use crate::*;
+
+// region:    --- Modules
+
+/// What an arriving peer event does to the cache.
+mod forwarding;
+
+pub(crate) use forwarding::forward_peer_events;
+
+// endregion: --- Modules
 
 /// Builder for creating and starting an A2A-compatible agent.
 ///
@@ -362,48 +371,6 @@ pub(crate) const SWEEP_MAX_FAILURES: u32 = 3;
 /// Interval between mDNS re-queries that repopulate the peer cache.
 pub(crate) const REDISCOVER_INTERVAL: Duration = Duration::from_secs(300);
 
-/// Apply one peer event to the cache, logging the transition.
-///
-/// Pure cache logic — no network and no await — so the startup forwarding task
-/// and every rediscover forwarding task share exactly these semantics.
-pub(crate) fn apply_peer_event(cache: &PeerCache, own_url: &str, event: &PeerEvent) {
-    match event {
-        PeerEvent::PeerDiscovered(peer) => {
-            log::info!("mesh peer discovered: {} ({})", peer.name, peer.url);
-            cache.add_or_update(peer.as_ref().clone());
-        }
-        PeerEvent::PeerLost(name) => {
-            log::warn!("mesh peer lost: {name}");
-            cache.remove(name);
-            let other_peers = cache
-                .list()
-                .iter()
-                .filter(|peer| peer.url != own_url)
-                .count();
-            if other_peers == 0 {
-                log::warn!("mesh peer cache empty — no peers besides this agent");
-            }
-        }
-    }
-}
-
-/// Forward every event from `rx` into the cache until the channel closes.
-///
-/// Used for the startup browse receiver and for every receiver handed back by
-/// a rediscover; the superseded task ends when its channel disconnects.
-pub(crate) async fn forward_peer_events(
-    mut rx: mpsc::Receiver<PeerEvent>,
-    cache: Arc<PeerCache>,
-    own_url: String,
-) {
-    while let Some(event) = rx.recv().await {
-        apply_peer_event(&cache, &own_url, &event);
-    }
-    log::debug!(
-        "peer event forwarding stopped: browse receiver closed by a rediscover or shutdown"
-    );
-}
-
 /// Fetches the agent card of a peer.
 ///
 /// Injected into [`sweep_peers`] so the sweep pass runs without HTTP in unit
@@ -504,11 +471,7 @@ pub(crate) async fn sweep_peers<F>(
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "../../test/agent/forwarding.rs"]
-mod forwarding_test;
-
-#[cfg(test)]
-#[path = "../../test/agent/sweep.rs"]
+#[path = "../../../test/agent/sweep.rs"]
 mod sweep_test;
 
 // endregion: --- Tests

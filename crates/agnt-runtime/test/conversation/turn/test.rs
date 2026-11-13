@@ -26,6 +26,9 @@ mod rig_persistence;
 #[path = "test/settle.rs"]
 mod settle;
 
+#[path = "test/supersede.rs"]
+mod supersede;
+
 #[path = "test/support.rs"]
 mod support;
 

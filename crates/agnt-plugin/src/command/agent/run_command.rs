@@ -41,47 +41,9 @@ pub(super) fn run_command(
             .with_label(format!("{e}"), call.head)
     })?);
 
-    // Initialize file logging. An explicit --log-level wins; otherwise
+    // Initialize file logging: an explicit --log-level wins, otherwise
     // --verbose raises the level and --quiet lowers it.
-    if let Some(log_level_str) = resolve_log_level_str(call)? {
-        let log_level_str = log_level_str.to_lowercase();
-        if log_level_str != "off" {
-            // Parse log level
-            let log_level = match log_level_str.as_str() {
-                "error" => log::LevelFilter::Error,
-                "warn" => log::LevelFilter::Warn,
-                "info" => log::LevelFilter::Info,
-                "debug" => log::LevelFilter::Debug,
-                "trace" => log::LevelFilter::Trace,
-                _ => {
-                    return Err(LabeledError::new(format!(
-                        "Invalid log level '{}'. Valid values: off, error, warn, info, debug, trace",
-                        log_level_str
-                    )));
-                }
-            };
-
-            // Resolve the log target from the state ladder at process start; a
-            // `[paths].state_home` value retargets the sink after config load.
-            let paths = agnt_runtime::config::Paths::resolve_for_process(None).map_err(|e| {
-                LabeledError::new(format!("Failed to resolve application paths: {e}"))
-            })?;
-            let sink = agnt_runtime::logging::FileLogSink::open(paths.log_path)
-                .map_err(|e| LabeledError::new(format!("Failed to open the log file: {e}")))?;
-            agnt_runtime::logging::install_process_sink(&sink);
-
-            // Initialize env_logger with the file sink target
-            let _ = env_logger::Builder::new()
-                .filter_level(log_level)
-                .target(env_logger::Target::Pipe(Box::new(sink)))
-                .format_timestamp_millis()
-                .try_init();
-            // Always force the global max level — try_init() is a no-op when a
-            // logger is already registered (e.g. by nu-plugin internals),
-            // silently discarding our filter_level. set_max_level() always wins.
-            log::set_max_level(log_level);
-        }
-    }
+    init_logging(call)?;
 
     // Validate session flags
     let session_id = extract_and_validate_session_flags(call)?;
@@ -193,7 +155,7 @@ pub(super) fn run_command(
     // Use the shared runtime from AgentPlugin — created once at plugin startup,
     // reused for all command invocations.
     let handle = plugin.runtime()?.handle().clone();
-    handle.clone().block_on(async move {
+    let result = handle.clone().block_on(async move {
         // Create the tool server handle ONCE — both builtins and MCP servers register into it
         let tool_server_handle = agnt_runtime::types::ToolServer::new().run();
 
@@ -262,26 +224,22 @@ pub(super) fn run_command(
         // Signal bus shared by tool registration and the runtime.
         let bus = agnt_runtime::bus::Bus::default();
 
-        let agnt_runtime::conversation::builder::BuildArtifacts { merged_compaction } =
-            super::setup::register_tools(
-                call,
-                BuildInput {
-                    tool_server_handle: &tool_server_handle,
-                    closure_registry: &closure_registry,
-                    cwd: cwd.clone(),
-                    engine: engine_arc.clone(),
-                    span: call.head,
-                    tool_timeout,
-                    session: session_resolution.session.as_mut(),
-                    max_tool_result_bytes: config
-                        .max_tool_result_bytes
-                        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
-                    bus: bus.clone(),
-                    merged_compaction: agnt_runtime::config::CompactionConfig::default(),
-                    audit_log_path: paths.audit_log_path.clone(),
-                },
-            )
-            .await?;
+        super::setup::register_tools(BuildInput {
+            tool_server_handle: &tool_server_handle,
+            closure_registry: &closure_registry,
+            cwd: cwd.clone(),
+            engine: engine_arc.clone(),
+            span: call.head,
+            tool_timeout,
+            session: session_resolution.session.as_mut(),
+            max_tool_result_bytes: config
+                .max_tool_result_bytes
+                .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
+            bus: bus.clone(),
+            merged_compaction: agnt_runtime::config::CompactionConfig::default(),
+            audit_log_path: paths.audit_log_path.clone(),
+        })
+        .await?;
 
         let mcp_caller_cwd = cwd.clone();
 
@@ -307,7 +265,6 @@ pub(super) fn run_command(
             engine: engine_arc.clone(),
             rig,
             final_session_id: session_resolution.final_session_id,
-            proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
             base_permissions,
             effective_permissions,
             cli_permissions_overlay,
@@ -346,16 +303,67 @@ pub(super) fn run_command(
             call.head,
         )
         .await
-    })
+    });
+    // The command is over: append the ring to the log file so the lines a
+    // failure cut short are still on disk.
+    agnt_runtime::logging::flush_ring_to_file();
+    result
 }
 
 // region:    --- Support
 
+/// Initialize file logging for this command.
+///
+/// An explicit `--log-level` wins; otherwise `--verbose` raises the level and
+/// `--quiet` lowers it, and `RUST_LOG` sets the filter when neither is given.
+/// The level never sits below warn, so warnings always reach the file. The sink
+/// is always a file: the state ladder resolves it at process start, and a run
+/// never aborts because the log file cannot open.
+fn init_logging(call: &EvaluatedCall) -> Result<(), LabeledError> {
+    let level = match resolve_log_level_str(call)? {
+        Some(level) => level.to_lowercase().parse::<log::LevelFilter>().map_err(|_| {
+            LabeledError::new(format!(
+                "Invalid log level '{level}'. Valid values: off, error, warn, info, debug, trace"
+            ))
+        })?,
+        None => environment_level(),
+    };
+    // `off` is a sink mode: the logger stays at warn so the ring still gathers
+    // warn and above, and the file target is silenced instead.
+    let (level, silenced) = agnt_runtime::logging::resolved_level(level);
+
+    // Resolve the log target from the state ladder at process start; a
+    // `[paths].state_home` value retargets the sink after config load.
+    let paths = agnt_runtime::config::Paths::resolve_for_process(None).ok();
+    let writer = agnt_runtime::logging::start_session_log(
+        paths.as_ref().map(|paths| paths.log_path.as_path()),
+    );
+    agnt_runtime::logging::set_process_sink_silenced(silenced);
+
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .filter_level(level)
+        .target(env_logger::Target::Pipe(Box::new(writer)))
+        .format_timestamp_millis()
+        .try_init();
+    // Always force the global max level — try_init() is a no-op when a logger is
+    // already registered (e.g. by nu-plugin internals), silently discarding our
+    // filter_level. set_max_level() always wins.
+    log::set_max_level(level);
+    Ok(())
+}
+
+/// The global level `RUST_LOG` selects, defaulting to `info`.
+fn environment_level() -> log::LevelFilter {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .build()
+        .filter()
+}
+
 /// Resolve the log level string from `--log-level`, `--verbose`, and `--quiet`.
 ///
 /// An explicit `--log-level` always wins. Otherwise `--quiet` selects `error`
-/// and `--verbose` selects `debug`. With none of the flags set, logging stays
-/// at the default level and no file logger is initialized.
+/// and `--verbose` selects `debug`. With none of the flags set, `None` leaves
+/// the level to `RUST_LOG` and its `info` default.
 fn resolve_log_level_str(call: &EvaluatedCall) -> Result<Option<String>, LabeledError> {
     if let Some(level) = call.get_flag::<String>("log-level")? {
         return Ok(Some(level));

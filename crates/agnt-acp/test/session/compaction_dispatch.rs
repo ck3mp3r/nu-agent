@@ -25,10 +25,11 @@ fn recorded_compaction_states(sink: &RecordingSink) -> Vec<String> {
         .collect()
 }
 
-/// A prompt long enough that a few turns outgrow the policy's keep window, so
-/// the compactor has something to summarize.
+/// A prompt big enough that the conversation outgrows the fixture's 8k window on
+/// its own, leaving no room for an in-place summary — the chain asks the worker
+/// for the compaction instead, which is the path this test observes.
 fn long_prompt() -> String {
-    "lorem ipsum ".repeat(400)
+    "lorem ipsum ".repeat(2_000)
 }
 
 #[tokio::test]

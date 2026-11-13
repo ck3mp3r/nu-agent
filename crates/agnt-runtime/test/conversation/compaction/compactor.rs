@@ -23,6 +23,9 @@ mod failures;
 #[path = "compactor/model_swap.rs"]
 mod model_swap;
 
+#[path = "compactor/planning_spec.rs"]
+mod planning_spec;
+
 #[path = "compactor/splice.rs"]
 mod splice;
 

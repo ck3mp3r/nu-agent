@@ -10,7 +10,7 @@ use rig::agent::{
 use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 
-use agnt_kernel::{InferenceRecord, NoticeKind, SessionRecord, StopCause};
+use agnt_kernel::{CompactionRecord, InferenceRecord, NoticeKind, SessionRecord, StopCause};
 
 use crate::hook::output_repetition::{
     OUTPUT_REPETITION_NOTICE, OutputRepetitionDetector, RepetitionDetection,
@@ -20,6 +20,7 @@ use agnt_kernel::bus::NarrationEvent;
 
 use super::HookChain;
 use super::compaction::{CompactionPath, decide_compaction};
+use super::in_place::InPlace;
 use super::not_run::CANCELLED_STOP_REASON;
 
 impl<P: AsyncPermissionResolver> HookChain<P> {
@@ -60,10 +61,16 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         let memory = Arc::clone(&self.memory);
         let conversation_id = self.conversation_id.clone();
         let compaction = self.compaction.clone();
-        let last_total_tokens = Arc::clone(&self.last_total_tokens);
+        let meter = self.meter.clone();
         let store_latch = Arc::clone(&self.store_latch);
         let stop = self.stop.clone();
         let prompt = event.prompt.clone();
+        // The active model's spec, read off the wire serving this turn: the trigger
+        // compares the next request against THIS model's input limit. A model the
+        // catalog does not list has no limit, and then nothing is over it.
+        let spec = self.model.spec().cloned();
+        let pending = self.pending_summary.clone();
+        let model = self.model.clone();
 
         async move {
             if cancelled {
@@ -81,26 +88,25 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 .stream()
                 .publish(SessionRecord::Inference(InferenceRecord::Started));
 
-            // Compaction decision: schedule a compaction when the session's
-            // current conversation is over the threshold. The hook never patches
-            // the per-turn history — the splice is what the next run loads.
-            let path = CompactionPath::new(
-                memory.as_ref(),
-                &compaction,
-                &last_total_tokens,
-                &store_latch,
-            );
+            // Compaction decision: patch this request in place when the session's
+            // current conversation is over the threshold, and clear or summarize
+            // in place when it cannot be patched. The decision returns what this
+            // call sends; the executor persists whatever it stashed between the
+            // two runs.
+            let path =
+                CompactionPath::new(memory.as_ref(), &compaction, &meter, &store_latch, &model);
             decide_compaction(
                 &prompt,
                 conversation_id.as_str(),
+                InPlace {
+                    spec: spec.as_ref(),
+                    pending: &pending,
+                },
                 &path,
-                self.bus.control(),
                 self.bus.stream(),
                 self.bus.lifecycle(),
             )
-            .await;
-
-            CompletionCallAction::continue_run()
+            .await
         }
     }
 
@@ -114,6 +120,9 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
         let stop = self.stop.clone();
+        // The summary this turn asked for streams from the patched call itself:
+        // its deltas are the compaction's, not an inference the transcript shows.
+        let summary_source = self.pending_summary.awaiting_reply();
         let delta = event.delta.to_string();
         let aggregated = event.aggregated.to_string();
         // Intra-stream repetition detection: check the full aggregated stream
@@ -155,18 +164,41 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 stop.narrate(bus.stream(), StopCause::OutputRepetition, &reason);
                 return ObservationAction::stop(reason);
             }
-            let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
-                delta: delta.clone(),
-                aggregated: aggregated.clone(),
-            });
-            // Same deltas on the record stream: the hub event dies when the
-            // surfaces fold records instead.
-            let _ = bus
-                .stream()
-                .publish(SessionRecord::Inference(InferenceRecord::Chunk {
-                    delta,
-                    aggregated,
-                }));
+            // A patched call streams the summary this turn asked for: its
+            // deltas are the compaction's, so the surfaces fold a compaction
+            // block instead of an inference. Every other call streams its own.
+            match summary_source {
+                Some(source) => {
+                    let _ = bus.stream().publish(SessionRecord::Compaction(
+                        CompactionRecord::SummaryChunk {
+                            source,
+                            delta: delta.clone(),
+                            aggregated: aggregated.clone(),
+                        },
+                    ));
+                    let _ = bus
+                        .narration()
+                        .publish(NarrationEvent::CompactionSummaryChunk {
+                            source,
+                            delta,
+                            aggregated,
+                        });
+                }
+                None => {
+                    let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
+                        delta: delta.clone(),
+                        aggregated: aggregated.clone(),
+                    });
+                    // Same deltas on the record stream: the hub event dies when
+                    // the surfaces fold records instead.
+                    let _ =
+                        bus.stream()
+                            .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+                                delta,
+                                aggregated,
+                            }));
+                }
+            }
             ObservationAction::continue_run()
         }
     }

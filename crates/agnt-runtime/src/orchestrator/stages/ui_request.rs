@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::orchestrator::events::{UiRequest, UiRequestResponse, WorkerCommand};
 use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
@@ -13,6 +13,14 @@ use agnt_kernel::{NoticeKind, SessionLifecycle, SessionRecord};
 /// needs no worker turn at all.
 pub(crate) struct UiRequestStage {
     last_authoritative_visible_count: usize,
+    /// The last visible tool count published per server.
+    ///
+    /// An abandoned toggle's substitute republishes these, so quitting while a
+    /// toggle is unanswered leaves the footer on its last-known numbers instead
+    /// of zeroing them.
+    last_authoritative_counts: BTreeMap<String, usize>,
+    /// The last visible tool names published per server, for the same reason.
+    last_authoritative_names: BTreeMap<String, Vec<String>>,
     pending_blocking: Option<UiRequest>,
     pending_concurrent: Vec<UiRequest>,
     queued: VecDeque<UiRequest>,
@@ -22,6 +30,8 @@ impl UiRequestStage {
     pub fn new(initial_visible_count: usize) -> Self {
         Self {
             last_authoritative_visible_count: initial_visible_count,
+            last_authoritative_counts: BTreeMap::new(),
+            last_authoritative_names: BTreeMap::new(),
             pending_blocking: None,
             pending_concurrent: Vec::new(),
             queued: VecDeque::new(),
@@ -111,6 +121,80 @@ impl UiRequestStage {
             text: text.to_string(),
         });
     }
+
+    /// Name the gate that deferred a request.
+    ///
+    /// A queued request and a lost one look the same from the surface: one
+    /// warning, then nothing. This line is the record of which gate was true at
+    /// accept time, so a wedged flag is read from a log instead of guessed.
+    fn log_deferred_gate(&self, request: &str, ctx: &OrchestrationContext<'_>) {
+        log::warn!(
+            "{request} queued: worker_active={} pending_blocking={}",
+            *ctx.worker_active,
+            self.pending_blocking.is_some()
+        );
+    }
+
+    /// Remember the tool-count facts a toggle answer published.
+    ///
+    /// The stage is the one place that knows what the surface shows now, so an
+    /// abandoned toggle's substitute reads its numbers from here.
+    fn remember_tool_facts(
+        &mut self,
+        total: usize,
+        server: &str,
+        server_count: usize,
+        names_by_server: &[(String, Vec<String>)],
+    ) {
+        self.last_authoritative_visible_count = total;
+        self.last_authoritative_counts
+            .insert(server.to_string(), server_count);
+        for (srv, names) in names_by_server {
+            self.last_authoritative_names
+                .insert(srv.clone(), names.clone());
+        }
+    }
+
+    /// The answer an abandoned request gets in place of the worker's.
+    ///
+    /// The text is the only thing a surface is told about a request that never
+    /// answered, so it names both facts: what was abandoned, and that nothing
+    /// arrived. A toggle's substitute carries the tool-count facts already
+    /// published, so the footer keeps its last-known numbers; `None` for a
+    /// request no lane carries (a picker refresh answers on the surface's own
+    /// hand and never waits for the worker).
+    fn abandonment(&self, request: &UiRequest) -> Option<UiRequestResponse> {
+        let text = || {
+            format!(
+                "{} abandoned at quit: the response was not received",
+                request.kind()
+            )
+        };
+        match request {
+            UiRequest::SwitchModel { .. } => Some(UiRequestResponse::ModelSwitch(Err(text()))),
+            UiRequest::SwitchAgent { .. } => Some(UiRequestResponse::AgentSwitch(Err(text()))),
+            UiRequest::SwitchSession { id } => Some(UiRequestResponse::SessionSwitch {
+                id: id.clone(),
+                result: Err(text()),
+            }),
+            UiRequest::ToggleMcp { server, .. } => Some(UiRequestResponse::McpToggle {
+                server: server.clone(),
+                result: Err(text()),
+                total: self.last_authoritative_visible_count,
+                server_count: self
+                    .last_authoritative_counts
+                    .get(server)
+                    .copied()
+                    .unwrap_or(0),
+                names_by_server: self
+                    .last_authoritative_names
+                    .iter()
+                    .map(|(srv, names)| (srv.clone(), names.clone()))
+                    .collect(),
+            }),
+            UiRequest::RefreshSessionPicker { .. } | UiRequest::RefreshAgentPicker { .. } => None,
+        }
+    }
 }
 
 impl UiRequestHandler for UiRequestStage {
@@ -119,7 +203,9 @@ impl UiRequestHandler for UiRequestStage {
             UiRequest::SwitchModel { spec } => {
                 if *ctx.worker_active || self.pending_blocking.is_some() {
                     // The switch applies only once the worker is free, so the
-                    // deferral is announced where the request lands.
+                    // deferral is announced where the request lands, and the
+                    // gate that deferred it is named in the log.
+                    self.log_deferred_gate("model switch", ctx);
                     self.warn_deferred("model switch applies after the current turn finishes", ctx);
                     self.queued
                         .retain(|r| !matches!(r, UiRequest::SwitchModel { .. }));
@@ -131,7 +217,9 @@ impl UiRequestHandler for UiRequestStage {
             }
             UiRequest::SwitchAgent { name } => {
                 if *ctx.worker_active || self.pending_blocking.is_some() {
-                    // As the model switch: queued behind the turn, and said so.
+                    // As the model switch: queued behind the turn, said so, and
+                    // the deferring gate named in the log.
+                    self.log_deferred_gate("agent switch", ctx);
                     self.warn_deferred("agent switch applies after the current turn finishes", ctx);
                     self.queued
                         .retain(|r| !matches!(r, UiRequest::SwitchAgent { .. }));
@@ -273,7 +361,7 @@ impl UiRequestHandler for UiRequestStage {
                 server_count,
                 names_by_server,
             } => {
-                self.last_authoritative_visible_count = total;
+                self.remember_tool_facts(total, &server, server_count, &names_by_server);
                 let _ = ctx.facts.publish(FactRecord::McpVisibleToolCount {
                     server: server.clone(),
                     count: server_count,
@@ -297,7 +385,7 @@ impl UiRequestHandler for UiRequestStage {
                 server_count,
                 names_by_server,
             } => {
-                self.last_authoritative_visible_count = total;
+                self.remember_tool_facts(total, &server, server_count, &names_by_server);
                 let _ = ctx.facts.publish(FactRecord::McpVisibleToolCount {
                     server: server.clone(),
                     count: server_count,
@@ -329,6 +417,36 @@ impl UiRequestHandler for UiRequestStage {
         }
         if let Some(request) = self.queued.pop_front() {
             self.dispatch_blocking(request, ctx).await;
+        }
+    }
+
+    /// Release every request that quit abandons, answering each one.
+    ///
+    /// A request the surface sent expects an answer: the modal it raised, the
+    /// picker it opened, the toggle it flipped. Quit cannot wait for the worker's
+    /// answer, so each abandoned request publishes its own substitute down the
+    /// lane that answer would have taken. The loop folds it like any other
+    /// response, so the surface releases instead of holding a wait nothing will
+    /// ever fill.
+    async fn abandon_unanswered(&mut self, ctx: &mut OrchestrationContext<'_>) {
+        if let Some(request) = self.pending_blocking.take()
+            && let Some(response) = self.abandonment(&request)
+        {
+            log::warn!(
+                "abandoning the unanswered {} on quit: its response had not arrived when quit settled",
+                request.kind()
+            );
+            let _ = ctx.blocking_response_tx.send(response).await;
+        }
+        for request in std::mem::take(&mut self.pending_concurrent) {
+            let Some(response) = self.abandonment(&request) else {
+                continue;
+            };
+            log::warn!(
+                "abandoning the unanswered {} on quit: its response had not arrived when quit settled",
+                request.kind()
+            );
+            let _ = ctx.concurrent_response_tx.send(response).await;
         }
     }
 

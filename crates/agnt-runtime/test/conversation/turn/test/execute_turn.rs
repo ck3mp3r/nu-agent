@@ -88,6 +88,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         .run();
     let tool_infra = executor::ToolInfra {
         store_latch: Default::default(),
+        pending_summary: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
@@ -101,7 +102,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
-        last_total_tokens: default_last_total_tokens(),
+        meter: default_meter(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus: bus.clone(),

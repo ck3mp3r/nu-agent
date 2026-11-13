@@ -26,8 +26,17 @@ fn inline_slash_suggestions_lifecycle() -> Result<()> {
     assert_eq!(
         ids,
         vec![
-            "/compact", "/mcp", "/help", "/status", "/models", "/agent", "/new", "/session",
-            "/theme", "/skills",
+            "/compact",
+            "/uncompact",
+            "/mcp",
+            "/help",
+            "/status",
+            "/models",
+            "/agent",
+            "/new",
+            "/session",
+            "/theme",
+            "/skills",
         ]
     );
 

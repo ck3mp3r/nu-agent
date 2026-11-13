@@ -6,6 +6,7 @@ use super::*;
 fn parse_slash_command_exact_matches() {
     let cases: &[(&str, SlashCommand)] = &[
         ("   /compact   ", SlashCommand::Compact),
+        (" /uncompact ", SlashCommand::Uncompact),
         (" /mcp ", SlashCommand::Mcp),
         (" /help ", SlashCommand::Help),
         (" /status ", SlashCommand::Status),
@@ -47,6 +48,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
         filter_inline_slash_suggestions("/"),
         vec![
             SlashCommand::Compact,
+            SlashCommand::Uncompact,
             SlashCommand::Mcp,
             SlashCommand::Help,
             SlashCommand::Status,
@@ -80,6 +82,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
         SLASH_COMMAND_ORDER,
         [
             SlashCommand::Compact,
+            SlashCommand::Uncompact,
             SlashCommand::Mcp,
             SlashCommand::Help,
             SlashCommand::Status,
@@ -93,6 +96,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     );
 
     assert_eq!(SlashCommand::Compact.label(), "/compact");
+    assert_eq!(SlashCommand::Uncompact.label(), "/uncompact");
     assert_eq!(SlashCommand::Mcp.label(), "/mcp");
     assert_eq!(SlashCommand::Help.label(), "/help");
     assert_eq!(SlashCommand::Status.label(), "/status");
@@ -104,6 +108,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(SlashCommand::Skills.label(), "/skills");
 
     assert!(!SlashCommand::Compact.summary().is_empty());
+    assert!(!SlashCommand::Uncompact.summary().is_empty());
     assert!(!SlashCommand::Mcp.summary().is_empty());
     assert!(!SlashCommand::Help.summary().is_empty());
     assert!(!SlashCommand::Status.summary().is_empty());

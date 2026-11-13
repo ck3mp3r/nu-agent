@@ -126,10 +126,11 @@ async fn test_runtime_slash_round_trip_picker_narrow_tab_accepts_highlighted() -
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
 
-    // -- Exec: `/` opens the list; three Down presses highlight /status.
+    // -- Exec: `/` opens the list; four Down presses highlight /status.
     driver
         .advance(&typed_keys(&[
             TerminalKey::Char('/'),
+            TerminalKey::Down,
             TerminalKey::Down,
             TerminalKey::Down,
             TerminalKey::Down,
@@ -140,7 +141,7 @@ async fn test_runtime_slash_round_trip_picker_narrow_tab_accepts_highlighted() -
     assert_eq!(
         driver.state().picker.selected_slash_label().as_deref(),
         Some("/status"),
-        "three Down presses highlight /status"
+        "four Down presses highlight /status"
     );
 
     // -- Exec: `s` narrows the list; Tab accepts the highlight.

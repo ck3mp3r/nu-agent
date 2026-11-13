@@ -33,7 +33,7 @@ async fn seed_session(
 }
 
 #[tokio::test]
-async fn clear_session_resets_token_tracking_and_keeps_the_store() -> Result<()> {
+async fn clear_session_keeps_the_store() -> Result<()> {
     // -- Setup & Fixtures
     let mut fixture = make_runtime(text_model("unused"))?;
     let session_id = fixture
@@ -47,17 +47,11 @@ async fn clear_session_resets_token_tracking_and_keeps_the_store() -> Result<()>
         &[crate::types::Message::user("hello")],
     )
     .await?;
-    fixture.runtime.session.last_total_tokens_mut().replace(99);
 
     // -- Exec
     fixture.runtime.clear_session();
 
     // -- Check
-    assert_eq!(
-        fixture.runtime.session.last_total_tokens(),
-        None,
-        "clearing a session must reset the token counter"
-    );
     let store = fixture
         .runtime
         .session
@@ -95,19 +89,6 @@ async fn new_session_derives_a_prefixed_id_from_the_cwd() -> Result<()> {
         "the new session id must carry the cwd prefix; got: {new_id}"
     );
     assert_ne!(Some(new_id), previous, "new_session must mint a fresh id");
-    Ok(())
-}
-
-#[tokio::test]
-async fn seed_last_total_tokens_sets_the_counter() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut fixture = make_runtime(text_model("unused"))?;
-
-    // -- Exec
-    fixture.runtime.seed_last_total_tokens(Some(4242));
-
-    // -- Check
-    assert_eq!(fixture.runtime.session.last_total_tokens(), Some(4242));
     Ok(())
 }
 
@@ -196,6 +177,73 @@ async fn run_compaction_summarizes_a_populated_session() -> Result<()> {
         first.author,
         Some(&rig_memory::summary_author()),
         "a successful compaction must splice the summary under rig.compaction"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn uncompact_without_a_session_is_a_noop() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = make_runtime(text_model("unused"))?;
+    fixture.runtime.final_session_id = None;
+
+    // -- Exec
+    fixture
+        .runtime
+        .uncompact(CompactionSource::Manual)
+        .await
+        .map_err(|e| format!("uncompact without a session must succeed: {e}"))?;
+
+    // -- Check
+    assert_eq!(fixture.runtime.current_session_id(), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn uncompact_restores_the_newest_compaction() -> Result<()> {
+    // -- Setup & Fixtures
+    // The conversation lives in the rig-memory store, which is what a run loads
+    // and what the undo restores.
+    let mut fixture = make_runtime(text_model("unused"))?;
+    let store = fixture
+        .runtime
+        .session
+        .inner_memory()
+        .rig_store("test-session")
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, "test-session")?;
+    conversation.extend([
+        crate::types::Message::user("first"),
+        crate::types::Message::assistant("reply"),
+        crate::types::Message::user("second"),
+        crate::types::Message::assistant("second reply"),
+    ]);
+    rig_memory::save(&*store, "test-session", &mut conversation)?;
+    fixture
+        .runtime
+        .run_compaction(CompactionSource::Manual)
+        .await
+        .map_err(|e| format!("compaction should succeed: {e}"))?;
+
+    // -- Exec
+    fixture
+        .runtime
+        .uncompact(CompactionSource::Manual)
+        .await
+        .map_err(|e| format!("uncompact should succeed: {e}"))?;
+
+    // -- Check: the four summarized messages are the stored context again.
+    let restored = rig_memory::load(&*store, "test-session")?;
+    assert_eq!(
+        restored.messages().len(),
+        4,
+        "the undo must put the summarized messages back"
+    );
+    assert_ne!(
+        restored.entries().next().and_then(|entry| entry.author),
+        Some(&rig_memory::summary_author()),
+        "the summary entry must be gone after the undo"
     );
     Ok(())
 }
@@ -464,18 +512,17 @@ async fn interactive_pending_arc_clones_the_shared_map() -> Result<()> {
     Ok(())
 }
 
-/// WHEN the session changes, THE hook's threshold input SHALL NOT describe the
-/// session just left: neither the last real token count nor a store-dead latch
-/// survives the switch.
+/// WHEN the session changes, THE hook's trigger input SHALL NOT describe the
+/// session just left: neither the last reported token count nor a store-dead
+/// latch survives the switch.
 #[tokio::test]
 async fn session_switch_drops_the_previous_sessions_threshold_inputs() -> Result<()> {
-    // -- Setup & Fixtures: a total and a latch recorded under another session.
+    // -- Setup & Fixtures: a count and a latch recorded under another session.
     let mut fixture = make_runtime(text_model("unused"))?;
-    *fixture
+    fixture
         .runtime
-        .last_total_tokens
-        .lock()
-        .map_err(|_| "token slot poisoned")? = Some(500_000);
+        .meter
+        .record_usage(rig::completion::Usage::new().input_tokens(500_000));
     *fixture
         .runtime
         .store_latch
@@ -486,15 +533,11 @@ async fn session_switch_drops_the_previous_sessions_threshold_inputs() -> Result
     fixture.runtime.clear_session();
 
     // -- Check: a conversation under the threshold can no longer fire a
-    // decision from the previous session's total.
+    // decision from the previous session's count.
     assert_eq!(
-        *fixture
-            .runtime
-            .last_total_tokens
-            .lock()
-            .map_err(|_| "token slot poisoned")?,
+        fixture.runtime.meter.context_tokens(),
         None,
-        "the previous session's total must not survive the switch"
+        "the previous session's count must not survive the switch"
     );
     assert!(
         fixture
@@ -508,22 +551,21 @@ async fn session_switch_drops_the_previous_sessions_threshold_inputs() -> Result
     Ok(())
 }
 
-/// WHEN the runtime attaches to another session, THE hook's threshold input
+/// WHEN the runtime attaches to another session, THE hook's trigger input
 /// SHALL NOT describe the session just left — the attach is a switch too.
 #[tokio::test]
 async fn attach_session_drops_the_previous_sessions_threshold_inputs() -> Result<()> {
-    // -- Setup & Fixtures: a total and a latch recorded under another session.
+    // -- Setup & Fixtures: a count and a latch recorded under another session.
     let mut fixture = make_runtime(text_model("unused"))?;
     let previous = fixture
         .runtime
         .final_session_id
         .clone()
         .ok_or("fixture must start attached to a session")?;
-    *fixture
+    fixture
         .runtime
-        .last_total_tokens
-        .lock()
-        .map_err(|_| "token slot poisoned")? = Some(500_000);
+        .meter
+        .record_usage(rig::completion::Usage::new().input_tokens(500_000));
     *fixture
         .runtime
         .store_latch
@@ -540,13 +582,9 @@ async fn attach_session_drops_the_previous_sessions_threshold_inputs() -> Result
         "the attach must move the runtime to the new session"
     );
     assert_eq!(
-        *fixture
-            .runtime
-            .last_total_tokens
-            .lock()
-            .map_err(|_| "token slot poisoned")?,
+        fixture.runtime.meter.context_tokens(),
         None,
-        "the previous session's total must not survive the attach"
+        "the previous session's count must not survive the attach"
     );
     assert!(
         fixture

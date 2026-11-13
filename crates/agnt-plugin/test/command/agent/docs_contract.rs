@@ -118,12 +118,11 @@ fn help_includes_compact_mcp_help_status_slash_commands() -> Result<()> {
 fn help_lists_the_wired_compaction_policy_fields() -> Result<()> {
     let help = read_help_markdown()?;
     for key in [
-        "`proactive_threshold_pct`",
         "`keep_recent`",
         "`keep_asked`",
         "`clearing.keep_tokens`",
         "`clearing.keep_under`",
-        "`reserve`",
+        "`reserve_pct`",
         "`summary_tokens`",
         "`snippet_chars`",
         "`unknown_window_chars`",
@@ -147,8 +146,7 @@ fn help_lists_the_wired_compaction_policy_fields() -> Result<()> {
 fn usage_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
     let docs = read_usage_docs()?;
     for key in [
-        "`proactive_threshold_pct`",
-        "`reserve`",
+        "`reserve_pct`",
         "`summary_tokens`",
         "`snippet_chars`",
         "`unknown_window_chars`",
@@ -172,14 +170,14 @@ fn usage_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
 fn configuration_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
     let docs = read_configuration_docs()?;
     for key in [
-        "`proactive_threshold_pct`",
-        "`reserve`",
+        "`reserve_pct`",
         "`summary_tokens`",
         "`snippet_chars`",
         "`unknown_window_chars`",
         "`keep_recent`",
         "`keep_asked`",
         "`clearing`",
+        "`near_window`",
         "`tracked`",
         "`prompts`",
     ] {
@@ -193,8 +191,8 @@ fn configuration_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
         "the configuration docs state that an unset knob keeps the rig default"
     );
     assert!(
-        docs.contains("Not yet configurable: `near_window`"),
-        "the configuration docs carry the deferred `near_window` note"
+        docs.contains("`/compact` focus") && docs.contains("stays reserved"),
+        "the configuration docs keep the `/compact` focus reserved"
     );
     Ok(())
 }

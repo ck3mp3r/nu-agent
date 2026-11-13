@@ -19,6 +19,7 @@ use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
 
 use crate::config::defaults;
 use crate::hook::agent_hook::{HookState, StopLedger};
+use crate::hook::anchor_meter::AnchorMeter;
 use crate::hook::circuit_breaker_guard::CircuitBreakerGuard;
 use crate::hook::doom_loop::DoomLoopDetector;
 use crate::hook::history_snapshot::HistorySnapshot;
@@ -66,12 +67,13 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             conversation_id: hook_state.conversation_id,
             compaction: hook_state.compaction,
             model: hook_state.model,
-            last_total_tokens: hook_state.last_total_tokens,
+            meter: hook_state.meter,
             turn_usage: hook_state.turn_usage,
             session_usage: hook_state.session_usage,
             store_latch: hook_state.store_latch,
             unpriced_warnings: UnpricedWarnings::default(),
             stop: StopLedger::default(),
+            pending_summary: hook_state.pending_summary,
         }
     }
 
@@ -102,6 +104,24 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         self.stop.clone()
     }
 
+    /// Return the per-turn slot the in-place summary decision stashes its plan
+    /// in.
+    ///
+    /// Callers clone it **before** passing the hook into the agent builder
+    /// (which consumes `self`), then read it between the two runs: the patched
+    /// call's settled reply is what the turn executor splices into the store.
+    pub(crate) fn pending_summary(&self) -> crate::hook::chain::PendingSummary {
+        self.pending_summary.clone()
+    }
+
+    /// Return the compaction trigger's meter.
+    ///
+    /// Cloned before the hook moves into the agent builder, so the turn can
+    /// forget the anchor a splice invalidated.
+    pub(crate) fn meter(&self) -> AnchorMeter {
+        self.meter.clone()
+    }
+
     /// Returns `true` if a cancellation has been requested via the bus cancel channel.
     ///
     /// Consumes any pending cancel event. A `Lagged` error also counts as cancelled
@@ -118,13 +138,6 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// The cancel receiver, recovered if a drainer panicked mid-receive.
     fn lock_cancel_rx(&self) -> MutexGuard<'_, CancelRx> {
         self.cancel_rx
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The last completion's token count, recovered if a writer panicked.
-    pub(super) fn lock_last_total_tokens(&self) -> MutexGuard<'_, Option<u64>> {
-        self.last_total_tokens
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }

@@ -304,6 +304,33 @@ fn agent_command_signature_does_not_expose_tui_switch() {
 }
 
 #[test]
+fn agent_command_signature_does_not_expose_the_dead_keep_recent_flag() {
+    let agent = create_test_agent();
+    let sig = SimplePluginCommand::signature(&agent);
+
+    let flag = sig.named.iter().find(|f| f.long == "keep-recent");
+    assert!(
+        flag.is_none(),
+        "--keep-recent influenced no config field and must not be exposed"
+    );
+}
+
+#[test]
+fn invocation_agent_keep_recent_flag_is_rejected_as_an_unknown_option() -> Result<()> {
+    let agent = create_test_agent();
+    let parse_errors = parse_agent_invocation_with_signature(
+        SimplePluginCommand::signature(&agent),
+        "agent --keep-recent 5",
+    )?;
+
+    let (cmd, flag, _) = first_unknown_flag_error(&parse_errors)
+        .ok_or("should have unknown flag error for --keep-recent")?;
+    assert_eq!(cmd, "agent");
+    assert_eq!(flag, "keep-recent");
+    Ok(())
+}
+
+#[test]
 fn agent_command_signature_updates_verbose_description_for_progressive_levels() -> Result<()> {
     let agent = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);

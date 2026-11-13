@@ -115,8 +115,7 @@ fn never_compacting(bus: Bus) -> CompactionConfig {
             rig_memory::CompactionPolicy::default(),
             None,
         ),
-        threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
     }
 }
 
@@ -124,6 +123,7 @@ fn never_compacting(bus: Bus) -> CompactionConfig {
 fn tool_infra(bus: Bus) -> executor::ToolInfra {
     executor::ToolInfra {
         store_latch: Default::default(),
+        pending_summary: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -132,7 +132,7 @@ fn tool_infra(bus: Bus) -> executor::ToolInfra {
         doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
         output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
         repetition_guard: true,
-        last_total_tokens: Arc::new(Mutex::new(None)),
+        meter: crate::hook::AnchorMeter::default(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,

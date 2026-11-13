@@ -513,6 +513,9 @@ fn base_spec(
         .with_context_window(cache_spec.limit.context)
         .with_max_output_tokens(cache_spec.limit.output)
         .with_tools(cache_spec.tool_call);
+    if let Some(input) = cache_spec.limit.input {
+        spec = spec.with_max_input_tokens(input);
+    }
     if let Some(modalities) = &cache_spec.modalities {
         apply_modalities(&mut spec, modalities);
     }

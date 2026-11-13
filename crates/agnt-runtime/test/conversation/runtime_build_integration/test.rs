@@ -21,10 +21,7 @@ mod construction;
 use super::*;
 
 use crate::bus::Bus;
-use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
-use crate::config::{
-    AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
-};
+use crate::config::{AgentsConfig, ModelConfig, PluginConfig, ProviderConfig, defaults};
 use crate::session::management::SessionPersistence;
 use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
@@ -68,7 +65,6 @@ fn make_params(
         engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
         rig: RigStoreConfig::new(store_type),
         final_session_id: None,
-        proactive_threshold_pct: None,
         base_permissions: PermissionsConfig::safe_defaults(true),
         effective_permissions: PermissionsConfig::safe_defaults(true),
         cli_permissions_overlay: None,
@@ -86,103 +82,6 @@ fn make_params(
         bus: Bus::default(),
         hook_context: crate::hooks::HookAgentContext::default(),
         compactor_model: None,
-    }
-}
-
-/// A plugin config whose `[models.light]` role points at an `ollama` cache
-/// row carrying a context limit and a price.
-fn light_plugin_config() -> PluginConfig {
-    let row = ModelSpec {
-        id: "light-model".to_string(),
-        name: "light-model".to_string(),
-        tool_call: true,
-        limit: ModelLimit {
-            context: 262_000,
-            output: 8_192,
-        },
-        cost: Some(ModelCost {
-            input: 0.1,
-            output: 0.2,
-            cache_read: None,
-            cache_write: None,
-        }),
-        modalities: None,
-    };
-    PluginConfig {
-        models: std::collections::HashMap::from([(
-            "light".to_string(),
-            ModelRoleConfig {
-                model: "ollama/light-model".to_string(),
-                ..ModelRoleConfig::default()
-            },
-        )]),
-        models_cache: Some(crate::config::ModelsCache {
-            providers: std::collections::HashMap::from([(
-                "ollama".to_string(),
-                ProviderSpec {
-                    id: "ollama".to_string(),
-                    name: "ollama".to_string(),
-                    env: Vec::new(),
-                    api: None,
-                    models: std::collections::HashMap::from([("light-model".to_string(), row)]),
-                },
-            )]),
-        }),
-        ..PluginConfig::default()
-    }
-}
-
-/// A plugin config whose `[models.light]` role points at a custom-named
-/// provider block (`ollama-cloud`) that declares the `ollama` rig impl.
-fn custom_named_light_plugin_config() -> PluginConfig {
-    let row = ModelSpec {
-        id: "light-model".to_string(),
-        name: "light-model".to_string(),
-        tool_call: true,
-        limit: ModelLimit {
-            context: 262_000,
-            output: 8_192,
-        },
-        cost: Some(ModelCost {
-            input: 0.1,
-            output: 0.2,
-            cache_read: None,
-            cache_write: None,
-        }),
-        modalities: None,
-    };
-    PluginConfig {
-        models: std::collections::HashMap::from([(
-            "light".to_string(),
-            ModelRoleConfig {
-                model: "ollama-cloud/light-model".to_string(),
-                ..ModelRoleConfig::default()
-            },
-        )]),
-        providers: std::collections::HashMap::from([(
-            "ollama-cloud".to_string(),
-            ProviderConfig {
-                provider: Some("ollama".to_string()),
-                models: std::collections::HashMap::from([(
-                    "light-model".to_string(),
-                    ModelConfig::default(),
-                )]),
-                ..ProviderConfig::default()
-            },
-        )]),
-        models_cache: Some(crate::config::ModelsCache {
-            providers: std::collections::HashMap::from([(
-                "ollama-cloud".to_string(),
-                ProviderSpec {
-                    id: "ollama-cloud".to_string(),
-                    name: "ollama-cloud".to_string(),
-                    env: Vec::new(),
-                    api: None,
-                    models: std::collections::HashMap::from([("light-model".to_string(), row)]),
-                },
-            )]),
-        }),
-        ..PluginConfig::default()
     }
 }
 

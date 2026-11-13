@@ -36,7 +36,7 @@ pub(super) const SUMMARY_PREFIX: &str =
 /// The spec the compactor plans against: a registered provider with a window
 /// wide enough for the summarizer's default reserve and summary budget.
 pub(super) fn test_spec() -> Result<ModelSpec> {
-    resolve_model_spec("openai", "gpt-4o", Some(200_000), Some(1_024))
+    resolve_model_spec("openai", "gpt-4o", Some(200_000), Some(1_024), None)
         .ok_or_else(|| "openai should resolve to a registered provider id".into())
 }
 

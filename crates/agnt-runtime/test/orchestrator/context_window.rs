@@ -188,66 +188,6 @@ impl UserInputUi for ContextWindowUi {
     }
 }
 
-// ── TokenSeedingRuntime ─────────────────────────────────────────────────
-
-#[derive(Default)]
-struct TokenSeedingRuntime {
-    seeded_tokens: Option<Option<u64>>,
-    bus: crate::bus::Bus,
-}
-
-impl CoreRuntime for TokenSeedingRuntime {
-    async fn execute_turn(
-        &mut self,
-        _prompt: String,
-        _context: Option<String>,
-        span: Span,
-        _task_id: Option<String>,
-    ) -> TurnEnd {
-        let _ = self.bus.lifecycle().publish(LifecycleEvent::TurnCompleted {
-            task_id: None,
-            duration_ms: 0,
-        });
-        TurnEnd::Completed {
-            value: Value::nothing(span),
-        }
-    }
-}
-
-impl ModelSwitching for TokenSeedingRuntime {
-    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
-        Err("model switching not supported".to_string())
-    }
-
-    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
-        Err("agent switch not supported in this runtime".to_string())
-    }
-
-    fn active_model_identity(&self) -> String {
-        "unknown/unknown".to_string()
-    }
-
-    fn max_context_tokens(&self) -> Option<u64> {
-        None
-    }
-}
-
-impl SessionState for TokenSeedingRuntime {
-    fn clear_session(&mut self) {}
-
-    fn new_session(&mut self) {}
-
-    fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
-        self.seeded_tokens = Some(tokens);
-    }
-}
-impl SessionPersistence for TokenSeedingRuntime {}
-// The picker reader defaults to an empty catalog: the fixture holds no persona
-// scan root and no session store.
-impl crate::catalog::PickerCatalogSource for TokenSeedingRuntime {}
-
-crate::default_mcp!(TokenSeedingRuntime);
-
 #[tokio::test]
 async fn context_window_max_tokens_set_on_ui_at_startup() -> TResult {
     let bus = Bus::default();
@@ -338,66 +278,6 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() -> TRe
             .unwrap_or_else(|e| e.into_inner()),
         Some(None),
         "expected context_window_max_tokens to be set to None when model has no limit"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn session_resume_seeds_last_total_tokens() -> TResult {
-    let bus = Bus::default();
-    let runtime = TokenSeedingRuntime {
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
-
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = drive_loop(
-        runtime,
-        LoopConfig::default()
-            .with_hydration(vec![], Some(90_000))
-            .with_bus(bus)
-            .with_event_sink(spawner),
-        Span::test_data(),
-    )
-    .await;
-    let runtime = handed_back(runtime)?;
-    result.map_err(|e| format!("hydrated interactive loop: {e}"))?;
-
-    assert_eq!(
-        runtime.seeded_tokens,
-        Some(Some(90_000)),
-        "seed_last_total_tokens must be called with the loaded token count on session resume"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() -> TResult {
-    let bus = Bus::default();
-    let runtime = TokenSeedingRuntime {
-        bus: bus.clone(),
-        ..Default::default()
-    };
-    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
-
-    let spawner = ui.make_event_spawner();
-    let (runtime, result) = drive_loop(
-        runtime,
-        LoopConfig::default()
-            .with_hydration(vec![], None)
-            .with_bus(bus)
-            .with_event_sink(spawner),
-        Span::test_data(),
-    )
-    .await;
-    let runtime = handed_back(runtime)?;
-    result.map_err(|e| format!("hydrated interactive loop: {e}"))?;
-
-    assert_eq!(
-        runtime.seeded_tokens,
-        Some(None),
-        "seed_last_total_tokens must be called with None when no prior token count exists"
     );
     Ok(())
 }

@@ -30,4 +30,5 @@ agnt-testkit = { workspace = true }
 anyhow = "1"
 rustls = { workspace = true }
 serde_test = "1"
+testing_logger = "0.1.1"
 tower = { version = "0.5", features = ["util"] }

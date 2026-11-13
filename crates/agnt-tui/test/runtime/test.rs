@@ -10,6 +10,7 @@ mod branch_resolver;
 mod command_palette;
 mod compaction;
 mod ctrl_c_guard;
+mod help_commands;
 mod help_panel;
 mod input_caret;
 mod input_cursor;

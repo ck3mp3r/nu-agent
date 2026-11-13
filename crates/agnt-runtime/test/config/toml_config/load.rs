@@ -50,7 +50,7 @@ temperature = 0.5
 tool_call = true
 
 [compaction]
-proactive_threshold_pct = 0.75
+reserve_pct = 35
 
 [agents]
 planner_enabled = true
@@ -81,7 +81,7 @@ default = "planner"
 
         // Compaction
         let compaction = config.compaction.ok_or("compaction")?;
-        assert_eq!(compaction.proactive_threshold_pct, Some(0.75));
+        assert_eq!(compaction.reserve_pct, Some(35));
 
         // Agents
         assert!(config.agents.planner_enabled);
@@ -101,8 +101,7 @@ fn load_parses_every_compaction_policy_field() -> Result<()> {
             dir,
             r#"
 [compaction]
-proactive_threshold_pct = 0.75
-reserve = 8000
+reserve_pct = 35
 summary_tokens = 6000
 snippet_chars = 1500
 unknown_window_chars = 200000
@@ -129,7 +128,7 @@ notes = "notes prompt"
 
         // -- Check
         let compaction = config.compaction.ok_or("compaction")?;
-        assert_eq!(compaction.reserve, Some(8000));
+        assert_eq!(compaction.reserve_pct, Some(35));
         assert_eq!(compaction.summary_tokens, Some(6000));
         assert_eq!(compaction.snippet_chars, Some(1500));
         assert_eq!(compaction.unknown_window_chars, Some(200_000));

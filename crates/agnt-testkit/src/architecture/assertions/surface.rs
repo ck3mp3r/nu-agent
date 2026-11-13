@@ -16,6 +16,13 @@
 //! `agnt_storage`'s `transcript()`. Same-crate use is not evidence either: the
 //! property is about surface across a crate boundary.
 //!
+//! A method reached through a receiver is evidence too, on its name alone: a
+//! call site `<expr>.<name>(...)` records `<name>`, and an item another crate
+//! calls that way is consumed. The receiver's type is not attributed, so a
+//! method call in one crate suppresses a row of that name in every crate it does
+//! not itself declare — the over-count is deliberate, and the cost is recorded
+//! in the ARCH-6 review entry.
+//!
 //! Blind spots, recorded rather than closed: a glob import
 //! (`use agnt_runtime::types::*`) names no item, a macro-generated reference is
 //! invisible to `syn`'s parsed tokens, and a crate reached through a `use … as …`
@@ -96,12 +103,14 @@ type SurfaceItem = (String, usize, String);
 /// reaches, keyed per crate as the baseline files are.
 fn report(ws: &Workspace, surface: BTreeMap<String, Vec<SurfaceItem>>) -> Vec<Violation> {
     let references = cross_crate_references(ws);
+    let methods = cross_crate_method_names(ws);
     let mut violations = Vec::new();
     for (krate, items) in &surface {
         if is_dev_only(ws, krate) {
             continue;
         }
-        let consumed = consumed_names(&references, &krate.replace('-', "_"));
+        let mut consumed = consumed_names(&references, &krate.replace('-', "_"));
+        consumed.extend(called_names(&methods, &krate.replace('-', "_")));
         for (label, line, name) in items {
             if consumed.contains(name) {
                 continue;
@@ -433,6 +442,45 @@ fn consumed_names(
     consumed
 }
 
+/// Every method-call name the workspace's sources write, keyed by the calling
+/// crate's underscored name.
+///
+/// The key is normalized the same way [`called_names`] excludes the declaring
+/// crate: a crate's own receiver calls (`self.take_pending_events()`) are not
+/// cross-crate evidence, and keying by the crate directory's dashed name would
+/// make every one of them look like an outside consumer.
+fn cross_crate_method_names(ws: &Workspace) -> BTreeMap<String, BTreeSet<String>> {
+    let mut names: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (label, _) in ws.sources() {
+        let Some(file) = ws.rust_file(label) else {
+            continue;
+        };
+        let Some((krate, _)) = crate_of(label) else {
+            continue;
+        };
+        let mut calls = MethodCalls::default();
+        calls.visit_file(&file);
+        if !calls.found.is_empty() {
+            names
+                .entry(krate.replace('-', "_"))
+                .or_default()
+                .extend(calls.found);
+        }
+    }
+    names
+}
+
+/// The names `krate`'s methods are called by, from every crate but `krate`.
+fn called_names(names: &BTreeMap<String, BTreeSet<String>>, krate: &str) -> BTreeSet<String> {
+    let mut called = BTreeSet::new();
+    for (caller, methods) in names {
+        if caller != krate {
+            called.extend(methods.iter().cloned());
+        }
+    }
+    called
+}
+
 /// Whether `krate` is dev-only: named in no `[dependencies]` table and in at
 /// least one `[dev-dependencies]` table.
 fn is_dev_only(ws: &Workspace, krate: &str) -> bool {
@@ -560,6 +608,24 @@ fn flatten_use_tree(tree: &UseTree, out: &mut Vec<String>) {
                 flatten_use_tree(item, out);
             }
         }
+    }
+}
+
+/// Every method name one file calls through a receiver.
+///
+/// The call is `receiver.method(args)`: `syn` parses it as a method call whose
+/// method is the tail of the field expression the receiver carries. Only the
+/// method name is kept — the receiver's type is not resolved, because the census
+/// asks whether any other crate names the surface, not which value it reaches.
+#[derive(Default)]
+struct MethodCalls {
+    found: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for MethodCalls {
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        self.found.insert(node.method.to_string());
+        visit::visit_expr_method_call(self, node);
     }
 }
 

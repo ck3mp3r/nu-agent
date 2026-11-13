@@ -6,12 +6,14 @@
 mod external_queue;
 mod owner;
 mod pending_completions;
+mod quit;
 mod sources;
 mod stages;
 
 pub(crate) use external_queue::{CancelDisposition, ExternalQueue};
 pub use owner::{Loop, run};
 pub(crate) use pending_completions::CompletionBuffer;
+pub(crate) use quit::{QuitArm, QuitStep};
 pub(crate) use sources::SourceChannels;
 pub(crate) use stages::ProductionStages;
 

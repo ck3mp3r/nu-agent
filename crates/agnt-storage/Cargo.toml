@@ -3,6 +3,9 @@ name = "agnt-storage"
 edition.workspace = true
 version.workspace = true
 
+[features]
+integration = []
+
 [dependencies]
 rig-memory = { workspace = true }
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }

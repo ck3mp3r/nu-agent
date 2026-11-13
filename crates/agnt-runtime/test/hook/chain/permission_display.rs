@@ -74,17 +74,17 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: shared_model
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     );
     // The "add" tool is not in `safe_defaults(true)`'s allow list, so the
@@ -201,17 +201,17 @@ async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Resu
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: shared_model
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     );
     let agent = rig::agent::AgentBuilder::new(
@@ -305,17 +305,17 @@ async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: shared_model
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     );
     let agent = rig::agent::AgentBuilder::new(

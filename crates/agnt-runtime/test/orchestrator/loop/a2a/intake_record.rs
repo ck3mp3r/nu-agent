@@ -8,10 +8,13 @@ use agnt_kernel::bus::ControlCommand;
 /// exactly one turn carrying that task id and SHALL publish no prompt row of
 /// its own.
 ///
-/// The row is drawn from the boundary that accepted the arrival — the router,
-/// where the runtime's identities are reachable — so the loop owns the admit,
-/// the repeat-arrival refusal, and the queueing only. A repeated arrival is not
-/// accepted, so it dispatches no second turn.
+/// This scopes the control arm only. Its row is drawn from the boundary that
+/// accepted the arrival — the router, where the runtime's identities are
+/// reachable — so the loop owns the admit, the repeat-arrival refusal, and the
+/// queueing only. A completion notification has no such boundary: the loop is
+/// its accepting boundary and publishes the row it dispatches (see
+/// `completions::row`). A repeated arrival is not accepted, so it dispatches no
+/// second turn.
 #[tokio::test]
 async fn an_accepted_external_prompt_dispatches_one_attributed_turn() -> Result<()> {
     // -- Setup & Fixtures
@@ -91,8 +94,8 @@ async fn an_accepted_external_prompt_dispatches_one_attributed_turn() -> Result<
     driven?;
     result.map_err(|e| format!("the orchestrator loop should end cleanly: {e}"))?;
 
-    // -- Check: the loop is intake only. The boundary that accepted the
-    // arrival publishes the row the surface draws, so the loop publishes none
+    // -- Check: the control arm is intake only. The boundary that accepted the
+    // arrival publishes the row the surface draws, so this arm publishes none
     // of its own.
     let prompts: Vec<_> = std::iter::from_fn(|| stream_rx.try_recv().ok())
         .filter_map(|record| match record {

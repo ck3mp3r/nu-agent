@@ -19,8 +19,8 @@ pub use config::{AgentSwitchHook, HydrationConfig, LoopConfig, NoAgentSwitchHook
 
 // Re-export handlers privately for internal use by the loop_impl module.
 pub(crate) use handlers::{
-    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
-    reject_external_task, submit_deferred_prompt,
+    PendingRewrites, dispatch_compaction, dispatch_uncompact, handle_external_cancel,
+    handle_worker_result, recv_or_pending, reject_external_task, submit_deferred_prompt,
 };
 pub(crate) use r#loop::ProductionStages;
 pub(crate) use r#loop::SourceChannels;

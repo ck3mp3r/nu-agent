@@ -41,7 +41,7 @@ api_key = "store:openai"
 [providers.openai.models.gpt-4o]
 
 [compaction]
-proactive_threshold_pct = 0.80
+reserve_pct = 20
 
 [agents]
 planner_enabled = true
@@ -165,12 +165,6 @@ model = "openai/gpt-4o"
 temperature = 0.7
 max_tokens = 16384
 max_context_tokens = 200000
-
-[models.light]
-model = "openai/gpt-4o-mini"
-temperature = 0.1
-max_tokens = 4096
-max_context_tokens = 32768
 ```
 
 #### ModelRoleConfig field reference
@@ -332,14 +326,14 @@ Precedence for store type: CLI `--store` flag > `AGENT_SESSION_STORE_TYPE` env v
 
 ```toml
 [compaction]
-proactive_threshold_pct = 0.80    # 0.0-1.0 fraction of the context window before compaction fires
-reserve = 16384                  # tokens kept free below the model's window
-summary_tokens = 12000           # the longest summary asked for, in tokens
+reserve_pct = 20                 # percent of the model's input limit kept free; the trigger fires above the rest
+summary_tokens = 32000           # the longest summary asked for, in tokens (ours: a deliberate pin)
 snippet_chars = 2000             # characters of a tool's output or arguments the summarizer sees
 unknown_window_chars = 400000    # characters of conversation sent when the model window is unknown
 keep_recent = 20000              # tokens of the newest messages an automatic compaction keeps verbatim
 keep_asked = 0                   # tokens of the newest messages an asked compaction keeps verbatim
 clearing = { keep_tokens = 20000, keep_under = 500 }  # the newest tool output kept, and the size never cleared
+near_window = "summarize"        # what a near-window compaction does: write notes on the outputs it clears, or "clear" silently
 # tracked = [{ tool = "read", argument = "path", set = "files_read" }]  # the tool arguments a summary tracks
 # [compaction.prompts]           # the summarizer's prompts; each key unset keeps the rig default
 # system = "..."
@@ -350,24 +344,24 @@ clearing = { keep_tokens = 20000, keep_under = 500 }  # the newest tool output k
 # notes = "..."
 ```
 
-Every key is optional: a key left out keeps the default named in its row. `proactive_threshold_pct` is this agent's own trigger knob. Every other key is a rig-memory policy field; rig-memory owns its meaning, and rig nests the four summarizer limits while this block sets them at the top level:
+Every key is optional: a key left out keeps the rig default, except `reserve_pct` and `summary_tokens`, which are ours. The trigger is rig's: the tokens the next request would send, against the model's input limit less a `reserve_pct` percent (default 20) of that limit kept free. Except for `reserve_pct`, every key is a rig-memory policy field; rig-memory owns its meaning, and rig nests the four summarizer limits while this block sets them at the top level:
 
-- `proactive_threshold_pct` (float) — the fraction of the context window at which auto compaction fires. Default `0.80`. This is the only field range-checked here (0.0-1.0); rig owns the rest.
-- `reserve` (u64) — tokens kept free below the model's window. Unset = the rig default, `16384`.
-- `summary_tokens` (u64) — the longest summary asked for, in tokens. Unset = the rig default, `12000`.
+- `reserve_pct` (u32) — percent of the model's input limit kept free below the trigger: the request fires compaction when it would leave less than this free. It is derived on every decision from the turn's own model, so a model switch moves the threshold with the window; a model whose input limit is unknown never trips it. Range-checked 0-100. Unset = `20`, ours.
+- `summary_tokens` (u64) — the longest summary asked for, in tokens. Unset = `32000`, our deliberate pin (rig's own default is different).
 - `snippet_chars` (usize) — characters of a tool's output or arguments the summarizer sees. Unset = the rig default, `2000`.
 - `unknown_window_chars` (usize) — characters of conversation sent when the model window is unknown. Unset = the rig default, `400000`.
 - `keep_recent` (usize) — tokens of the newest messages an automatic compaction keeps verbatim, a quarter of the window at most. Unset = the rig default, `20000`.
 - `keep_asked` (usize) — tokens of the newest messages a compaction the user asked for keeps verbatim; the newest reply or message always stays. Unset = the rig default, `0`.
 - `clearing` — `keep_tokens` (tokens of the newest tool output kept) and `keep_under` (an output under this many tokens is never cleared). Unset = the rig defaults, `20000` / `500`.
-- `tracked` — one rule per entry: `tool`, `argument`, `set`. The set collects that argument of every matching call, and the summary carries it. Unset = the rig default, none.
+- `near_window` — what a compaction that runs near the window does with the outputs it clears: `"summarize"` writes notes on an output that cannot be had again, `"clear"` clears silently. Unset = the rig default, `"summarize"`.
+- `tracked` — one rule per entry: `tool`, `argument`, `set`. The set collects that argument of every matching call, and the summary carries it. Unset = our two built-in rules: `read` with `path` into `read-files`, and `edit` with `path` into `modified-files`. An explicit list wins verbatim, an empty list included.
 - `prompts` — the summarizer's six prompts: `system`, `initial`, `update`, `format`, `in_place`, `notes`. Unset = the rig defaults.
 
-Not yet configurable: `near_window` (rig's summarize-or-clear choice near the window) and a `/compact` focus (`/compact` args stay reserved). Both keep rig-memory's default, and neither has a config key.
+A `/compact` focus (`/compact` args) stays reserved: it has no config key and keeps rig-memory's default.
 
-`max_context_tokens` lives on the active model role, not in the `[compaction]` block, but it directly controls when compaction fires. Set it to match your model's actual context window.
+`max_context_tokens` lives on the active model role, not in the `[compaction]` block, but it is the window the model's input limit is read from; a model the catalog does not list has no known limit and never trips the trigger. Set it to match your model's actual context window.
 
-The summarizer model is the [`[models.light]`](#model-roles) role when that role is configured, else the active model. It is chosen once at startup and does not follow model switches: a mid-session switch changes the agent's model and the compaction threshold, not the summarizer. The compaction call is priced at the summarizer model's own rates. ACP sessions (`agent acp`) always summarize with the active model; the `[models.light]` selection applies to the plugin entry.
+The summarizer is the active model: every compaction call — the in-place summary, the near-window notes, and the summary asked on its own when the in-place request is impossible — runs on the model the turn sends to, and follows a mid-session model switch. The call is priced at that model's rates.
 
 ### Agents
 
@@ -1182,9 +1176,6 @@ model = "openai/gpt-4o"
 [models.heavy]
 model = "anthropic/claude-sonnet-4-6"
 max_context_tokens = 200000
-
-[models.light]
-model = "ollama/gemma4:31b"
 
 [providers.openai]
 api_key = "store:openai"

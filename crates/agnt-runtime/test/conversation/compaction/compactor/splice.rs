@@ -50,10 +50,6 @@ async fn assert_splice_and_undo(store: Arc<dyn Store>) -> Result<()> {
             .any(|(_, aside)| aside.kind == rig_memory::COMPACTED),
         "the splice must record a rig.compaction aside"
     );
-    assert!(
-        rig_memory::summary_state(&conversation).tracked.is_empty(),
-        "no track rules are configured, so the tracked set stays empty"
-    );
 
     // -- Exec: undo the compaction.
     let undone = rig_memory::undo_summary(&mut conversation, &*store, CONV, summary_author())?;
@@ -228,7 +224,7 @@ async fn compact_is_disabled_without_a_model_spec() -> Result<()> {
         stream_model(&["unused summary"]).erase(),
         bus,
         test_policy(),
-        resolve_model_spec("no-such-vendor", "m", Some(8_000), None),
+        resolve_model_spec("no-such-vendor", "m", Some(8_000), None, None),
     );
 
     // -- Exec

@@ -195,32 +195,6 @@ fn test_dispatch_config_theme_from_config() -> Result<()> {
 }
 
 #[test]
-fn test_dispatch_config_compaction_flags() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = parse_args(&["--proactive-threshold-pct", "0.5"])?;
-
-    // -- Exec
-    let config = extract_compaction_flags_from_clap(&args)?;
-
-    // -- Check
-    assert_eq!(config.proactive_threshold_pct, Some(0.5));
-    Ok(())
-}
-
-#[test]
-fn test_dispatch_config_compaction_defaults() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = parse_args(&[])?;
-
-    // -- Exec
-    let config = extract_compaction_flags_from_clap(&args)?;
-
-    // -- Check
-    assert_eq!(config.proactive_threshold_pct, None);
-    Ok(())
-}
-
-#[test]
 fn test_dispatch_config_store_type_from_flags() -> Result<()> {
     // -- Setup & Fixtures
     let cases = [

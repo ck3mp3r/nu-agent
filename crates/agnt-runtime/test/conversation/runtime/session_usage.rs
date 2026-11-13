@@ -179,12 +179,7 @@ async fn session_usage_survives_a_compaction() -> Result<()> {
     let before = fixture.runtime.session_usage();
     assert_eq!(before.input_tokens, 10, "the fixture must hold usage");
     assert!(
-        fixture
-            .runtime
-            .last_total_tokens
-            .lock()
-            .map(|tokens| tokens.is_some())
-            .unwrap_or(false),
+        fixture.runtime.meter.context_tokens().is_some(),
         "the fixture must hold a real token count for the compaction reset to clear"
     );
 
@@ -202,11 +197,7 @@ async fn session_usage_survives_a_compaction() -> Result<()> {
         "compaction must not touch the session-cumulative cells"
     );
     assert_eq!(
-        *fixture
-            .runtime
-            .last_total_tokens
-            .lock()
-            .map_err(|_| "token mutex poisoned")?,
+        fixture.runtime.meter.context_tokens(),
         None,
         "compaction must still reset the context token count"
     );

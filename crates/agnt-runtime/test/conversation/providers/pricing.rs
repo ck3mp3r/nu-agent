@@ -26,6 +26,7 @@ fn cache_row(
             limit: ModelLimit {
                 context: 128_000,
                 output: 4_096,
+                input: None,
             },
             cost: cost.map(|(input, output)| ModelCost {
                 input,

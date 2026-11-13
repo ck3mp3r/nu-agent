@@ -7,7 +7,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn test_utility_session_compaction_display_reports_the_resolved_policy() -> Result<()> {
     // -- Setup & Fixtures
-    let policy = agnt_runtime::rig_memory::CompactionPolicy {
+    let mut policy = agnt_runtime::rig_memory::CompactionPolicy {
         keep_recent: 5000,
         clearing: agnt_runtime::rig_memory::ClearToolOutputs {
             keep_tokens: 9000,
@@ -15,9 +15,11 @@ fn test_utility_session_compaction_display_reports_the_resolved_policy() -> Resu
         },
         ..Default::default()
     };
+    // The 32k budget is our deliberate pin (c5t 7eb115fe), not rig's default.
+    policy.summarizer.limits.summary_tokens = 32_000;
 
     // -- Exec
-    let lines = compaction_display(&policy);
+    let lines = compaction_display(&policy, agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT);
 
     // -- Check
     assert_eq!(
@@ -25,8 +27,8 @@ fn test_utility_session_compaction_display_reports_the_resolved_policy() -> Resu
         vec![
             "Compaction keep_recent: 5000".to_string(),
             "Compaction keep_asked: 0".to_string(),
-            "Compaction reserve: 16384".to_string(),
-            "Compaction summary_tokens: 12000".to_string(),
+            "Compaction reserve_pct: 20".to_string(),
+            "Compaction summary_tokens: 32000".to_string(),
             "Compaction keep_tokens: 9000".to_string(),
             "Compaction keep_under: 500".to_string(),
         ]

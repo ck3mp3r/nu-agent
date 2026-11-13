@@ -227,6 +227,7 @@ pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
         "gpt-4o",
         Some(200_000),
         Some(1_024),
+        None,
     )
 }
 
@@ -237,8 +238,7 @@ pub(super) fn test_compaction_config(
 ) -> crate::conversation::compaction::CompactionConfig {
     crate::conversation::compaction::CompactionConfig {
         compactor: test_compactor(bus.clone()),
-        threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
     }
 }
 

@@ -76,8 +76,8 @@ async fn worker_result_drains_queued_and_checks_compaction() -> Result<()> {
         "session.handle_outcome should be called"
     );
     assert_eq!(
-        ui_request.drain_queued_calls, 1,
-        "ui_request.drain_queued should be called"
+        ui_request.drain_queued_calls, 2,
+        "the result drains the queue, and the cycle's tail re-checks it"
     );
     Ok(())
 }

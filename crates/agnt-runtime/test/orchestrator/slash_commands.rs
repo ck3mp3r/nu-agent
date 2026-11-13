@@ -317,6 +317,32 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() -> TResu
 }
 
 #[tokio::test]
+async fn interactive_loop_routes_uncompact_slash_to_the_undo() -> TResult {
+    let bus = Bus::default();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        ..Default::default()
+    };
+    let ui = FakeInteractiveUi::with_prompts(&["/uncompact"]).with_bus(bus.clone());
+
+    let spawner = ui.make_event_spawner();
+    let (runtime, result) = drive_loop(
+        runtime,
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
+    )
+    .await;
+    let runtime = handed_back(runtime)?;
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
+
+    assert!(value.is_nothing());
+    assert_eq!(runtime.run_uncompact_calls, 1);
+    assert_eq!(runtime.run_compaction_calls, 0);
+    assert!(runtime.prompts.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn typed_compact_submit_triggers_compaction_path() -> TResult {
     let bus = Bus::default();
     let runtime = FakeRuntime {

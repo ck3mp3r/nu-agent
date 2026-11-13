@@ -24,24 +24,24 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn merge_cli_overrides_plugin_config() {
     let plugin = CompactionConfig {
-        proactive_threshold_pct: Some(0.85),
+        reserve_pct: Some(35),
         ..CompactionConfig::default()
     };
 
     let cli = CompactionConfig {
-        proactive_threshold_pct: None,
+        reserve_pct: None,
         ..CompactionConfig::default()
     };
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.proactive_threshold_pct, Some(0.85));
+    assert_eq!(merged.reserve_pct, Some(35));
 }
 
 #[test]
 fn merge_plugin_config_overrides_default() {
     let plugin = CompactionConfig {
-        proactive_threshold_pct: Some(0.9),
+        reserve_pct: Some(40),
         ..CompactionConfig::default()
     };
 
@@ -49,7 +49,7 @@ fn merge_plugin_config_overrides_default() {
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.proactive_threshold_pct, Some(0.9));
+    assert_eq!(merged.reserve_pct, Some(40));
 }
 
 #[test]
@@ -57,24 +57,24 @@ fn merge_default_used_when_no_config() {
     let cli = CompactionConfig::default();
     let merged = merge_compaction_configs(None, &cli);
 
-    assert!(merged.proactive_threshold_pct.is_none());
+    assert!(merged.reserve_pct.is_none());
 }
 
 #[test]
 fn full_precedence_default_then_plugin_then_cli() {
     let plugin = CompactionConfig {
-        proactive_threshold_pct: Some(0.70),
+        reserve_pct: Some(30),
         ..CompactionConfig::default()
     };
 
     let cli = CompactionConfig {
-        proactive_threshold_pct: Some(0.50),
+        reserve_pct: Some(10),
         ..CompactionConfig::default()
     };
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.proactive_threshold_pct, Some(0.50));
+    assert_eq!(merged.reserve_pct, Some(10));
 }
 
 // ── builtin_tool_definitions ─────────────────────────────────────────────────

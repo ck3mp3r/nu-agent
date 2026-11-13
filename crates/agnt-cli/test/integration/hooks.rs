@@ -72,6 +72,34 @@ fn hook_log_lines(log: &std::path::Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The hook log, once `ready` accepts it or the deadline passes.
+///
+/// The mode's exit drain is best-effort: a hook subprocess gets a short budget
+/// and may still be starting when the turn returns, so reading the log the
+/// instant the turn ends races the writer. Waiting for the effect separates a
+/// slow `nu` start from a hook that never ran — a hook that fails or never fires
+/// still fails at the deadline.
+///
+async fn wait_for_hook_lines(
+    log: &std::path::Path,
+    ready: impl Fn(&[String]) -> bool,
+) -> Vec<String> {
+    let deadline = std::time::Instant::now() + HOOK_LOG_DEADLINE;
+    loop {
+        let lines = hook_log_lines(log);
+        if ready(&lines) || std::time::Instant::now() >= deadline {
+            return lines;
+        }
+        tokio::time::sleep(HOOK_LOG_POLL).await;
+    }
+}
+
+/// How long the hook log has to show the effect the turn published.
+const HOOK_LOG_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How often the wait looks again.
+const HOOK_LOG_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
 // endregion: --- Test Support
 
 // region:    --- Tests
@@ -187,7 +215,11 @@ async fn test_integration_hooks_stderr_mode_runs_the_hook_script() -> Result<()>
     // runs (`run_single_turn` on this path, the worker router on the
     // interactive path) and the turn executor publishes `LifecycleEvent::TurnCompleted`
     // after it. The hook must observe both.
-    let lines = hook_log_lines(&log);
+    let lines = wait_for_hook_lines(&log, |lines| {
+        lines.iter().any(|line| line.contains("\"turn_started\""))
+            && lines.iter().any(|line| line.contains("\"turn_completed\""))
+    })
+    .await;
     assert!(
         lines.iter().any(|line| line.contains("\"turn_started\"")),
         "the hook must observe turn_started; got: {lines:?}"

@@ -1,9 +1,10 @@
-//! Shared fixtures for the integration-gated switch tests.
+//! Shared fixtures for the switch tests.
 //!
-//! These helpers need a provider state that can actually switch models, which
-//! means a startup plugin config and a resolved client — integration-level
-//! work. They live in their own module so the unit build, where no test
-//! consumes them, never sees them as dead code.
+//! These build a provider state that can actually switch models, which means a
+//! startup plugin config. The resolved provider is a name the models cache
+//! lists, so a switch changes the config without reaching a transport: the model
+//! builds at its next use, and only the test that drives that build constructs a
+//! client.
 
 use std::collections::HashMap;
 
@@ -13,8 +14,9 @@ use crate::config::PluginConfig;
 use crate::config::models_cache::{ModelLimit, ModelSpec, ProviderSpec};
 use crate::conversation::state::provider::ProviderState;
 
-/// One cache row for `model` with `context` as its context limit.
-pub(super) fn cache_row(model: &str, context: u32) -> (String, ModelSpec) {
+/// One cache row for `model` with `context` as its context limit and, when the
+/// row lists one, `input` as its input limit.
+pub(super) fn cache_row(model: &str, context: u32, input: Option<u32>) -> (String, ModelSpec) {
     (
         model.to_string(),
         ModelSpec {
@@ -24,6 +26,7 @@ pub(super) fn cache_row(model: &str, context: u32) -> (String, ModelSpec) {
             limit: ModelLimit {
                 context,
                 output: 500,
+                input,
             },
             cost: None,
             modalities: None,
@@ -42,33 +45,45 @@ pub(super) fn two_limit_cache() -> crate::config::ModelsCache {
                 name: "ollama".to_string(),
                 env: Vec::new(),
                 api: None,
-                models: HashMap::from([cache_row("small", 1_000), cache_row("large", 2_000)]),
+                models: HashMap::from([
+                    cache_row("small", 1_000, None),
+                    cache_row("large", 2_000, None),
+                ]),
             },
         )]),
+    }
+}
+
+/// The startup plugin config that carries [`two_limit_cache`].
+pub(super) fn two_limit_plugin_config() -> PluginConfig {
+    PluginConfig {
+        models_cache: Some(two_limit_cache()),
+        ..PluginConfig::default()
     }
 }
 
 /// A runtime whose provider resolves model limits from [`two_limit_cache`].
 ///
 /// The provider carries the startup plugin config, so `ModelSwitching`'s
-/// `switch_model` resolves and applies a new model. Ollama needs no
-/// credentials, so the resolved provider builds a client without touching a
-/// keychain or a network.
+/// `switch_model` resolves and applies a new model. The provider has no cached
+/// client: a switch leaves the model stale, and only a test that drives the
+/// model's next use asks for a client.
 pub(super) fn fixture_with_two_limits() -> Result<RuntimeFixture> {
     let mut fixture = make_runtime(text_model("unused"))?;
-    let plugin_config = PluginConfig {
-        models_cache: Some(two_limit_cache()),
-        ..PluginConfig::default()
-    };
-    fixture.runtime.provider = ProviderState::new(runtime_config(), Some(plugin_config));
+    fixture.runtime.provider =
+        ProviderState::new(runtime_config(), Some(two_limit_plugin_config()));
     Ok(fixture)
 }
 
-/// Record `consumed` tokens as the session's last completion count.
+/// Record `consumed` tokens as the meter's last reported context count.
+///
+/// The model-switch gate reads that count. A `None` count records nothing, so
+/// the gate reads no reported count — the unknown-count case.
 pub(super) fn set_consumed(fixture: &RuntimeFixture, consumed: Option<u64>) {
-    *fixture
-        .runtime
-        .last_total_tokens
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = consumed;
+    if let Some(consumed) = consumed {
+        fixture
+            .runtime
+            .meter
+            .record_usage(rig::completion::Usage::new().input_tokens(consumed));
+    }
 }

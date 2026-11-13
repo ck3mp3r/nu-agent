@@ -136,7 +136,6 @@ impl ModelSwitching for LongRunningAgentRuntime {
 impl SessionState for LongRunningAgentRuntime {
     fn clear_session(&mut self) {}
     fn new_session(&mut self) {}
-    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
 }
 impl SessionPersistence for LongRunningAgentRuntime {}
 // The picker reader defaults to an empty catalog: the fixture holds no persona

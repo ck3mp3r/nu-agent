@@ -2,7 +2,8 @@
 //!
 //! The browse loop is a bare `std::thread`, so the mechanism under test is the
 //! sync/async boundary itself — `Handle::block_on` into a runtime the thread
-//! does not own, over a client it did not build.
+//! does not own, over a client it did not build. The per-URL state over that
+//! fetch lives in `state`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,6 +12,13 @@ use crate::A2aError;
 use crate::client::A2aHttpClient;
 
 use super::{CARD_FETCH_TIMEOUT, fetch_card};
+
+// region:    --- Modules
+
+#[path = "browser/state.rs"]
+mod state;
+
+// endregion: --- Modules
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -107,7 +115,9 @@ fn fetch_card_resolves_through_the_handed_down_client_and_handle() -> Result<()>
     .map_err(|_| "the browse thread should not panic")?;
 
     // -- Check
-    let fetched = fetched.ok_or("the handed-down client should resolve the card")?;
+    let fetched = fetched
+        .ok()
+        .ok_or("the handed-down client should resolve the card")?;
     assert_eq!(fetched.name, "handed-down");
     let calls = client.calls();
     assert_eq!(calls.len(), 1, "exactly one GET: {calls:?}");
@@ -124,9 +134,10 @@ fn fetch_card_resolves_through_the_handed_down_client_and_handle() -> Result<()>
     Ok(())
 }
 
-/// A failed fetch is a peer without a card, not a lost peer.
+/// A failed fetch is a peer without a card, not a lost peer: the reason is
+/// returned for the caller to weigh, and no card is invented.
 #[test]
-fn fetch_card_returns_none_when_the_transport_fails() -> Result<()> {
+fn fetch_card_returns_the_reason_when_the_transport_fails() -> Result<()> {
     // -- Setup & Fixtures
     let runtime = owning_runtime()?;
     let handle = runtime.handle().clone();
@@ -138,10 +149,15 @@ fn fetch_card_returns_none_when_the_transport_fails() -> Result<()> {
         .map_err(|_| "the browse thread should not panic")?;
 
     // -- Check
-    assert!(fetched.is_none(), "a failed fetch must not invent a card");
+    let reason = fetched
+        .err()
+        .ok_or("a failed fetch must not invent a card")?;
+    assert!(
+        reason.starts_with("connection error:"),
+        "the reason names the transport failure: {reason}"
+    );
     Ok(())
 }
-
 /// A client whose GET fails the way a refused connection does.
 #[derive(Clone)]
 struct NoBodyClient;

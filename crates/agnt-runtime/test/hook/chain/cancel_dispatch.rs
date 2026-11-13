@@ -105,14 +105,14 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: MockCompletionModel::default().erase(),
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     )
 }

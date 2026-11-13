@@ -12,14 +12,6 @@ pub trait SessionState {
 
     /// Start a new session.
     fn new_session(&mut self) {}
-
-    /// Seed `MemoryState.last_total_tokens` from a loaded session so that
-    /// compaction can fire on the first turn after a session resume.
-    ///
-    /// Called by `Loop::hydrate`
-    /// immediately after the UI transcript hydration. A no-op for test runtimes
-    /// that do not have a `MemoryState`.
-    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
 }
 
 /// Async session persistence I/O — load and list sessions from a store.
@@ -56,6 +48,19 @@ pub trait SessionPersistence {
     /// compaction logic, emitting `Started`/`SummaryChunk`/`Completed`/`Failed`
     /// events on the bus. A no-op for runtimes without a persistent session.
     fn run_compaction(
+        &mut self,
+        _source: CompactionSource,
+    ) -> impl std::future::Future<Output = Result<(), String>> + Send {
+        async move { Ok(()) }
+    }
+
+    /// Undo the newest compaction of the current session.
+    ///
+    /// Restores the entries that compaction replaced from the session's own
+    /// log, emitting `Uncompacted` on the record stream and the spine, or a
+    /// warning notice when there is nothing to undo. A no-op for runtimes
+    /// without a persistent session.
+    fn uncompact(
         &mut self,
         _source: CompactionSource,
     ) -> impl std::future::Future<Output = Result<(), String>> + Send {

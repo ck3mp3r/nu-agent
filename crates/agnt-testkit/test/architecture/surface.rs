@@ -37,6 +37,18 @@ const SELF_USED: &str =
 /// The same item, reached by another crate through the crate path.
 const CONSUMER_SOURCE: &str = "fn call() -> usize {\n    agnt_runtime::lonely()\n}\n";
 
+/// A consumer that reaches the item only through a method receiver: the call
+/// names the method, and no crate path appears in it.
+const METHOD_CALL_SOURCE: &str = "fn call(rig: &Rig) -> usize {\n    rig.lonely()\n}\n";
+
+/// A consumer that reads a field of the same name and never calls it.
+const FIELD_ONLY_SOURCE: &str = "fn call(rig: &Rig) -> usize {\n    rig.lonely\n}\n";
+
+/// The publisher calling its own item through a receiver: same crate, so it is
+/// not evidence of a consumer anywhere else.
+const SELF_CALL_SOURCE: &str =
+    "pub fn lonely() -> usize {\n    0\n}\n\nfn call(rig: &Rig) -> usize {\n    rig.lonely()\n}\n";
+
 /// A `pub` type with a `pub` member nothing outside its crate reaches.
 const MEMBER_LONELY: &str =
     "pub struct Thing;\n\nimpl Thing {\n    pub fn solo() -> usize {\n        0\n    }\n}\n";
@@ -155,6 +167,73 @@ fn test_surface_arch_6_public_surface_census_keeps_a_self_used_item() -> Result<
 
     // -- Check
     assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].site, "agnt-runtime/src/mod.rs:1");
+    Ok(())
+}
+
+/// WHEN another crate calls the item through a method receiver, THEN the census
+/// SHALL count that call as a consumer: `self.rig.open(id)` names `open` in a
+/// field expression, which the path walk never sees.
+#[test]
+fn test_surface_arch_6_public_surface_census_counts_a_method_call_receiver() -> Result<()> {
+    // -- Setup & Fixtures
+    let root = support::fixture_root("arch-6-method-receiver")?;
+    support::write_source(&root, PUBLISHER, SOURCE, LONELY)?;
+    support::write_source(&root, CONSUMER, SOURCE, METHOD_CALL_SOURCE)?;
+    let ws = Workspace::from_root(&root)?;
+
+    // -- Exec
+    let found = arch_6_public_surface_consumer_census(&ws);
+
+    // -- Check
+    assert!(
+        found.is_empty(),
+        "a receiver call consumes the name: {found:#?}"
+    );
+    Ok(())
+}
+
+/// WHEN another crate only reads a field of the same name, THEN the row SHALL
+/// stay: a field access is not a call, and the census counts calls.
+#[test]
+fn test_surface_arch_6_public_surface_census_keeps_a_field_that_is_never_called() -> Result<()> {
+    // -- Setup & Fixtures
+    let root = support::fixture_root("arch-6-method-field-only")?;
+    support::write_source(&root, PUBLISHER, SOURCE, LONELY)?;
+    support::write_source(&root, CONSUMER, SOURCE, FIELD_ONLY_SOURCE)?;
+    let ws = Workspace::from_root(&root)?;
+
+    // -- Exec
+    let found = arch_6_public_surface_consumer_census(&ws);
+
+    // -- Check
+    assert_eq!(found.len(), 1, "a field read is not a call: {found:#?}");
+    assert_eq!(found[0].site, "agnt-runtime/src/mod.rs:1");
+    Ok(())
+}
+
+/// WHEN only the declaring crate calls the item through a receiver, THEN the row
+/// SHALL stay: cross-crate is the law, and a self-call is not a consumer.
+///
+/// The two cross-crate tests cannot catch a self-include: they put a second
+/// crate in the fixture, so a key mismatch would still see a real consumer. This
+/// fixture has one crate only.
+#[test]
+fn test_surface_arch_6_public_surface_census_keeps_an_item_only_its_crate_calls() -> Result<()> {
+    // -- Setup & Fixtures
+    let root = support::fixture_root("arch-6-self-call")?;
+    support::write_source(&root, PUBLISHER, SOURCE, SELF_CALL_SOURCE)?;
+    let ws = Workspace::from_root(&root)?;
+
+    // -- Exec
+    let found = arch_6_public_surface_consumer_census(&ws);
+
+    // -- Check
+    assert_eq!(
+        found.len(),
+        1,
+        "a self-call must not consume the row: {found:#?}"
+    );
     assert_eq!(found[0].site, "agnt-runtime/src/mod.rs:1");
     Ok(())
 }

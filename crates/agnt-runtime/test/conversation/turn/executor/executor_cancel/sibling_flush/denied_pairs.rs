@@ -51,6 +51,7 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
         &mut memory_state,
         ToolInfra {
             store_latch: Default::default(),
+            pending_summary: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,
@@ -59,7 +60,7 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
             doom_state: default_doom_state(),
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
-            last_total_tokens: default_last_total_tokens(),
+            meter: default_meter(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,
@@ -219,6 +220,7 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
         &mut memory_state,
         ToolInfra {
             store_latch: Default::default(),
+            pending_summary: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,
@@ -235,7 +237,7 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
             doom_state: default_doom_state(),
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
-            last_total_tokens: default_last_total_tokens(),
+            meter: default_meter(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,

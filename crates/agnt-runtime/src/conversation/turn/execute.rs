@@ -234,10 +234,11 @@ where
             conversation_id: ctx.conversation.conversation_id.clone(),
             compaction: ctx.conversation.compaction.clone(),
             model: dyn_model.clone(),
-            last_total_tokens: ctx.tool_infra.last_total_tokens.clone(),
+            meter: ctx.tool_infra.meter.clone(),
             turn_usage: ctx.tool_infra.turn_usage.clone(),
             session_usage: ctx.tool_infra.session_usage.clone(),
             store_latch: Arc::clone(&ctx.tool_infra.store_latch),
+            pending_summary: ctx.tool_infra.pending_summary.clone(),
         },
     );
 
@@ -325,7 +326,12 @@ where
     log::info!("execute_turn: awaiting agent completion");
 
     // Collect the result from the spawned task
-    let join_result = prompt_handle.await.map_err(|e| {
+    let joined = prompt_handle.await;
+    // The turn-end sweep: the summary slot is per turn, so nothing it stashed
+    // outlives this one — a cancelled turn leaves no plan for the next turn's
+    // first completion to answer.
+    ctx.tool_infra.pending_summary.clear();
+    let join_result = joined.map_err(|e| {
         log::error!("Agent task panicked: {e}");
         let err = TurnError::CompletionFailed {
             msg: format!("Agent task panicked: {e}"),
@@ -500,6 +506,11 @@ where
     // Why a guard or the user stops the run: the hook records the cause, and the
     // executor reads it after the run to narrate and steer the stop.
     let stop_ledger = hook.stop_ledger();
+    // The compaction slot and the meter: read between the two runs, when the
+    // patched call's reply becomes the conversation's summary or the outputs a
+    // clearing dropped are written out.
+    let pending = hook.pending_summary();
+    let meter = hook.meter();
     let mut builder = rig::agent::AgentBuilder::new(dyn_model)
         .add_hook(hook)
         .dynamic_tools(proxy_tools);
@@ -526,20 +537,71 @@ where
     }
     let agent = builder.build();
 
-    let stream = agent
-        .prompt(prompt)
-        .max_turns(effective_max_turns as usize)
-        .max_invalid_tool_call_retries(3)
-        .stream();
+    // The turn runs at most twice: when the patched call answered with a
+    // summary, the between-runs splice lands it in the store and the second run
+    // answers the turn against the summarized context. The agent is reusable: a
+    // second prompt loads the conversation before its run, so it sent what the
+    // splice wrote.
+    let mut pass = 1u8;
+    let result = loop {
+        let stream = agent
+            .prompt(prompt.clone())
+            .max_turns(effective_max_turns as usize)
+            .max_invalid_tool_call_retries(3)
+            .stream();
 
-    let result = drive_stream(
-        stream,
-        bus,
-        cancel_grace,
-        pre_turn_message_count,
-        stop_ledger,
-    )
-    .await?;
+        let result = drive_stream(
+            stream,
+            bus.clone(),
+            cancel_grace,
+            pre_turn_message_count,
+            stop_ledger.clone(),
+        )
+        .await?;
+
+        // The splice slot: pass one's run ended, so the store holds its exchange,
+        // and this write is what the next run loads. A cancelled turn gets no
+        // second run, and the turn-end sweep clears the slots. A clearing comes
+        // first: the summary then builds on the cleared conversation.
+        if pass == 1 && !result.cancelled {
+            let mut spliced = false;
+            if let Some(supersede) = pending.take_settled() {
+                if let (Some(store), Some(log)) = (&state_store, &state_session) {
+                    crate::conversation::compaction::supersede::land(
+                        supersede,
+                        Arc::clone(store),
+                        log.clone(),
+                        bus.stream(),
+                        bus.lifecycle(),
+                    )
+                    .await;
+                    // The splice rewrote the context the metered request
+                    // described, so the anchor no longer describes the next
+                    // request.
+                    meter.reset();
+                }
+                spliced = true;
+            } else if let Some(clearance) = pending.take_clear() {
+                if let (Some(store), Some(log)) = (&state_store, &state_session) {
+                    crate::conversation::compaction::cleared::land(
+                        clearance,
+                        Arc::clone(store),
+                        log.clone(),
+                        bus.stream(),
+                        bus.lifecycle(),
+                    )
+                    .await;
+                    meter.reset();
+                }
+                spliced = true;
+            }
+            if spliced {
+                pass = 2;
+                continue;
+            }
+        }
+        break result;
+    };
 
     // rig saved the conversation at run end. Write the host-owned state records
     // and refresh the listing, so `SavedAgent::model()`/`title()` and the session

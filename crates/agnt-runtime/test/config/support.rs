@@ -46,6 +46,7 @@ pub(super) fn plugin_config_with_cache() -> PluginConfig {
                     limit: crate::config::models_cache::ModelLimit {
                         context: 128000,
                         output: 4096,
+                        input: None,
                     },
                     cost: None,
                     modalities: None,

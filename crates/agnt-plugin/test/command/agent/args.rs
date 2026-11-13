@@ -2,8 +2,6 @@ use super::args::extract_agent_flags;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{Span, Spanned, Value};
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
 // Helper to create an EvaluatedCall with specific flags
 fn mock_call_with_flags(agent: Option<&str>, name: Option<&str>) -> EvaluatedCall {
     let span = Span::test_data();
@@ -72,45 +70,4 @@ fn extract_agent_flags_neither() {
 
     assert_eq!(agent, None);
     assert_eq!(name, None);
-}
-
-// --- extract_compaction_flags ---
-
-use super::args::extract_compaction_flags;
-
-fn mock_call_with_compaction_flags(proactive_pct: Option<f64>) -> EvaluatedCall {
-    let span = Span::test_data();
-    let mut named: Vec<(Spanned<String>, Option<Value>)> = Vec::new();
-
-    if let Some(p) = proactive_pct {
-        named.push((
-            Spanned {
-                item: "proactive-threshold-pct".to_string(),
-                span,
-            },
-            Some(Value::float(p, span)),
-        ));
-    }
-
-    EvaluatedCall {
-        head: span,
-        positional: vec![],
-        named,
-    }
-}
-
-#[test]
-fn extract_compaction_flags_provided() -> Result<()> {
-    let call = mock_call_with_compaction_flags(Some(0.75));
-    let result = extract_compaction_flags(&call).map_err(|e| format!("{e:?}"))?;
-    assert_eq!(result.proactive_threshold_pct, Some(0.75));
-    Ok(())
-}
-
-#[test]
-fn extract_compaction_flags_none_provided() -> Result<()> {
-    let call = mock_call_with_compaction_flags(None);
-    let result = extract_compaction_flags(&call).map_err(|e| format!("{e:?}"))?;
-    assert!(result.proactive_threshold_pct.is_none());
-    Ok(())
 }

@@ -142,6 +142,37 @@ fn hydration_compaction_empty_summary_shows_block_only() {
 }
 
 #[test]
+fn uncompacted_record_closes_the_block_and_reports_the_undo() {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
+    coordinator.fold_record(&SessionRecord::Compaction(CompactionRecord::Started {
+        source: CompactionSource::Manual,
+    }));
+    coordinator.fold_record(&SessionRecord::Compaction(CompactionRecord::Uncompacted {
+        source: CompactionSource::Manual,
+    }));
+
+    // -- Check
+    let texts: Vec<String> = coordinator
+        .state()
+        .transcript
+        .entries()
+        .iter()
+        .map(entry_text)
+        .collect();
+    assert!(
+        texts.iter().any(|text| text.contains("Compaction undone")),
+        "the undo must leave a notice row, got: {texts:?}"
+    );
+    assert!(
+        !coordinator.state().compaction.in_progress(),
+        "the undone block must not stay in progress: {texts:?}"
+    );
+}
+
+#[test]
 fn hydration_compaction_matches_live_rendering() {
     let summary_body = "## Summary\n- alpha\n- beta";
 

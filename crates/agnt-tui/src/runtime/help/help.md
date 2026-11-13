@@ -37,8 +37,7 @@
 - Suggestions are non-modal and independent of the command palette popup/table/state.
 - If the slash prefix is removed, suggestions close cleanly without falling back to command palette.
 - Up/Down selects a suggestion; `Enter` submits the selected slash command.
-- Supported commands: `/compact`, `/mcp`, `/help`, `/status`.
-- Supported commands: `/compact`, `/mcp`, `/help`, `/status`, `/models`, `/skills`.
+- Supported commands: `/compact`, `/uncompact`, `/mcp`, `/help`, `/status`, `/models`, `/agent`, `/new`, `/session`, `/theme`, `/skills`.
 - `/help`, `/status`, and `/mcp` map to the same handlers as Ctrl-P actions.
 - `/models` and Ctrl-P `Models` use the same shared model-picker action path.
 - Unknown slash commands warn deterministically and continue the loop.
@@ -56,6 +55,7 @@
 
 - `/compact` runs immediate force compaction and bypasses threshold gating.
 - `/compact` uses the same compaction execution path as auto-threshold compaction.
+- `/uncompact` restores what the most recent compaction replaced; with nothing to undo it warns and nothing changes.
 - Unknown slash commands show a warning and continue the loop.
 - Slash command text is handled by the runtime and is not sent to the LLM.
 - Slash command text is not echoed into the transcript; only resulting artifacts (for example compaction summary output) may appear.
@@ -77,24 +77,27 @@
 
 # Compaction
 
-Auto compaction fires when the conversation reaches `proactive_threshold_pct` (default: 0.80) of the model's context window.
+Auto compaction fires when the next request would exceed the room `reserve_pct` keeps free: 20% of the model's input limit (unset) or the percent you set.
 
-These fields mirror rig-memory's own policy. Each is optional, and unset = the rig default:
+These fields mirror rig-memory's own policy, except `reserve_pct`, which is ours. Each is optional, and unset = the rig default, except `reserve_pct` and `summary_tokens`:
 
 - `keep_recent` — tokens of the newest messages an automatic compaction keeps verbatim (unset = the rig default, 20000 tokens, a quarter of the window at most).
 - `keep_asked` — tokens of the newest messages an asked compaction keeps verbatim (unset = the rig default, 0 tokens).
 - `clearing.keep_tokens` / `clearing.keep_under` — the newest tool output kept, and the size under which an output is never cleared (unset = the rig defaults, 20000 / 500).
-- `reserve` — tokens kept free below the model's window (unset = the rig default, 16384).
-- `summary_tokens` — the longest summary asked for, in tokens (unset = the rig default, 12000).
+- `near_window` — what a near-window compaction does with the outputs it clears: `"summarize"` writes notes on an output that cannot be had again, `"clear"` clears silently (unset = the rig default, `"summarize"`).
+
+Near-window clearing keeps the turn when it frees too little of the room, or when the outputs it would drop cannot be had again and their notes cannot be written.
+- `reserve_pct` — percent of the model's input limit kept free below the trigger, 0-100, derived on every decision from the turn's own model (unset = 20, ours).
+- `summary_tokens` — the longest summary asked for, in tokens (unset = 32000 — ours, a deliberate pin).
 - `snippet_chars` — characters of a tool's output or arguments the summarizer sees (unset = the rig default, 2000).
 - `unknown_window_chars` — characters of conversation sent when the model window is unknown (unset = the rig default, 400000).
-- `tracked` / `prompts` — advanced: the tool arguments a summary tracks, and the summarizer's six prompts (unset = the rig defaults).
+- `tracked` / `prompts` — advanced: the tool arguments a summary tracks — unset = our two built-in rules, `read` with `path` into `read-files` and `edit` with `path` into `modified-files` (an explicit list wins verbatim, an empty list included) — and the summarizer's six prompts (unset = the rig defaults).
 
 Use `/compact` to trigger compaction immediately; it bypasses threshold gating. `/compact` args are reserved for a future focus option.
 
 # Auto compaction behavior
 
-- Auto compaction fires once the conversation reaches `proactive_threshold_pct` of the context window.
+- Auto compaction fires once the next request would exceed the room `reserve` keeps free below the model's input limit.
 - Manual and auto compaction share one execution path.
 - Old tool outputs are cleared before the summary is asked for; error results and small outputs stay.
 - The newest messages stay verbatim within the keep budget, and the older ones become the summary.
@@ -105,6 +108,8 @@ Use `/compact` to trigger compaction immediately; it bypasses threshold gating. 
 - Compaction updates are persisted to the session's rig-memory log.
 - The persisted update is the compacted message set; the next run loads it.
 - Compaction emits a transcript-visible summary artifact including source and summarized/kept counts.
+- The `/uncompact` artifact (`Uncompacted`) carries the source of the command that asked for it — `manual`, the only uncompact source.
+- The restored aside in the transcript holds no compaction source of its own; the `Uncompacted` record is where the asking source travels.
 
 # Troubleshooting
 

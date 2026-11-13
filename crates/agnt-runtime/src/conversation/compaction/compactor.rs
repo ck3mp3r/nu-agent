@@ -8,19 +8,20 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::bus::Bus;
-use crate::config::{Config, defaults};
+use crate::config::{Config, PluginConfig, defaults};
 use crate::session::MemoryError;
 use crate::types::Message;
 
-use agnt_kernel::bus::{LifecycleEvent, NarrationEvent};
-use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
+use agnt_kernel::CompactionSource;
 
-use futures::StreamExt;
 use rig::DynModel;
-use rig::catalog::ModelSpec;
+use rig::catalog::{Catalog, ModelSpec};
+use rig::completion::CompletionRequest;
 use rig::operation::Completion;
 use rig::providers::registry::{Format, ProviderId};
-use rig_memory::{CompactReason, CompactionPolicy, Summarizer, SummaryPlan, summary_author};
+use rig_memory::{CompactReason, CompactionPolicy, SummaryPlan, summary_author};
+
+use super::engine::{self, Chunks};
 
 /// What a compaction that ran left behind.
 #[derive(Debug, Clone)]
@@ -39,11 +40,15 @@ pub struct CompactionOutcome {
 /// catalog-only id. A name that resolves to neither disables compaction for the
 /// session — the spec is never mislabelled with an arbitrary registered
 /// provider.
+///
+/// `max_input_tokens` is the most one request may send, when a row lists it
+/// apart from the window; rig's `input_limit()` reads it before the window.
 pub fn resolve_model_spec(
     provider: &str,
     model: &str,
     context_window: Option<u32>,
     max_output_tokens: Option<u32>,
+    max_input_tokens: Option<u32>,
 ) -> Option<ModelSpec> {
     let Some(id) =
         ProviderId::new(provider, Format::OpenAi).or_else(|| ProviderId::catalog(provider))
@@ -61,6 +66,9 @@ pub fn resolve_model_spec(
     if let Some(tokens) = max_output_tokens {
         spec = spec.with_max_output_tokens(tokens);
     }
+    if let Some(tokens) = max_input_tokens {
+        spec = spec.with_max_input_tokens(tokens);
+    }
     Some(spec)
 }
 
@@ -69,8 +77,12 @@ pub fn resolve_model_spec(
 /// The one-call form of [`resolve_model_spec`]: it maps the config's provider
 /// key through its declared rig impl — the vendor the wire reports — and sizes
 /// the window from the config's own limits, so a call site cannot forget the
-/// mapping.
-pub fn resolve_model_spec_for(config: &Config) -> Option<ModelSpec> {
+/// mapping. The input limit comes from `plugin_config`'s models cache, through
+/// `input_limit_for`.
+pub fn resolve_model_spec_for(
+    config: &Config,
+    plugin_config: Option<&PluginConfig>,
+) -> Option<ModelSpec> {
     let vendor = config.provider_impl.as_deref().unwrap_or(&config.provider);
     let context_window = config
         .model_context_tokens
@@ -81,7 +93,33 @@ pub fn resolve_model_spec_for(config: &Config) -> Option<ModelSpec> {
         &config.model,
         u32::try_from(context_window).ok(),
         config.max_output_tokens,
+        input_limit_for(vendor, config, plugin_config),
     )
+}
+
+/// The most input tokens one request may send to the model `config` names,
+/// from the row that lists it.
+///
+/// A model rig's built-in catalog files keeps the catalog's fact: the cache row
+/// is not consulted for it, so an upstream `max_input_tokens` (or its absence)
+/// stands. Any other model reads `limit.input` from `plugin_config`'s models
+/// cache row for the config's own cache section, `None` when the row does not
+/// list it or no cache is loaded.
+fn input_limit_for(
+    vendor: &str,
+    config: &Config,
+    plugin_config: Option<&PluginConfig>,
+) -> Option<u32> {
+    let id = ProviderId::new(vendor, Format::OpenAi).or_else(|| ProviderId::catalog(vendor))?;
+    if let Some(builtin) = Catalog::builtin().get(id, &config.model) {
+        return builtin.spec.max_input_tokens;
+    }
+    plugin_config?
+        .models_cache
+        .as_ref()?
+        .get_spec(config.cache_section(), &config.model)?
+        .limit
+        .input
 }
 
 /// A compactor that summarizes a conversation's older messages with the LLM and
@@ -90,9 +128,12 @@ pub fn resolve_model_spec_for(config: &Config) -> Option<ModelSpec> {
 /// The model is held as `Arc<Mutex<DynModel<Completion>>>` so it can be swapped
 /// at runtime via `set_model()` — `DynModel` is rig's erased, cloneable model
 /// handle, so the concrete type stays fixed regardless of provider. The model is
-/// constructed eagerly at startup and never empty.
+/// constructed eagerly at startup and never empty; the runtime shares its own
+/// cell, so a model rebuilt after a switch reaches `compact()` as well.
 ///
-/// A `None` spec means the configured provider resolved to no rig provider id:
+/// The planning spec is held the same way, through `set_spec()`: it follows the
+/// active model, so a switched-to model is planned against its own window. A
+/// `None` spec means the configured provider resolved to no rig provider id:
 /// compaction is disabled for the session, and `compact()` emits
 /// `CompactionRecord::Failed` and returns `Err` rather than reporting a silent
 /// success.
@@ -100,7 +141,7 @@ pub struct NuCompactor {
     model: Arc<Mutex<DynModel<Completion>>>,
     bus: Bus,
     policy: CompactionPolicy,
-    spec: Option<ModelSpec>,
+    spec: Arc<Mutex<Option<ModelSpec>>>,
 }
 
 impl Clone for NuCompactor {
@@ -109,7 +150,7 @@ impl Clone for NuCompactor {
             model: Arc::clone(&self.model),
             bus: self.bus.clone(),
             policy: self.policy.clone(),
-            spec: self.spec.clone(),
+            spec: Arc::clone(&self.spec),
         }
     }
 }
@@ -126,7 +167,7 @@ impl NuCompactor {
             model: Arc::new(Mutex::new(model)),
             bus,
             policy,
-            spec,
+            spec: Arc::new(Mutex::new(spec)),
         }
     }
 
@@ -146,7 +187,7 @@ impl NuCompactor {
             model: model_arc,
             bus,
             policy,
-            spec,
+            spec: Arc::new(Mutex::new(spec)),
         }
     }
 
@@ -159,6 +200,16 @@ impl NuCompactor {
         *self.lock_model() = model;
     }
 
+    /// Set the planning spec `compact()` sizes its summary against.
+    ///
+    /// The spec follows the active model: the caller re-resolves it whenever it
+    /// builds a model ([`ModelSlot::ensure`](super::super::state::provider::ModelSlot)),
+    /// so a switched-to model is planned against its own window instead of the
+    /// one the session started on. `None` disables compaction for the session.
+    pub fn set_spec(&self, spec: Option<ModelSpec>) {
+        *self.lock_spec() = spec;
+    }
+
     /// The policy this compactor plans with.
     pub fn policy(&self) -> &CompactionPolicy {
         &self.policy
@@ -166,8 +217,8 @@ impl NuCompactor {
 
     /// The spec this compactor plans against, `None` when compaction is
     /// disabled for the session.
-    pub fn spec(&self) -> Option<&ModelSpec> {
-        self.spec.as_ref()
+    pub fn spec(&self) -> Option<ModelSpec> {
+        self.lock_spec().clone()
     }
 
     /// The model this compactor summarizes with, cloned from the shared slot.
@@ -182,6 +233,11 @@ impl NuCompactor {
     /// The shared model slot, recovered if a swap panicked mid-write.
     fn lock_model(&self) -> MutexGuard<'_, DynModel<Completion>> {
         self.model.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The shared planning spec, recovered if a swap panicked mid-write.
+    fn lock_spec(&self) -> MutexGuard<'_, Option<ModelSpec>> {
+        self.spec.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Compact `conversation_id` in `store` for `reason`.
@@ -202,7 +258,8 @@ impl NuCompactor {
         reason: &CompactReason,
         source: CompactionSource,
     ) -> Result<Option<CompactionOutcome>, MemoryError> {
-        let Some(spec) = self.spec.as_ref() else {
+        let spec = self.spec();
+        let Some(spec) = spec.as_ref() else {
             let message =
                 "Compaction is disabled: the session's provider resolved to no rig provider id"
                     .to_string();
@@ -263,16 +320,7 @@ impl NuCompactor {
 
         // Announce start before the slow summarizer LLM call so the status
         // spinner turns on immediately.
-        let _ = self
-            .bus
-            .stream()
-            .publish(SessionRecord::Compaction(CompactionRecord::Started {
-                source,
-            }));
-        let _ = self
-            .bus
-            .lifecycle()
-            .publish(LifecycleEvent::CompactionStarted { source });
+        self.emit_started(source).await;
 
         let summary = self.stream_summary(&plan, source).await?;
 
@@ -311,115 +359,16 @@ impl NuCompactor {
     ) -> Result<String, MemoryError> {
         // Lock the shared model and clone it so the LLM call runs against a
         // stable model; a concurrent `set_model()` then only affects the next
-        // call. The model is constructed eagerly at startup, so it is always
-        // present here.
-        let model = self.lock_model().clone();
-
-        // `DynModel::stream` opens the reply synchronously; a failure to open
-        // (transport, auth, malformed request) surfaces here rather than as a
-        // stream item.
-        let stream = match model.stream(plan.request.clone()) {
-            Ok(stream) => stream,
-            Err(e) => {
-                let message = format!("Compaction stream error: {e}");
-                self.emit_failed(source, &message).await;
-                return Err(MemoryError::backend(message));
-            }
-        };
-
-        let mut stream = std::pin::pin!(stream);
-        let mut aggregated = String::new();
-        let mut cancel_rx = self.bus.cancel().subscribe();
-
-        loop {
-            tokio::select! {
-                item = stream.next() => {
-                    match item {
-                        Some(Ok(chunk)) => match chunk {
-                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Text {
-                                text,
-                                ..
-                            }) => {
-                                aggregated.push_str(&text);
-                                let _ = self.bus.stream().publish(SessionRecord::Compaction(
-                                    CompactionRecord::SummaryChunk {
-                                        source,
-                                        delta: text.clone(),
-                                        aggregated: aggregated.clone(),
-                                    },
-                                ));
-                                let _ = self.bus.narration().publish(
-                                    NarrationEvent::CompactionSummaryChunk {
-                                        source,
-                                        delta: text,
-                                        aggregated: aggregated.clone(),
-                                    },
-                                );
-                            }
-                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Reasoning {
-                                ..
-                            }) => {
-                                // Reasoning is not summary content. Log it for
-                                // observability but do not append it to the summary.
-                                log::debug!(
-                                    "Compaction stream produced reasoning chunk (not summary content): {chunk:?}"
-                                );
-                            }
-                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Start {
-                                ..
-                            }) => {
-                                log::trace!("Compaction stream part started: {chunk:?}");
-                            }
-                            rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
-                                content: crate::types::AssistantContent::ToolCall(_),
-                                ..
-                            })
-                            | rig::streaming::Item::Event(
-                                rig::streaming::StreamEvent::Arguments { .. },
-                            ) => {
-                                let message = "Unexpected tool call during compaction".to_string();
-                                self.emit_failed(source, &message).await;
-                                return Err(MemoryError::backend(message));
-                            }
-                            rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
-                                ..
-                            }) => {
-                                // The finalized part content is not summary text.
-                                // Provider usage is read from the stream after the loop.
-                            }
-                            rig::streaming::Item::Unknown(_) => {
-                                let message = "Unexpected stream chunk: unknown".to_string();
-                                self.emit_failed(source, &message).await;
-                                return Err(MemoryError::backend(message));
-                            }
-                        },
-                        Some(Err(e)) => {
-                            let message = format!("Compaction stream error: {e}");
-                            self.emit_failed(source, &message).await;
-                            return Err(MemoryError::backend(message));
-                        }
-                        None => break,
-                    }
-                }
-                Ok(_) = cancel_rx.recv() => {
-                    let message = "Compaction cancelled by user".to_string();
-                    self.emit_failed(source, &message).await;
-                    return Err(MemoryError::backend(message));
-                }
-            }
-        }
-
-        // The provider's usage arrives on the folded response, which `partial()`
-        // exposes once the stream ended. `summary_text` validates the folded
-        // answer: a truncated, tool-calling, or empty summary is refused.
-        match Summarizer::summary_text(&stream.partial()) {
-            Ok(text) => Ok(text),
-            Err(e) => {
-                let message = format!("Compaction produced an unusable summary: {e}");
-                self.emit_failed(source, &message).await;
-                Err(MemoryError::backend(message))
-            }
-        }
+        // call.
+        let model = self.model();
+        engine::stream_text(
+            self.wires(),
+            &model,
+            plan.request.clone(),
+            source,
+            Chunks::Publish,
+        )
+        .await
     }
 
     /// Save `conversation` to `store`, answering it back and emitting `Failed`
@@ -451,39 +400,51 @@ impl NuCompactor {
         }
     }
 
-    /// Emit the compaction pipeline's `Completed` rows for `summary`.
-    async fn emit_completed(&self, summary: &str, source: CompactionSource) {
-        let _ = self
-            .bus
-            .stream()
-            .publish(SessionRecord::Compaction(CompactionRecord::Completed {
-                source,
-                summary: summary.to_string(),
-            }));
-        let _ = self
-            .bus
-            .lifecycle()
-            .publish(LifecycleEvent::CompactionCompleted {
-                source,
-                summary: summary.to_string(),
-            });
+    /// Run one self-contained compaction call: stream `request` to `model` and
+    /// return its validated text.
+    ///
+    /// The manual path sends its plan's request; a hook-side side-call sends a
+    /// request it planned itself. `chunks` decides whether the deltas reach the
+    /// surfaces: a summary streams, notes do not.
+    ///
+    /// # Errors
+    ///
+    /// When the stream cannot be opened, fails, is cancelled, or answers text
+    /// that cannot be compaction text. Every failure is also emitted as
+    /// `CompactionRecord::Failed`.
+    pub(crate) async fn complete(
+        &self,
+        model: &DynModel<Completion>,
+        request: CompletionRequest,
+        source: CompactionSource,
+        chunks: Chunks,
+    ) -> Result<String, MemoryError> {
+        engine::stream_text(self.wires(), model, request, source, chunks).await
+    }
+
+    /// Emit the compaction pipeline's `Started` rows.
+    pub(crate) async fn emit_started(&self, source: CompactionSource) {
+        engine::emit_started(self.wires(), source).await;
     }
 
     /// Emit `CompactionRecord::Failed` carrying `message`.
-    async fn emit_failed(&self, source: CompactionSource, message: &str) {
-        let _ = self
-            .bus
-            .stream()
-            .publish(SessionRecord::Compaction(CompactionRecord::Failed {
-                source,
-                message: message.to_string(),
-            }));
-        let _ = self
-            .bus
-            .lifecycle()
-            .publish(LifecycleEvent::CompactionFailed {
-                source,
-                message: message.to_string(),
-            });
+    pub(crate) async fn emit_failed(&self, source: CompactionSource, message: &str) {
+        engine::emit_failed(self.wires(), source, message).await;
+    }
+
+    /// Emit the compaction pipeline's `Completed` rows for `summary`.
+    async fn emit_completed(&self, summary: &str, source: CompactionSource) {
+        engine::emit_completed(self.wires(), summary, source).await;
+    }
+
+    /// The channels this compactor publishes on, taken one by one from the hub
+    /// it was built with.
+    fn wires(&self) -> engine::Wires<'_> {
+        engine::Wires {
+            stream: self.bus.stream(),
+            narration: self.bus.narration(),
+            lifecycle: self.bus.lifecycle(),
+            cancel: self.bus.cancel(),
+        }
     }
 }

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::test::{
-    default_circuit_breaker, default_doom_state, default_last_total_tokens,
-    default_output_repetition, default_repetition_guard,
+    default_circuit_breaker, default_doom_state, default_meter, default_output_repetition,
+    default_repetition_guard,
 };
 use super::REPETITION_STEERING_NOTICE;
 use super::executor_test_support::*;

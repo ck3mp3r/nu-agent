@@ -45,6 +45,7 @@ fn model_spec(cost: Option<ModelCost>) -> ModelSpec {
         limit: ModelLimit {
             context: 8192,
             output: 2048,
+            input: None,
         },
         cost,
         modalities: None,

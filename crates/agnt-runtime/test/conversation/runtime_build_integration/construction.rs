@@ -71,12 +71,10 @@ async fn test_runtime_build_build_runtime_stamps_the_hook_context_model() -> Res
 }
 
 #[tokio::test]
-async fn test_runtime_build_build_runtime_uses_default_compaction_threshold() -> Result<()> {
+async fn test_runtime_build_build_runtime_keeps_the_default_compaction_policy() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
     let store_type = StoreType::Memory;
-    let expected =
-        (defaults::MAX_CONTEXT_TOKENS as f64 * defaults::PROACTIVE_THRESHOLD_PCT) as usize;
 
     // -- Exec
     let runtime = build_runtime(make_params(
@@ -88,8 +86,19 @@ async fn test_runtime_build_build_runtime_uses_default_compaction_threshold() ->
     .await
     .map_err(|e| format!("should build runtime: {e:?}"))?;
 
-    // -- Check
-    assert_eq!(runtime.compaction().threshold_tokens, Some(expected));
+    // -- Check: no `[compaction]` block, so the knob keeps our default and the
+    // policy keeps the pinned summary budget.
+    let policy = runtime.compaction().policy();
+    assert_eq!(
+        runtime.compaction().reserve_pct,
+        crate::config::defaults::DEFAULT_RESERVE_PCT,
+        "an unset reserve_pct keeps our 20 percent"
+    );
+    assert_eq!(
+        policy.summarizer.limits.summary_tokens,
+        crate::config::defaults::COMPACTION_SUMMARY_TOKENS,
+        "an unset summary budget keeps the pinned default"
+    );
     Ok(())
 }
 

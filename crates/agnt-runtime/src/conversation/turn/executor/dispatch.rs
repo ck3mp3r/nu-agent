@@ -309,11 +309,10 @@ where
             )));
         }
 
-        // Completed turn: update last_total_tokens for compaction tracking.
-        // rig saved the conversation when the run succeeded, and the turn's own
-        // settle recorded its facts, so nothing is written here.
+        // Completed turn: rig saved the conversation when the run succeeded, and
+        // the turn's own settle recorded its facts, so nothing is written here.
+        // The wire's total is reported for a reader of the log only.
         if final_session_id.is_some() {
-            *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
             log::debug!(
                 "Turn completed: session={:?} last_total_tokens={}",
                 final_session_id,

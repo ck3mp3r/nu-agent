@@ -46,15 +46,14 @@ mod session_publish;
 #[path = "runtime/session_usage.rs"]
 mod session_usage;
 #[cfg(all(test, feature = "integration"))]
-#[path = "runtime/switch_compaction_threshold.rs"]
-mod switch_compaction_threshold;
-#[cfg(all(test, feature = "integration"))]
+#[path = "runtime/switch_compaction.rs"]
+mod switch_compaction;
 #[path = "runtime/switch_context_gate.rs"]
 mod switch_context_gate;
-#[cfg(all(test, feature = "integration"))]
 #[path = "runtime/switch_events.rs"]
 mod switch_events;
-#[cfg(all(test, feature = "integration"))]
+#[path = "runtime/switch_latency.rs"]
+mod switch_latency;
 #[path = "runtime/switch_support.rs"]
 mod switch_support;
 #[path = "runtime/switching.rs"]

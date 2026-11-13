@@ -72,6 +72,7 @@ fn provider_spec(id: &str, name: &str, models: &[(&str, &str, u32, u32)]) -> Pro
                 limit: ModelLimit {
                     context: *context,
                     output: *output,
+                    input: None,
                 },
                 cost: None,
                 modalities: None,
@@ -103,6 +104,7 @@ fn provider_spec_with_cost(
                 limit: ModelLimit {
                     context: *context,
                     output: *output,
+                    input: None,
                 },
                 cost: cost.map(|(input, output)| ModelCost {
                     input,

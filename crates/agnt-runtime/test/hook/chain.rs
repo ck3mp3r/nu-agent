@@ -8,7 +8,7 @@
 #[path = "chain/cancel_dispatch.rs"]
 mod cancel_dispatch;
 
-#[path = "chain/compaction.rs"]
+#[path = "chain/compaction/test.rs"]
 mod compaction;
 
 #[path = "chain/cost/test.rs"]

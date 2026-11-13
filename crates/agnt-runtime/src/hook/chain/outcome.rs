@@ -140,20 +140,22 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                     || usage.output_tokens.is_some()
                     || usage.total_tokens.is_some();
                 if reports_usage {
-                    // Store the real count: the wire's total when it reports
-                    // one, else input + output — the same quantity. A wire may
-                    // omit `total_tokens` (ollama-cloud's OpenAI-compatible
-                    // endpoint does), and the switch gate and the threshold
-                    // check both need a real count.
+                    // Store the meter's usage: the provider's own report, which
+                    // `next_request_tokens` reads through the entry the decision
+                    // metered. A usage with no context count anchors nothing.
+                    if usage.context_tokens().is_some() {
+                        self.meter.record_usage(usage);
+                    }
+                    // The wire's total when it reports one, else input + output
+                    // — the same quantity. A wire may omit `total_tokens`
+                    // (ollama-cloud's OpenAI-compatible endpoint does), and the
+                    // switch gate needs a real count.
                     let total_tokens =
                         match (usage.total_tokens, usage.input_tokens, usage.output_tokens) {
                             (Some(total), _, _) => Some(total),
                             (None, Some(input), Some(output)) => Some(input + output),
                             _ => None,
                         };
-                    if let Some(total_tokens) = total_tokens {
-                        *self.lock_last_total_tokens() = Some(total_tokens);
-                    }
                     let (cost, cost_complete) = match usage.cost {
                         Some(cost) => (Some(cost.total), cost.is_complete()),
                         None => match computed_cost(&self.model, &usage) {
@@ -219,6 +221,28 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                         },
                     ));
                 }
+                // The patched call's reply IS the summary this turn asked for.
+                // Validate it where the answer settles and leave the verdict
+                // for the executor's between-runs splice; a call the decision
+                // never patched is left alone. A reply that cannot be a summary
+                // is replaced by one asked on its own, so the turn's second pass
+                // still opens on a summarized conversation.
+                self.pending_summary.settle(response);
+                let path = super::CompactionPath::new(
+                    self.memory.as_ref(),
+                    &self.compaction,
+                    &self.meter,
+                    &self.store_latch,
+                    &self.model,
+                );
+                super::compaction::settle_fallback(
+                    &self.conversation_id,
+                    &path,
+                    &self.pending_summary,
+                    bus.stream(),
+                    bus.lifecycle(),
+                )
+                .await;
             }
 
             OutcomeAction::proceed()

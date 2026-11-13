@@ -115,28 +115,3 @@ pub(crate) fn extract_agent_flags(call: &EvaluatedCall) -> (Option<String>, Opti
     log::trace!("extract_agent_flags: agent={agent:?}, name={name:?}");
     (agent, name)
 }
-
-/// Extract compaction-related CLI flags into a `CompactionConfig`.
-///
-/// All fields are `Option` — `None` means the flag was not provided.
-///
-/// # Arguments
-/// * `call` - The EvaluatedCall containing the compaction flags
-///
-/// # Returns
-/// Ok(CompactionConfig) with provided flag values.
-pub(crate) fn extract_compaction_flags(
-    call: &EvaluatedCall,
-) -> Result<agnt_runtime::config::CompactionConfig, LabeledError> {
-    // Parse --proactive-threshold-pct
-    let proactive_threshold_pct = call
-        .get_flag::<Value>("proactive-threshold-pct")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_float().ok());
-
-    Ok(agnt_runtime::config::CompactionConfig {
-        proactive_threshold_pct,
-        ..Default::default()
-    })
-}

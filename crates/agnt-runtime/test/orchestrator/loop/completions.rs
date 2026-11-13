@@ -5,6 +5,13 @@
 //! channel with the real slash stage, so a dispatched completion is observed on
 //! the worker command channel exactly as production sends it.
 
+// region:    --- Modules
+
+#[path = "completions/row.rs"]
+mod row;
+
+// endregion: --- Modules
+
 use super::*;
 
 use crate::conversation::turn::TurnEnd;

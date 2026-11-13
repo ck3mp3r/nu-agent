@@ -1,17 +1,16 @@
 //! The ARCH-6 rows recorded for `agnt-cli`.
 
 pub const ROWS: &[&str] = &[
-    "ARCH-6 agnt-cli/src/dispatch/a2a.rs:70: `run_a2a` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/a2a.rs:69: `run_a2a` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/acp.rs:11: `run_acp` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/agent.rs:63: `run_agent` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/agent.rs:62: `run_agent` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:27: `resolve_config_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:62: `apply_cli_flags_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:97: `resolve_ui_policy_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:121: `resolve_theme_from_clap` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/config.rs:156: `extract_compaction_flags_from_clap` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/config.rs:169: `resolve_store_type_from_clap` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/config.rs:186: `resolve_session_store_type_from_config` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/config.rs:216: `extract_tool_timeout_from_clap` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/config.rs:157: `resolve_store_type_from_clap` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/config.rs:174: `resolve_session_store_type_from_config` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/config.rs:204: `extract_tool_timeout_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/permissions.rs:13: `resolve_effective_permissions_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/persona.rs:16: `PersonaResolution` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/persona.rs:36: `resolve_persona_from_clap` has no consumer outside `agnt-cli`",
@@ -61,10 +60,7 @@ pub const ROWS: &[&str] = &[
 /// The impl-member rows: a `pub` member on a type this crate surfaces, with no
 /// consumer outside it.
 pub const MEMBER_ROWS: &[&str] = &[
-    "ARCH-6 agnt-cli/src/mode/mod.rs:313: `start` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/mod.rs:338: `start_configured` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/mode/mod.rs:358: `shutdown` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/mode/mod.rs:373: `drain` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/turn_terminal.rs:76: `from_result` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/turn_terminal.rs:90: `from_lifecycle_row` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/turn_terminal.rs:111: `lifecycle_row` has no consumer outside `agnt-cli`",

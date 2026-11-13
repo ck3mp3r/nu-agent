@@ -9,14 +9,12 @@ pub type MemoryOf = Arc<CachedMemory>;
 
 pub struct MemoryState {
     memory: MemoryOf,
-    last_total_tokens: Option<u64>,
 }
 
 impl MemoryState {
     pub fn new(rig: RigStoreConfig) -> Self {
         Self {
             memory: Arc::new(CachedMemory::new(rig)),
-            last_total_tokens: None,
         }
     }
 
@@ -40,18 +38,6 @@ impl MemoryState {
     /// rewrites, marker writes).
     pub fn inner_memory(&self) -> &CachedMemory {
         &self.memory
-    }
-
-    pub fn last_total_tokens(&self) -> Option<u64> {
-        self.last_total_tokens
-    }
-
-    pub fn last_total_tokens_mut(&mut self) -> &mut Option<u64> {
-        &mut self.last_total_tokens
-    }
-
-    pub fn clear(&mut self) {
-        self.last_total_tokens = None;
     }
 }
 
@@ -78,18 +64,6 @@ impl SessionManager for MemoryState {
         Output = Result<Arc<dyn rig_memory::Store>, crate::session::MemoryError>,
     > + Send {
         self.memory.rig_store(session_id)
-    }
-
-    fn clear(&mut self) {
-        self.last_total_tokens = None;
-    }
-
-    fn last_total_tokens(&self) -> Option<u64> {
-        self.last_total_tokens
-    }
-
-    fn last_total_tokens_mut(&mut self) -> &mut Option<u64> {
-        &mut self.last_total_tokens
     }
 }
 

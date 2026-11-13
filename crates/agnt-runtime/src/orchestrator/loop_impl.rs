@@ -2,7 +2,6 @@
 //! point. The loop owner composes the stages and drives this engine;
 //! [`run_single_turn`] drives one turn without the loop.
 
-use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
@@ -15,12 +14,14 @@ use crate::orchestrator::handlers::{
     CANCELLED_BY_USER_REASON, WORKER_BUSY_REASON, dispatch_pending_completions,
     dispatch_queued_external_prompt, submit_prompt,
 };
+use crate::orchestrator::r#loop::{QuitArm, QuitStep};
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::{
-    CompletionBuffer, ExternalQueue, dispatch_compaction, handle_external_cancel,
-    handle_worker_result, recv_or_pending, reject_external_task, submit_deferred_prompt,
+    CompletionBuffer, ExternalQueue, PendingRewrites, dispatch_compaction, dispatch_uncompact,
+    handle_external_cancel, handle_worker_result, recv_or_pending, reject_external_task,
+    submit_deferred_prompt,
 };
 use crate::protocol::contracts::CoreRuntime;
 use agnt_kernel::bus::{ControlCommand, LifecycleEvent, ReceiveError};
@@ -84,7 +85,7 @@ where
         ui_request,
         session,
     } = stages;
-    let mut pending_compaction: Option<CompactionSource> = None;
+    let mut pending = PendingRewrites::default();
     let mut compaction_active = false;
     let mut quit_pending = false;
     // Completion events that arrived while the worker could not take a turn, in
@@ -129,14 +130,25 @@ where
             recv = sources.lifecycle_rx.recv() => {
                 match recv {
                     Ok(LifecycleEvent::CompactionCompleted { .. }
-                    | LifecycleEvent::CompactionFailed { .. }) => {
+                    | LifecycleEvent::CompactionFailed { .. }
+                    | LifecycleEvent::Uncompacted { .. }
+                    | LifecycleEvent::UncompactFailed { .. }) => {
                         compaction_active = false;
-                        // Drain a queued compaction, if any.
-                        if let Some(source) = pending_compaction.take() {
+                        // Drain a queued transcript rewrite, if any: a
+                        // compaction first, then an uncompaction.
+                        if let Some(source) = pending.compaction.take() {
                             dispatch_compaction(
                                 source,
                                 ctx,
-                                &mut pending_compaction,
+                                &mut pending,
+                                &mut compaction_active,
+                            )
+                            .await;
+                        } else if let Some(source) = pending.uncompaction.take() {
+                            dispatch_uncompact(
+                                source,
+                                ctx,
+                                &mut pending,
                                 &mut compaction_active,
                             )
                             .await;
@@ -217,38 +229,22 @@ where
                         }
                     }
                     OrchestratorEvent::Quit => {
-                        if *ctx.worker_active {
-                            quit_pending = true;
-                            let _ = ctx.cancel.request_cancel().await;
-                            continue;
+                        // The quit arm owns every pass a quit makes: apply what
+                        // is queued, release what never answers, then name what
+                        // is still owed before the loop may exit.
+                        let mut quit = QuitArm {
+                            ui_request: &mut *ui_request,
+                            slash: &mut *slash,
+                            sources: &mut sources,
+                            pending: &mut pending,
+                            compaction_active: &mut compaction_active,
+                            pending_completions: &mut pending_completions,
+                            quit_pending: &mut quit_pending,
+                        };
+                        match quit.apply(ctx).await {
+                            QuitStep::Wait => continue,
+                            QuitStep::Exit => break,
                         }
-                        if ui_request.has_pending() {
-                            quit_pending = true;
-                            continue;
-                        }
-                        if pending_compaction.is_some() {
-                            quit_pending = true;
-                            continue;
-                        }
-                        if compaction_active {
-                            quit_pending = true;
-                            continue;
-                        }
-                        if !pending_completions.is_empty() {
-                            // Quit does not abandon a buffered completion. Nothing
-                            // else would run the flush, so start its first turn
-                            // here and exit when the buffer is empty.
-                            quit_pending = true;
-                            dispatch_pending_completions(
-                                &mut pending_completions,
-                                slash,
-                                ui_request,
-                                ctx,
-                            )
-                            .await;
-                            continue;
-                        }
-                        break;
                     }
                     OrchestratorEvent::FatalError(e) => {
                         return Err(e);
@@ -263,7 +259,7 @@ where
                     ctx,
                     ui_request,
                     session,
-                    &mut pending_compaction,
+                    &mut pending,
                     &mut quit_pending,
                     pending_completions.is_empty(),
                 )
@@ -347,9 +343,17 @@ where
 
             recv = sources.control_rx.recv() => {
                 match recv {
-                    // Owned by the loop: the conversation asked for a sweep.
+                    // Owned by the loop: `/compact` asked for a sweep. This is
+                    // the only source that reaches the worker: the automatic
+                    // ladder completes the compaction on the turn itself.
                     Ok(ControlCommand::CompactionRequested { source }) => {
-                        dispatch_compaction(source, ctx, &mut pending_compaction, &mut compaction_active).await;
+                        dispatch_compaction(source, ctx, &mut pending, &mut compaction_active).await;
+                    }
+                    // Owned by the loop: `/uncompact` asked to undo the newest
+                    // compaction. It travels the same spine as a manual
+                    // compaction; the worker rewrites the transcript.
+                    Ok(ControlCommand::UncompactRequested { source }) => {
+                        dispatch_uncompact(source, ctx, &mut pending, &mut compaction_active).await;
                     }
                     // Owned by the loop: a prompt arrived from outside the
                     // surface. The boundary that accepted it already published
@@ -450,6 +454,11 @@ where
                 dispatch_pending_completions(&mut pending_completions, slash, ui_request, ctx).await;
             }
         }
+
+        // One drain per cycle, at the cycle's tail: a switch accepted under a
+        // stale guard applies on any wake-up instead of waiting for one of the
+        // two arms that end a turn or a blocking request.
+        ui_request.drain_queued(ctx).await;
     }
     // Every `break` above lands here. The graceful quit paths empty the buffer
     // before they exit, so a completion still held means a source channel closed

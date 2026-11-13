@@ -11,6 +11,8 @@ mod deferred_prompt;
 mod external_fatal;
 #[path = "events/prompt_routing.rs"]
 mod prompt_routing;
+#[path = "events/quit_pending_ui.rs"]
+mod quit_pending_ui;
 #[path = "events/worker_result_quit.rs"]
 mod worker_result_quit;
 

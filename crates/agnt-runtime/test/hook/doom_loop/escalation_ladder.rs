@@ -1,15 +1,23 @@
 use super::*;
 
+use rig::agent::{AgentHook, DispatchEvent};
+use rig::effect::{EffectId, EffectKind};
+use rig::test_utils::HookTestHarness;
+
 /// The first detection in a turn attempt skips with a message that both
 /// reports the detection fact and challenges the model to reconsider.
 #[tokio::test]
 async fn first_detection_skips_with_steering_message() -> TestResult<()> {
     // -- Setup & Fixtures
-    let state = Arc::new(Mutex::new(DoomLoopState::default()));
-    let detector = DoomLoopDetector {
-        state: Arc::clone(&state),
-    };
     let bus = Bus::default();
+    let harness = HookTestHarness::new()
+        .with_streaming(true)
+        .with_agent_name("doom-loop")
+        .with_hook(doom_loop_chain(&bus));
+    let kind = EffectKind::ToolCall {
+        name: "read_file".to_string(),
+        args: "{\"path\": \"same\"}".to_string(),
+    };
     let pinned = [
         "Doom loop detected: 'read_file' called 5 times with identical arguments",
         "Are you really sure you need so many tool calls?",
@@ -17,13 +25,19 @@ async fn first_detection_skips_with_steering_message() -> TestResult<()> {
     ];
 
     // -- Exec & Check
-    let actions = drive_to_first_detection(&detector, &bus).await;
-    let last = actions
-        .last()
-        .ok_or("should have at least one action")?
-        .clone()
-        .ok_or("threshold call should produce an action")?;
-    let last = Some(last);
+    let mut last = None;
+    for call in 1..=DOOM_LOOP_THRESHOLD {
+        harness.set_turn(call);
+        let event = DispatchEvent {
+            id: EffectId::from_raw(call as u64),
+            kind: &kind,
+            turn: call,
+            call_id: None,
+            context: None,
+        };
+        last = Some(harness.hooks().on_dispatch(harness.context(), event).await);
+    }
+    let last = Some(last.ok_or("threshold call should produce an action")?);
     let message = skip_reason(&last).ok_or("should be a skip denial")?;
     for text in &pinned {
         assert!(

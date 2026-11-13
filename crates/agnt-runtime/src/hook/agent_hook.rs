@@ -9,6 +9,7 @@ use agnt_kernel::{InferenceRecord, SessionRecord, StopCause};
 
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::state::memory::MemoryOf;
+use crate::hook::anchor_meter::AnchorMeter;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 pub use crate::hook::chain::HookChain;
@@ -93,11 +94,11 @@ pub struct HookState {
     /// spec, so a completion is priced at the rates of the model that served
     /// it — not at the compaction model's.
     pub model: rig::DynModel<rig::operation::Completion>,
-    /// Real token count from the last LLM completion: the wire's total when it
-    /// reports one, else input + output. Shared across turns via the hook.
-    /// `None` before the first completion and after a compaction reset; the
-    /// compaction threshold falls back to the chars/4 estimate when `None`.
-    pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The compaction trigger's meter: the usage the last completion reported,
+    /// the request it answered, and the entry it counted through. Shared across
+    /// turns, so the decision meters the next request with what the last one
+    /// actually cost.
+    pub meter: AnchorMeter,
     /// The turn's LLM usage, accumulated as each call completes. Created per
     /// turn, so the sums never carry over into the next one; the turn executor
     /// reads them when it publishes the turn-completed event.
@@ -110,6 +111,10 @@ pub struct HookState {
     /// could not be opened, `None` while it opens. Shared with the turn's
     /// `ToolInfra` so a session change can clear it.
     pub store_latch: StoreLatch,
+    /// The in-place summary this turn decided on, waiting for the patched call's
+    /// reply. Created per turn with the turn's tool infrastructure, so the
+    /// executor can read it after the run.
+    pub pending_summary: crate::hook::chain::PendingSummary,
 }
 
 #[cfg(test)]

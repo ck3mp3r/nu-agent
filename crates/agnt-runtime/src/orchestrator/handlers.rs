@@ -2,14 +2,18 @@
 //! result handling, external (A2A) cancellation, and optional-channel awaits.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use agnt_kernel::CompactionSource;
+use agnt_kernel::{PromptRecord, PromptStamps, SessionRecord};
 use tokio::sync::mpsc;
 
 use crate::bus::RequestCancel;
-use crate::orchestrator::events::WorkerCommand;
+use crate::orchestrator::events::{UiRequestResponse, WorkerCommand};
 use crate::orchestrator::external::ExternalTaskStore;
-use crate::orchestrator::r#loop::{CancelDisposition, CompletionBuffer, ExternalQueue};
+use crate::orchestrator::r#loop::{
+    CancelDisposition, CompletionBuffer, ExternalQueue, SourceChannels,
+};
 use crate::orchestrator::stages::{
     OrchestrationContext, SessionHandler, SlashHandler, UiRequestHandler,
 };
@@ -22,19 +26,43 @@ pub(crate) const CANCELLED_BY_USER_REASON: &str = "Cancelled by user";
 /// Reason recorded on a task rejected or failed because the worker was busy.
 pub(crate) const WORKER_BUSY_REASON: &str = "Worker busy: another turn is already running";
 
+/// How long quit waits for the UI responses already on their way.
+///
+/// Quit abandons what it cannot answer, and abandoning a response that is a
+/// moment away would drop the effect the user just asked for. The wait is
+/// bounded, so a response that never arrives cannot defer the exit.
+const QUIT_SETTLE: Duration = Duration::from_millis(50);
+
+/// The transcript rewrites the loop holds for the worker: a manual compaction
+/// and an uncompaction, each with the source that asked for it.
+///
+/// The two share the compaction-active slot, so at most one runs at a time and
+/// a quit is deferred for both. Each slot holds one request: a newer request
+/// replaces the queued one.
+#[derive(Debug, Default)]
+pub(crate) struct PendingRewrites {
+    /// The compaction waiting for the worker.
+    pub(crate) compaction: Option<CompactionSource>,
+    /// The uncompaction waiting for the worker.
+    pub(crate) uncompaction: Option<CompactionSource>,
+}
+
 /// Dispatch a compaction command to the worker, or queue it if a compaction is
 /// already in flight or the worker is busy running a turn.
+///
+/// Manual only: `/compact` is the one source that reaches this path. The
+/// automatic ladder completes its compaction on the turn itself.
 pub(crate) async fn dispatch_compaction(
     source: CompactionSource,
     ctx: &mut OrchestrationContext<'_>,
-    pending_compaction: &mut Option<CompactionSource>,
+    pending: &mut PendingRewrites,
     compaction_active: &mut bool,
 ) {
     if *compaction_active || *ctx.worker_active {
         // A compaction is already in flight or the worker is busy running a
         // turn — queue one pending compaction. A newer request replaces the
         // queued one.
-        *pending_compaction = Some(source);
+        pending.compaction = Some(source);
         return;
     }
     // Worker is idle and no compaction is in flight — dispatch immediately. The
@@ -54,8 +82,95 @@ pub(crate) async fn dispatch_compaction(
     }
 }
 
+/// Dispatch an uncompaction command to the worker, or queue it if a compaction
+/// or uncompaction is already in flight or the worker is busy running a turn.
+///
+/// Manual only: `/uncompact` is the one source that reaches this path. The
+/// uncompaction shares the compaction-active slot: one transcript rewrite runs
+/// at a time, so a quit is deferred by the same guard for both.
+pub(crate) async fn dispatch_uncompact(
+    source: CompactionSource,
+    ctx: &mut OrchestrationContext<'_>,
+    pending: &mut PendingRewrites,
+    compaction_active: &mut bool,
+) {
+    if *compaction_active || *ctx.worker_active {
+        // A transcript rewrite is in flight or the worker is busy running a
+        // turn — queue one pending uncompaction. A newer request replaces the
+        // queued one.
+        pending.uncompaction = Some(source);
+        return;
+    }
+    *compaction_active = true;
+    if ctx
+        .worker_tx
+        .send(WorkerCommand::RunUncompact { source })
+        .await
+        .is_err()
+    {
+        let _ = ctx.lifecycle.publish(LifecycleEvent::UncompactFailed {
+            source,
+            message: "Worker channel closed".to_string(),
+        });
+    }
+}
+
+/// Apply the UI responses that arrive while a quit settles, then return.
+///
+/// Only the two response lanes are read: this runs inside the quit arm, so it
+/// starts no turn and dispatches no queued effect. A response that arrives
+/// within [`QUIT_SETTLE`] lands its effect; whatever is still unanswered when
+/// the wait ends is abandoned by the caller, so quit cannot hang on it.
+pub(crate) async fn settle_ui_responses<U, S>(
+    ui_request: &mut U,
+    sources: &mut SourceChannels<'_, S>,
+    ctx: &mut OrchestrationContext<'_>,
+) where
+    U: UiRequestHandler,
+    S: ExternalTaskStore,
+{
+    let _ = tokio::time::timeout(QUIT_SETTLE, async {
+        while ui_request.has_pending() {
+            tokio::select! {
+                Some(response) = sources.blocking_response_rx.recv() => {
+                    ui_request.handle_blocking_response(response, ctx).await;
+                }
+                Some(response) = sources.concurrent_response_rx.recv() => {
+                    ui_request.handle_concurrent_response(response, ctx).await;
+                }
+                else => break,
+            }
+        }
+    })
+    .await;
+}
+
+/// Fold every UI response already sitting on the two lanes, without waiting.
+///
+/// The quit arm calls this after it abandons the entries that never answered:
+/// each abandonment published that entry's substitute answer, so folding here is
+/// what releases the surface — the modal, the picker, the toggle — before the
+/// loop breaks. Nothing is awaited: an empty lane is simply empty, and the
+/// substitute published an instant ago is already queued.
+pub(crate) async fn fold_ui_responses<U>(
+    ui_request: &mut U,
+    blocking_response_rx: &mut mpsc::Receiver<UiRequestResponse>,
+    concurrent_response_rx: &mut mpsc::Receiver<UiRequestResponse>,
+    ctx: &mut OrchestrationContext<'_>,
+) where
+    U: UiRequestHandler,
+{
+    while let Ok(response) = blocking_response_rx.try_recv() {
+        ui_request.handle_blocking_response(response, ctx).await;
+    }
+    while let Ok(response) = concurrent_response_rx.try_recv() {
+        ui_request.handle_concurrent_response(response, ctx).await;
+    }
+}
+
 /// Handle a worker turn outcome: clear the active flag, drain queued blocking
-/// requests, dispatch any queued compaction, and honor a pending quit.
+/// requests, dispatch any queued compaction or uncompaction, and honor a
+/// pending quit.
 ///
 /// Returns `true` when the loop should break: a quit was pending, the worker is
 /// now idle, and no buffered completion waits for its turn.
@@ -64,7 +179,7 @@ pub(crate) async fn handle_worker_result<U, Se>(
     ctx: &mut OrchestrationContext<'_>,
     ui_request: &mut U,
     session: &mut Se,
-    pending_compaction: &mut Option<CompactionSource>,
+    pending: &mut PendingRewrites,
     quit_pending: &mut bool,
     completions_empty: bool,
 ) -> bool
@@ -78,7 +193,7 @@ where
     // If a compaction was queued while the worker was busy, run it now. The
     // worker runs it synchronously and emits events on the bus; it does not send
     // a `WorkerResult`, so `worker_active` is not set.
-    if let Some(source) = pending_compaction.take()
+    if let Some(source) = pending.compaction.take()
         && ctx
             .worker_tx
             .send(WorkerCommand::RunCompaction { source })
@@ -86,6 +201,19 @@ where
             .is_err()
     {
         let _ = ctx.lifecycle.publish(LifecycleEvent::CompactionFailed {
+            source,
+            message: "Worker channel closed".to_string(),
+        });
+    }
+    // An uncompaction queued behind a turn is dispatched the same way.
+    if let Some(source) = pending.uncompaction.take()
+        && ctx
+            .worker_tx
+            .send(WorkerCommand::RunUncompact { source })
+            .await
+            .is_err()
+    {
+        let _ = ctx.lifecycle.publish(LifecycleEvent::UncompactFailed {
             source,
             message: "Worker channel closed".to_string(),
         });
@@ -150,7 +278,9 @@ pub(crate) async fn submit_deferred_prompt<S, U>(
 ///
 /// This is the one site that submits a buffered completion. The buffer drains in
 /// arrival order, one turn per idle cycle, and each turn is unattributed: a
-/// completion reports a REMOTE task, never one a caller handed this agent.
+/// completion reports a REMOTE task, never one a caller handed this agent. The
+/// loop is this completion's accepting boundary, so it also publishes the prompt
+/// row the surface draws for the turn.
 ///
 /// The guard is the same one the queued external prompt honors, minus the quit:
 /// a running turn and an open blocking request both defer the dispatch. While a
@@ -174,7 +304,18 @@ pub(crate) async fn dispatch_pending_completions<S, U>(
         return;
     };
     // The turn this completion queues carries no attribution: its remote task
-    // id keys the wait, it never becomes an attribution.
+    // id keys the wait, it never becomes an attribution. No other boundary sees
+    // this arrival, so the row the surface draws is published here, with the
+    // instant the loop dispatched it and no identity the loop cannot reach.
+    let _ = ctx.stream.publish(SessionRecord::Prompt(PromptRecord {
+        text: completion.prompt.clone(),
+        stamps: PromptStamps {
+            millis: Some(chrono::Utc::now().timestamp_millis()),
+            model: None,
+            agent: None,
+        },
+        task_id: None,
+    }));
     slash.handle(completion.prompt, None, ctx).await;
 }
 

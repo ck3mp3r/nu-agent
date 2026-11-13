@@ -98,6 +98,8 @@ async fn model_switch_failure_keeps_previous_model_and_warns() -> TResult {
         runtime.switched_models,
         vec!["openai/gpt-4o-mini".to_string()]
     );
+    // A refused switch publishes its notice on the response; quit settles for
+    // that response before it abandons, so the surface still sees the warning.
     assert_eq!(
         *ui.active_model_identity
             .lock()

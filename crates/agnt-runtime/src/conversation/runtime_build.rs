@@ -38,7 +38,6 @@ pub struct RuntimeBuildParams {
     /// The rig-memory store config the session's store is made from.
     pub rig: crate::session::RigStoreConfig,
     pub final_session_id: Option<String>,
-    pub proactive_threshold_pct: Option<f64>,
     pub base_permissions: PermissionsConfig,
     pub effective_permissions: PermissionsConfig,
     pub cli_permissions_overlay: Option<PermissionsOverlay>,
@@ -66,10 +65,10 @@ pub struct RuntimeBuildParams {
     pub hook_context: HookAgentContext,
     /// The compactor's erased model, when the composition root builds it itself.
     ///
-    /// `None` derives it: the `[models.light]` role when it resolves, else the
-    /// startup active model. A caller that supplies one builds it from the
-    /// active model, so the compaction identity and its planning spec are the
-    /// active model's.
+    /// `None` shares the runtime's own model slot, so the compactor follows
+    /// every model switch. A caller that supplies one builds it from the active
+    /// model, so the compaction identity and its planning spec are the active
+    /// model's.
     pub compactor_model: Option<Arc<Mutex<DynModel<Completion>>>>,
 }
 
@@ -112,44 +111,25 @@ pub async fn build_runtime(
     AgentConversationRuntime::compose(parts, params).await
 }
 
-/// The config the compaction (summarizer) model is built from: the
-/// `[models.light]` role when it resolves, else `None` so the caller falls
-/// back to the startup active model.
-///
-/// Every fallback names itself in the debug log, so a session that summarizes
-/// with the active model is explainable.
-pub(crate) fn resolve_light_config(plugin_config: Option<&PluginConfig>) -> Option<Config> {
-    let Some(plugin_config) = plugin_config else {
-        log::debug!("compaction model: no plugin config; using the startup active model");
-        return None;
-    };
-    let Some(role) = plugin_config.models.get("light") else {
-        log::debug!("compaction model: no [models.light] role; using the startup active model");
-        return None;
-    };
-    match plugin_config.resolve_model(role) {
-        Ok(config) => Some(config),
-        Err(error) => {
-            log::debug!(
-                "compaction model: [models.light] did not resolve ({error}); using the startup active model"
-            );
-            None
-        }
-    }
-}
-
 /// The compaction policy a `[compaction]` block asks for.
 ///
 /// Starts from rig-memory's default policy and overwrites each field the block
-/// sets. A field the block leaves unset keeps rig-memory's default value. rig
-/// owns the meaning of every value, so no range check runs here; `near_window`
-/// has no config key and always keeps rig-memory's default.
+/// sets. A field the block leaves unset keeps rig-memory's default value,
+/// except two: `summarizer.limits.summary_tokens` is pinned to
+/// `crate::config::defaults::COMPACTION_SUMMARY_TOKENS` — a deliberate budget
+/// of 32_000 tokens, ours rather than whatever the library defaults to — and
+/// `tracked` is our two built-in rules, `read`'s path and `edit`'s path, the
+/// tool arguments a summary keeps. The built-in rules are imposed only when the
+/// block leaves `tracked` unset; an explicit list wins verbatim, an explicit
+/// empty list included.
+///
+/// `reserve_pct` is not a policy field: the decision derives the room from it
+/// and the turn's own spec, and sets it on a decision-local clone of this
+/// policy. The policy this builds keeps rig-memory's own reserve.
 pub fn build_compaction_policy(cfg: &CompactionConfig) -> rig_memory::CompactionPolicy {
     let mut policy = rig_memory::CompactionPolicy::default();
+    policy.summarizer.limits.summary_tokens = crate::config::defaults::COMPACTION_SUMMARY_TOKENS;
 
-    if let Some(reserve) = cfg.reserve {
-        policy.summarizer.limits.reserve = reserve;
-    }
     if let Some(summary_tokens) = cfg.summary_tokens {
         policy.summarizer.limits.summary_tokens = summary_tokens;
     }
@@ -170,9 +150,20 @@ pub fn build_compaction_policy(cfg: &CompactionConfig) -> rig_memory::Compaction
     }
     if let Some(tracked) = &cfg.tracked {
         policy.tracked = tracked.clone();
+    } else {
+        // Our built-in rules: the path arguments a summary keeps. The read and
+        // edit tools are our whole file surface, so two rules, not rig-basics'
+        // three; an explicit list (empty included) wins over them.
+        policy.tracked = vec![
+            rig_memory::TrackArgument::new("read", "path", "read-files"),
+            rig_memory::TrackArgument::new("edit", "path", "modified-files"),
+        ];
     }
     if let Some(prompts) = &cfg.prompts {
         policy.summarizer.prompts = prompts.clone();
+    }
+    if let Some(near_window) = cfg.near_window {
+        policy.near_window = near_window;
     }
 
     policy

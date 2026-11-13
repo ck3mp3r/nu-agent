@@ -431,6 +431,14 @@ impl<W: Write> StderrUiRenderer<W> {
                 &StyleHint::Error,
                 self.use_color,
             )),
+            CompactionRecord::Uncompacted { source } => Some(style_text(
+                &format!(
+                    "compaction: source={} status=undone",
+                    compaction_source_text(*source)
+                ),
+                &StyleHint::Muted,
+                self.use_color,
+            )),
         }
     }
 }

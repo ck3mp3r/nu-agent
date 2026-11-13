@@ -115,20 +115,17 @@ model = "openai/gpt-4o"
 
 [models.heavy]
 model = "anthropic/claude-sonnet-4-6"
-
-[models.light]
-model = "ollama/gemma4:31b"
 ```
 
 Then reference roles by name in agent persona front matter:
 
 ```yaml
 ---
-model: light
+model: heavy
 ---
 ```
 
-When a persona has `model: light`, it resolves to `models.light` from config.toml. If your persona needs a specific model that isn't in the map, use the full `provider/model` identifier instead:
+When a persona's `model` names a role you defined (no slash), it resolves to that role's model from config.toml. If your persona needs a specific model that isn't in the map, use the full `provider/model` identifier instead:
 
 ```yaml
 ---
@@ -708,9 +705,10 @@ the store that was dropped.
 
 ### Compaction triggers and persistence
 
-- Auto compaction fires when the conversation reaches `proactive_threshold_pct` (default: 0.80) of the model's context window.
+- Auto compaction fires when the next request would exceed the room `reserve_pct` keeps free: 20 percent of the model's input limit (unset) or the percent you set.
 - Manual slash trigger:
   - `/compact` triggers force compaction immediately (bypasses the threshold gate)
+  - `/uncompact` restores what the most recent compaction replaced (with nothing to undo it warns and changes nothing)
   - `/compact <args>` is treated as unknown for now
   - unknown slash commands emit a warning and processing continues
 - Slash command text is runtime control input and is not forwarded as prompt text to the LLM.
@@ -723,26 +721,27 @@ the store that was dropped.
 
 ### Compaction policy
 
-The `[compaction]` keys mirror rig-memory's policy fields, plus this agent's own `proactive_threshold_pct` trigger. Every field is optional: a key left out keeps the rig default, except the trigger, which keeps `0.80`. rig owns the meaning of every policy value.
+The `[compaction]` keys mirror rig-memory's policy fields, except `reserve_pct`, which is ours. Every field is optional: a key left out keeps the rig default, except `reserve_pct` (`20`, ours) and `summary_tokens` (`32000`, ours, a deliberate pin). rig owns the meaning of every other policy value.
 
 | key | type | meaning | unset |
 |---|---|---|---|
-| `proactive_threshold_pct` | float | fraction of the context window at which auto compaction fires (0.0–1.0) | `0.80` |
-| `reserve` | int | tokens kept free below the model's window | the rig default, `16384` |
-| `summary_tokens` | int | the longest summary asked for, in tokens | the rig default, `12000` |
+| `reserve_pct` | int | percent of the model's input limit kept free below the trigger, range-checked 0-100; derived per decision from the turn's own model | `20` — ours |
+| `near_window` | string | what a near-window compaction does with the outputs it clears: `"summarize"` writes notes on an output that cannot be had again, `"clear"` clears silently | the rig default, `"summarize"` |
+| `summary_tokens` | int | the longest summary asked for, in tokens | `32000` — ours, a deliberate pin |
 | `snippet_chars` | int | characters of a tool's output or arguments the summarizer sees | the rig default, `2000` |
 | `unknown_window_chars` | int | characters of conversation sent when the model window is unknown | the rig default, `400000` |
 | `keep_recent` | int | tokens of the newest messages an automatic compaction keeps verbatim (a quarter of the window at most) | the rig default, `20000` |
 | `keep_asked` | int | tokens of the newest messages a `/compact` keeps verbatim | the rig default, `0` |
 | `clearing.keep_tokens` | int | tokens of the newest tool output kept before clearing | the rig default, `20000` |
 | `clearing.keep_under` | int | size under which a tool output is never cleared | the rig default, `500` |
-| `tracked` | array | the tool arguments a summary tracks: `tool`, `argument`, `set` | the rig default, none |
+| `tracked` | array | the tool arguments a summary tracks: `tool`, `argument`, `set` | our two built-in rules: `read` with `path` into `read-files`, `edit` with `path` into `modified-files` (an explicit list wins verbatim, an empty list included) |
 | `prompts` | table | the summarizer's six prompts: `system`, `initial`, `update`, `format`, `in_place`, `notes` | the rig defaults |
 
 The behavior those fields shape:
 
 - The newest messages stay verbatim within the keep budget; the older ones become the summary.
 - Old tool outputs are cleared before the summary is asked for. Error results and outputs under `keep_under` tokens stay, and so do the calls themselves.
+- Clearing takes no turn when there is nothing to clear, when it frees too little of the room, or when the outputs it would drop cannot be had again and their notes cannot be written — the summary path then keeps the turn.
 - A short conversation is still summarized when `/compact` asks for it; the newest reply or message always stays.
 
 The block reference lives in [Configuration](configuration.md#compaction).
@@ -757,6 +756,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - If slash prefix is removed, inline suggestions close cleanly and never fallback to command palette.
 - Supported slash commands:
   - `/compact`
+  - `/uncompact`
   - `/mcp`
   - `/help`
   - `/status`
@@ -1125,7 +1125,6 @@ edit = "deny"
 - `--agent <name>` — load an agent persona from `.agents/<name>.md`
 - `--name <string>` — agent instance identity for multi-agent messaging
 - `--parent-name <string>` — parent agent name for sub-agent reporting (internal)
-- `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
 - `--store <string>` — session store backend: `sqlite|memory`
 
 ## Log file
@@ -1136,6 +1135,11 @@ The agent logs to a file only; it never writes log output to the terminal.
 - `NU_AGENT_STATE_HOME` applies from process start: the environment is readable before `config.toml` loads, so the log target is correct from the first line, with no re-initialization.
 - A `[paths].state_home` value in `config.toml` applies only after the config file is loaded: the sink swaps to `{value}/nu-agent/logs/agent.log` at that point.
 - In the pre-load window — the first few startup lines — the log goes to the derived default, i.e. `$XDG_STATE_HOME`'s tree or `~/.local/state`.
+- Logging is always on: no flag is required, and the file is the only target.
+- `RUST_LOG` and `--log-level` set the filter; the default is `info`. `warn` and above always reaches the file, whatever the filter asks for.
+- Each start keeps its own run: `agent.log` holds the current one and `agent.log.1` … `agent.log.3` the three previous ones.
+- When the state ladder does not resolve or the log file cannot open, the log goes to `{temp dir}/nu-agent-log-{pid}.log` with the reason as its first line, and the run continues.
+- On quit and on a panic, the last 500 lines are appended to the file as a `ring dump` block.
 
 ## Subcommands
 

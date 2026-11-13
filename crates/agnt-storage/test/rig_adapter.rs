@@ -5,6 +5,10 @@
 
 // region:    --- Modules
 
+#[cfg(all(test, feature = "integration"))]
+#[path = "rig_adapter/conformance.rs"]
+mod conformance;
+
 #[path = "rig_adapter/context.rs"]
 mod context;
 

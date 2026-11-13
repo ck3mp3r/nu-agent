@@ -9,6 +9,7 @@ pub(crate) struct FakeRuntime {
     pub(crate) run_compaction_calls: usize,
     pub(crate) run_compaction_sources: Vec<CompactionSource>,
     pub(crate) run_compaction_fail: bool,
+    pub(crate) run_uncompact_calls: usize,
     pub(crate) switched_models: Vec<String>,
     pub(crate) switch_model_result: Option<Result<String, String>>,
     pub(crate) session_id: Option<String>,
@@ -140,6 +141,23 @@ impl SessionPersistence for FakeRuntime {
                 source,
                 summary: "summary".to_string(),
             });
+        Ok(())
+    }
+
+    async fn uncompact(&mut self, source: CompactionSource) -> Result<(), String> {
+        self.run_uncompact_calls = self.run_uncompact_calls.saturating_add(1);
+        // The undo publishes its own terminal row, so the loop's active slot
+        // clears exactly as it does in production.
+        let _ =
+            self.bus
+                .stream()
+                .publish(SessionRecord::Compaction(CompactionRecord::Uncompacted {
+                    source,
+                }));
+        let _ = self
+            .bus
+            .lifecycle()
+            .publish(LifecycleEvent::Uncompacted { source });
         Ok(())
     }
 }

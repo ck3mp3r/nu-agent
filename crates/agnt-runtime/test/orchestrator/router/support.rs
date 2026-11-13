@@ -168,7 +168,6 @@ impl ModelSwitching for AgentSwitchRuntime {
 impl SessionState for AgentSwitchRuntime {
     fn clear_session(&mut self) {}
     fn new_session(&mut self) {}
-    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
 }
 impl SessionPersistence for AgentSwitchRuntime {}
 // The picker reader defaults to an empty catalog: the fixture holds no persona
@@ -354,7 +353,6 @@ impl ModelSwitching for SwitchSessionRuntime {
 impl SessionState for SwitchSessionRuntime {
     fn clear_session(&mut self) {}
     fn new_session(&mut self) {}
-    fn seed_last_total_tokens(&mut self, _tokens: Option<u64>) {}
 }
 
 impl SessionPersistence for SwitchSessionRuntime {
@@ -396,9 +394,6 @@ pub(super) struct AttachContextRuntime {
     pub(super) cwd: std::path::PathBuf,
     pub(super) snapshots: Vec<UiMessageSnapshot>,
     pub(super) current_session_id: Option<String>,
-    /// What the runtime was seeded with, if anything: the outer `Option` records
-    /// that the call happened, the inner one carries its argument.
-    pub(super) seeded_tokens: Option<Option<u64>>,
     /// The failure an attach reports, when the fixture models a store that
     /// refuses the derived key.
     pub(super) attach_error: Option<String>,
@@ -436,11 +431,7 @@ impl ModelSwitching for AttachContextRuntime {
     }
 }
 
-impl SessionState for AttachContextRuntime {
-    fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
-        self.seeded_tokens = Some(tokens);
-    }
-}
+impl SessionState for AttachContextRuntime {}
 
 impl SessionPersistence for AttachContextRuntime {
     fn cwd(&self) -> &std::path::Path {

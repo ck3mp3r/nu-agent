@@ -1,8 +1,8 @@
 //! Integration tests for the `main.rs` prompt and logging helpers.
 //!
 //! `main()` itself cannot be called from a test, but `resolve_prompt`,
-//! `init_logging`, and `log_target` are reachable and cover the CLI's startup
-//! wiring.
+//! `init_logging`, and `environment_level` are reachable and cover the CLI's
+//! startup wiring.
 
 use super::*;
 
@@ -41,8 +41,9 @@ fn test_integration_main_resolve_prompt_without_positional_uses_stdin() {
 #[serial_test::serial]
 async fn test_integration_main_init_logging_targets_state_dir() -> Result<()> {
     // -- Setup & Fixtures
+    // No log flags: the file sink is the default, with no configuration.
     let env = support::TestEnv::new().await?;
-    let cli = support::parse_cli(&["--log-level", "debug", "hello"])?;
+    let cli = support::parse_cli(&["hello"])?;
 
     // -- Exec
     init_logging(&cli.args);

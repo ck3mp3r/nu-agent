@@ -62,14 +62,14 @@ fn tool_turn(model: &MockCompletionModel) -> Result<ToolTurn> {
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: model.clone().erase(),
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     );
     let turn_tools = hook.turn_tools();

@@ -133,7 +133,7 @@ where
             // The construction-time seed: the surface folds the projected
             // records before the loop publishes anything else, so a resumed
             // session renders exactly what a live one would.
-            let (records, projected_total) =
+            let (records, _projected_total) =
                 crate::protocol::contracts::project_snapshots(hydration.messages);
             let _ = self.config.bus.stream().publish(SessionRecord::Session(
                 SessionLifecycle::Started {
@@ -146,10 +146,6 @@ where
             for record in records {
                 let _ = self.config.bus.stream().publish(record);
             }
-            // The resumed session's own count wins over the one the projected
-            // rows derive: the store knows the wire's total even when the rows
-            // carry none.
-            runtime.seed_last_total_tokens(hydration.last_total_tokens.or(projected_total));
             let _ = self
                 .config
                 .bus

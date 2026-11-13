@@ -223,6 +223,10 @@ fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
         ProviderError::InvalidAuthentication(_) => CompletionErrorKind::Auth,
         // The reply stopped before the provider ended it — a transport fault.
         ProviderError::Truncated => CompletionErrorKind::Network,
+        // The driver dropped a streamed reply that sent nothing for its idle
+        // window. Upstream classes this as a timeout and retries it; our
+        // timeout-class kind is `ServerError`, which is retryable.
+        ProviderError::Stalled(_) => CompletionErrorKind::ServerError,
         // A relayed report preserves the origin's status and message.
         ProviderError::Relayed(report) => match report.http_status {
             Some(status) => classify_by_status(status),

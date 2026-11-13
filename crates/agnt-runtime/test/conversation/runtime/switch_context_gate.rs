@@ -1,9 +1,11 @@
-//! Integration-gated session-context gate tests for `AgentRuntime`.
+//! Session-context gate tests for `AgentRuntime`'s switches.
 //!
-//! `ModelSwitching::switch_model` and `switch_agent` rebuild the shared model
-//! through the resolved provider, so the success path constructs a real
-//! transport client (TLS provider init + `reqwest::Client`). That is
-//! integration-level work, so the tests live behind the `integration` feature.
+//! A switch resolves the target config, applies the consumed-token gate, and
+//! marks the shared model stale. None of that asks a provider for a client, so
+//! the gate is decided here without touching a transport.
+//!
+//! The one switch path that does build a model — the model's next use — is
+//! covered by `switch_compaction`, which is integration-gated for that reason.
 
 use super::switch_support::*;
 use super::*;
@@ -16,14 +18,6 @@ model: ollama/small
 temperature: 0.3
 ---
 You are the small-context agent.
-"#;
-
-/// A persona whose front matter selects `ollama/large`.
-const LARGE_PERSONA: &str = r#"---
-name: large-agent
-model: ollama/large
----
-You are the large-context agent.
 "#;
 
 /// A switch to a model the session does not fit must fail with the actionable
@@ -85,7 +79,7 @@ async fn switch_model_allows_a_model_the_session_fits() -> Result<()> {
 /// proceeds.
 #[tokio::test]
 async fn switch_model_allows_a_switch_when_the_consumed_count_is_unknown() -> Result<()> {
-    // -- Setup & Fixtures: `last_total_tokens` starts `None`.
+    // -- Setup & Fixtures: the meter has reported no context count.
     let mut fixture = fixture_with_two_limits()?;
 
     // -- Exec
@@ -128,52 +122,6 @@ async fn switch_agent_skips_the_model_rewrite_when_the_session_does_not_fit() ->
         fixture.runtime.provider.provider_config().temperature,
         Some(0.3),
         "the persona's other settings must still apply"
-    );
-    Ok(())
-}
-
-/// The compactor is startup-fixed: neither a model switch nor a persona switch
-/// may touch its wire or its planning spec.
-#[tokio::test]
-async fn compaction_model_stays_startup_fixed_across_switches() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut fixture = fixture_with_two_limits()?;
-    fixture.write_persona("large-agent", LARGE_PERSONA)?;
-    let before_spec = fixture.runtime.compaction.spec().cloned();
-    let before_model_id = fixture.runtime.compaction.model().id().map(str::to_string);
-
-    // -- Exec
-    fixture
-        .runtime
-        .switch_model("ollama/small")
-        .await
-        .map_err(|e| format!("the model switch should succeed: {e}"))?;
-    let after_model_switch_spec = fixture.runtime.compaction.spec().cloned();
-    let after_model_switch_id = fixture.runtime.compaction.model().id().map(str::to_string);
-    fixture
-        .runtime
-        .switch_agent("large-agent")
-        .await
-        .map_err(|e| format!("the persona switch should succeed: {e}"))?;
-
-    // -- Check
-    assert_eq!(
-        after_model_switch_spec, before_spec,
-        "a model switch must not touch the planning spec"
-    );
-    assert_eq!(
-        after_model_switch_id, before_model_id,
-        "a model switch must not touch the compactor's wire"
-    );
-    assert_eq!(
-        fixture.runtime.compaction.spec().cloned(),
-        before_spec,
-        "a persona switch must not touch the planning spec"
-    );
-    assert_eq!(
-        fixture.runtime.compaction.model().id().map(str::to_string),
-        before_model_id,
-        "a persona switch must not touch the compactor's wire"
     );
     Ok(())
 }

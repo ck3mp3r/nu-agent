@@ -184,6 +184,32 @@ fn test_translator_compaction_completed_produces_session_info_update() -> Result
 }
 
 #[test]
+fn test_translator_uncompacted_produces_session_info_update() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = SessionRecord::Compaction(CompactionRecord::Uncompacted {
+        source: CompactionSource::Manual,
+    });
+
+    // -- Exec
+    let update = translator()
+        .translate(TranslateInput::Record(&event))
+        .ok_or("an uncompacted record must translate")?;
+
+    // -- Check
+    let compaction = compaction_meta(&update)?;
+    assert_eq!(
+        compaction.get("state").and_then(|value| value.as_str()),
+        Some("undone")
+    );
+    assert_eq!(
+        compaction.get("source").and_then(|value| value.as_str()),
+        Some("slash")
+    );
+    assert_eq!(compaction.get("detail"), None);
+    Ok(())
+}
+
+#[test]
 fn test_translator_compaction_completed_detail_is_a_preview_not_the_body() -> Result<()> {
     // -- Setup & Fixtures: a summary longer than the preview window.
     let summary = "s".repeat(500);

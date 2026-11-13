@@ -11,8 +11,8 @@ use crate::conversation::turn::executor::test_utils::{
 };
 use crate::conversation::turn::executor::*;
 use crate::conversation::turn::test::{
-    default_circuit_breaker, default_doom_state, default_last_total_tokens,
-    default_output_repetition, default_repetition_guard,
+    default_circuit_breaker, default_doom_state, default_meter, default_output_repetition,
+    default_repetition_guard,
 };
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -26,6 +26,7 @@ pub(crate) fn default_tool_infra(
 ) -> ToolInfra {
     ToolInfra {
         store_latch: Default::default(),
+        pending_summary: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
@@ -34,7 +35,7 @@ pub(crate) fn default_tool_infra(
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
-        last_total_tokens: default_last_total_tokens(),
+        meter: default_meter(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus: crate::bus::Bus::default(),
@@ -76,10 +77,10 @@ impl JourneyHarness {
                     "gpt-4o",
                     Some(8_000),
                     Some(1_024),
+                    None,
                 ),
             ),
-            threshold_tokens: None,
-            threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+            reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
         };
         let memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
         Self {

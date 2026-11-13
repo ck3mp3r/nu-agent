@@ -29,9 +29,9 @@ pub(crate) fn default_repetition_guard() -> bool {
     true
 }
 
-/// A `last_total_tokens` slot starting at `None` (no real token count yet).
-pub(crate) fn default_last_total_tokens() -> Arc<std::sync::Mutex<Option<u64>>> {
-    Arc::new(std::sync::Mutex::new(None))
+/// A compaction meter that has reported nothing yet (no usage, no request).
+pub(crate) fn default_meter() -> crate::hook::AnchorMeter {
+    crate::hook::AnchorMeter::default()
 }
 
 /// Build a `MemoryOf` over an in-memory rig store (no compaction —
@@ -73,10 +73,10 @@ pub(super) fn test_compaction_config(
                 "gpt-4o",
                 Some(8_000),
                 Some(1_024),
+                None,
             ),
         ),
-        threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
     }
 }
 
@@ -128,6 +128,7 @@ pub(super) fn make_turn_context<'a>(
     };
     let tool_infra = executor::ToolInfra {
         store_latch: Default::default(),
+        pending_summary: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -136,7 +137,7 @@ pub(super) fn make_turn_context<'a>(
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
-        last_total_tokens: default_last_total_tokens(),
+        meter: default_meter(),
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,

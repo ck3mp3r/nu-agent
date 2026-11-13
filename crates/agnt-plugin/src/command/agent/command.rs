@@ -49,11 +49,7 @@ Persona file front matter (optional YAML):
   model: <provider/model>       # Default model (overridden by --model)
   permissions: <record>         # Authorization overlay (overridden by --permissions)
 
-CLI flags override front matter values. Front matter overrides plugin config.
-
-Compaction flags:
-  --keep-recent <int>              Recent messages to keep during compaction (default: 10)
-  --proactive-threshold-pct <num>  Proactive compaction threshold 0.0-1.0 (default: 0.80)"
+CLI flags override front matter values. Front matter overrides plugin config."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -107,11 +103,6 @@ Compaction flags:
             Example {
                 description: "Use persona with model override",
                 example: r#""research this topic" | agent --agent researcher --model anthropic/claude-sonnet-4-20250514"#,
-                result: None,
-            },
-            Example {
-                description: "Custom keep-recent count",
-                example: r#"agent --keep-recent 5"#,
                 result: None,
             },
         ]
@@ -211,7 +202,7 @@ Compaction flags:
             .named(
                 "log-level",
                 nu_protocol::SyntaxShape::String,
-                "Log level for file-based logging (error|warn|info|debug|trace). Writes to $XDG_STATE_HOME/nu-agent/logs/agent.log",
+                "Log level for file-based logging (error|warn|info|debug|trace|off). Writes to $XDG_STATE_HOME/nu-agent/logs/agent.log; `off` keeps the ring, so a quit dump still lands.",
                 None,
             )
             .named(
@@ -230,18 +221,6 @@ Compaction flags:
                 "parent-name",
                 nu_protocol::SyntaxShape::String,
                 "Parent agent name for sub-agent reporting (internal)",
-                None,
-            )
-            .named(
-                "keep-recent",
-                nu_protocol::SyntaxShape::Int,
-                "Number of recent messages to keep during compaction",
-                None,
-            )
-            .named(
-                "proactive-threshold-pct",
-                nu_protocol::SyntaxShape::Number,
-                "Proactive compaction threshold (0.0-1.0)",
                 None,
             )
             .named(

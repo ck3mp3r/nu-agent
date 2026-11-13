@@ -1,21 +1,8 @@
 use super::*;
 
-use crate::protocol::contracts::UiMessageUsageSnapshot;
-
 // ---------------------------------------------------------------------------
 // AttachA2aContext — successful attach
 // ---------------------------------------------------------------------------
-
-/// One assistant row reporting the wire total it was persisted with.
-fn assistant_row_with_total(total_tokens: u64) -> UiMessageSnapshot {
-    let mut row = UiMessageSnapshot::new("assistant", "hi");
-    row.usage = Some(UiMessageUsageSnapshot {
-        input_tokens: Some(11),
-        output_tokens: Some(4),
-        total_tokens: Some(total_tokens),
-    });
-    row
-}
 
 #[tokio::test]
 async fn attach_a2a_context_derives_prefixed_session_key()
@@ -29,7 +16,6 @@ async fn attach_a2a_context_derives_prefixed_session_key()
         cwd,
         snapshots: Vec::new(),
         current_session_id: None,
-        seeded_tokens: None,
         attach_error: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
@@ -86,7 +72,6 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         cwd,
         snapshots: Vec::new(),
         current_session_id: None,
-        seeded_tokens: None,
         attach_error: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
@@ -179,7 +164,6 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         cwd,
         snapshots: vec![UiMessageSnapshot::new("user", "hello")],
         current_session_id: None,
-        seeded_tokens: None,
         attach_error: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
@@ -259,7 +243,6 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
         cwd,
         snapshots: vec![UiMessageSnapshot::new("user", "hello")],
         current_session_id: Some(active_key),
-        seeded_tokens: None,
         attach_error: None,
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
@@ -329,100 +312,6 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
             .clone(),
         None,
         "a same-session attach must not call attach_session"
-    );
-    Ok(())
-}
-
-/// WHEN the router finishes an attach whose stored rows carry a token count, THE
-/// runtime SHALL receive `seed_last_total_tokens` with exactly that count.
-///
-/// A switch replaces the transcript the context window is measured from, so the
-/// fresh session must start from the count the stored rows report instead of
-/// from the previous session's last total.
-#[tokio::test]
-async fn attach_a2a_context_seeds_the_stored_token_count()
--> core::result::Result<(), Box<dyn std::error::Error>> {
-    // -- Setup & Fixtures: one assistant row reporting its wire total.
-    let cwd = std::path::PathBuf::from("/home/user/project");
-    let attached_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let mut runtime = AttachContextRuntime {
-        attached_session_id: Arc::clone(&attached_session_id),
-        cwd,
-        snapshots: vec![
-            UiMessageSnapshot::new("user", "hello"),
-            assistant_row_with_total(15),
-        ],
-        current_session_id: None,
-        seeded_tokens: None,
-        attach_error: None,
-    };
-    let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
-    let bus = Bus::default();
-    let sources = dispatch_sources(&bus);
-
-    // -- Exec
-    CommandRouter::dispatch(
-        WorkerCommand::AttachA2aContext {
-            context_id: "ctx-resumed".to_string(),
-            prompt: "[A2A] resumed task".to_string(),
-            task_id: "task-resumed".to_string(),
-        },
-        &mut runtime,
-        &result_tx,
-        None::<NoAgentSwitchHook>,
-        &sources,
-    )
-    .await;
-
-    // -- Check
-    assert_eq!(
-        runtime.seeded_tokens,
-        Some(Some(15)),
-        "the attach must seed exactly the token count its stored rows carry"
-    );
-    Ok(())
-}
-
-/// WHEN the attach finds the session already current, THE router SHALL skip the
-/// clear/hydrate cycle and SHALL NOT reseed the runtime.
-#[tokio::test]
-async fn same_session_attach_does_not_reseed()
--> core::result::Result<(), Box<dyn std::error::Error>> {
-    // -- Setup & Fixtures
-    let cwd = std::path::PathBuf::from("/home/user/project");
-    let prefix = crate::session::prefix::dir_prefix(&cwd);
-    let active_key = format!("{prefix}-ctx-same");
-    let attached_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let mut runtime = AttachContextRuntime {
-        attached_session_id: Arc::clone(&attached_session_id),
-        cwd,
-        snapshots: vec![assistant_row_with_total(15)],
-        current_session_id: Some(active_key),
-        seeded_tokens: None,
-        attach_error: None,
-    };
-    let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
-    let bus = Bus::default();
-    let sources = dispatch_sources(&bus);
-
-    // -- Exec
-    CommandRouter::dispatch(
-        WorkerCommand::AttachA2aContext {
-            context_id: "ctx-same".to_string(),
-            prompt: "[A2A] same session task".to_string(),
-            task_id: "task-same".to_string(),
-        },
-        &mut runtime,
-        &result_tx,
-        None::<NoAgentSwitchHook>,
-        &sources,
-    )
-    .await;
-
-    // -- Check: the transcript was not replayed, so the count was not replaced.
-    assert_eq!(
-        runtime.seeded_tokens, None,
-        "a same-session attach must not reseed the token count"
     );
     Ok(())
 }

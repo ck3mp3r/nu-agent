@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use agnt_runtime::config::StoreType;
-use agnt_runtime::config::{self, CompactionConfig, Config, PluginConfig};
+use agnt_runtime::config::{self, Config, PluginConfig};
 use agnt_runtime::utils::process_env;
 use agnt_tty::policy::{UiPolicy, Verbosity};
 use agnt_tui::rendering::theme::ThemeName;
@@ -149,18 +149,6 @@ pub fn resolve_theme_from_clap(
 }
 
 // endregion: --- Theme
-
-// region:    --- Compaction
-
-/// Extract compaction-related clap flags into a `CompactionConfig`.
-pub fn extract_compaction_flags_from_clap(args: &AgentArgs) -> Result<CompactionConfig> {
-    Ok(CompactionConfig {
-        proactive_threshold_pct: args.proactive_threshold_pct,
-        ..Default::default()
-    })
-}
-
-// endregion: --- Compaction
 
 // region:    --- Session store
 

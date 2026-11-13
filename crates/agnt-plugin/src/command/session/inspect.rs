@@ -1,6 +1,7 @@
 use crate::plugin::AgentPlugin;
 use agnt_runtime::config::CompactionConfig;
 use agnt_runtime::conversation::runtime_build::build_compaction_policy;
+use agnt_runtime::rig_memory::NearWindow;
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::session::prefix::dir_prefix;
 use agnt_runtime::types::{AssistantContent, Message, UserContent};
@@ -130,9 +131,18 @@ impl AgentSessionInspect {
             "keep_asked",
             Value::int(policy.keep_asked as i64, call.head),
         );
+        // The knob, not the stored policy's reserve: the room a decision keeps
+        // free is derived per turn from this percent and that turn's model.
         config_record.push(
-            "reserve",
-            Value::int(policy.summarizer.limits.reserve as i64, call.head),
+            "reserve_pct",
+            Value::int(
+                i64::from(
+                    compaction
+                        .reserve_pct
+                        .unwrap_or(agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT),
+                ),
+                call.head,
+            ),
         );
         config_record.push(
             "summary_tokens",
@@ -145,6 +155,36 @@ impl AgentSessionInspect {
         config_record.push(
             "keep_under",
             Value::int(policy.clearing.keep_under as i64, call.head),
+        );
+        config_record.push(
+            "near_window",
+            Value::string(
+                match policy.near_window {
+                    NearWindow::Summarize => "summarize",
+                    NearWindow::Clear => "clear",
+                },
+                call.head,
+            ),
+        );
+        config_record.push(
+            "tracked",
+            Value::list(
+                policy
+                    .tracked
+                    .iter()
+                    .map(|rule| {
+                        let mut row = Record::new();
+                        row.push("tool", Value::string(rule.tool.to_string(), call.head));
+                        row.push(
+                            "argument",
+                            Value::string(rule.argument.to_string(), call.head),
+                        );
+                        row.push("set", Value::string(rule.set.to_string(), call.head));
+                        Value::record(row, call.head)
+                    })
+                    .collect(),
+                call.head,
+            ),
         );
 
         // Build the final session record

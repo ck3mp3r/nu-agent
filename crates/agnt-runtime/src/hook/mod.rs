@@ -16,6 +16,7 @@
 
 pub mod adapter;
 pub mod agent_hook;
+pub mod anchor_meter;
 pub mod chain;
 pub mod circuit_breaker_guard;
 pub mod doom_loop;
@@ -29,6 +30,7 @@ pub mod unpriced_warnings;
 
 pub use adapter::{ClosureToolAdapter, adapt_closures};
 pub use agent_hook::{DoomLoopState, HookState, StopLedger, StoreLatch};
+pub use anchor_meter::AnchorMeter;
 pub use chain::HookChain;
 pub use permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,

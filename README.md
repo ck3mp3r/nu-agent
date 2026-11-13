@@ -23,7 +23,7 @@ model = "ollama/gemma4:31b"
 base_url = "http://127.0.0.1:11434"
 
 [compaction]
-proactive_threshold_pct = 0.80
+reserve_pct = 20
 keep_recent = 20000
 ```
 

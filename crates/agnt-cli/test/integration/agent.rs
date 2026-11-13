@@ -120,8 +120,6 @@ async fn test_integration_agent_run_agent_applies_cli_flags() -> Result<()> {
         "memory",
         "--repetition-guard",
         "off",
-        "--proactive-threshold-pct",
-        "0.5",
         "--agent",
         "planner",
         "--name",

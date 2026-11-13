@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span};
@@ -124,10 +124,10 @@ where
     /// detection). Resolved from config; when `false`, the hook skips all
     /// detector calls.
     repetition_guard: bool,
-    /// Real token count from the last LLM completion, shared across turns: the
-    /// wire's total when it reports one, else input + output. Used by the
-    /// hook's compaction threshold check and the model-switch gate.
-    last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The compaction trigger's meter, shared across turns: the usage the last
+    /// completion reported, the request it answered, and the entry it counted
+    /// through. The hook's decision meters the next request with it.
+    meter: crate::hook::AnchorMeter,
     /// The session's store-dead latch: set when a session-store open fails, so
     /// the compaction path stops attempting a store it knows is broken. Cleared
     /// by the session switch and by a `run_compaction` that opened the store.
@@ -152,10 +152,11 @@ where
     multi_agent: Multi,
     /// Shared runtime model. The single point of model identity: the agent is
     /// built from this model on every turn. It is constructed eagerly at
-    /// startup and swapped on every `switch_model()` call. The compactor has
-    /// its own startup-fixed model and never reads this one.
-    dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
-    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
+    /// startup; a switch marks it stale and the model builds at the slot's next
+    /// use. The compactor shares this slot's cell by default.
+    dyn_model: crate::conversation::state::provider::ModelSlot,
+    /// Hook-driven compaction machinery: the compactor and the percent of the
+    /// model's input limit a decision keeps free below the trigger.
     compaction: crate::conversation::compaction::CompactionConfig,
 }
 
@@ -176,20 +177,41 @@ where
     Persona: PersonaManager,
     Multi: MultiAgentManager,
 {
-    /// The shared model slot, recovered if a switch panicked mid-swap.
-    pub(crate) fn lock_dyn_model(
-        &self,
-    ) -> MutexGuard<'_, rig::DynModel<rig::operation::Completion>> {
-        self.dyn_model
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// Build the model a switch left pending, at the model's next use.
+    ///
+    /// A switch swaps the config and marks the shared slot stale instead of
+    /// building, so it returns without waiting for a provider client. This is
+    /// where that debt is paid: the next turn or compaction builds the model,
+    /// and with it the client, and hands both to their consumers — the
+    /// compactor's wire and a planning spec re-resolved for the model the build
+    /// landed on, so a switched-to model is sized by its own window.
+    ///
+    /// `Ok(())` when nothing is pending, which is every use after the first.
+    pub async fn ensure_active_model(&mut self) -> Result<(), LabeledError> {
+        if !self.dyn_model.is_pending() {
+            return Ok(());
+        }
+        let slot = self.dyn_model.clone();
+        let model = slot.ensure(|| self.provider.build_dyn_model()).await?;
+        self.compaction.compactor.set_model(model);
+        self.compaction.compactor.set_spec(self.compaction_spec());
+        Ok(())
     }
 
-    /// The last completion's token count, recovered if a writer panicked.
-    pub(crate) fn lock_last_total_tokens(&self) -> MutexGuard<'_, Option<u64>> {
-        self.last_total_tokens
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// The planning spec for the active model, `None` when its provider
+    /// resolves to no rig provider id — compaction is then disabled.
+    fn compaction_spec(&self) -> Option<rig::catalog::ModelSpec> {
+        crate::conversation::compaction::compactor::resolve_model_spec_for(
+            self.provider.provider_config(),
+            self.provider.startup_plugin_config(),
+        )
+    }
+
+    /// The last completion's context count, `None` until a provider reports one.
+    /// The model-switch gate reads it: a session that already consumed a model's
+    /// whole window cannot fit it.
+    pub(crate) fn last_context_tokens(&self) -> Option<u64> {
+        self.meter.context_tokens()
     }
 }
 
@@ -241,6 +263,11 @@ where
         if let Err(error) = self.provider.ensure_client_cached().await {
             return TurnEnd::Failed(TurnFailure::from_error(error));
         }
+        // A switch before this turn left the shared model stale. Build it now,
+        // with the client it needs: this is the next use the switch deferred to.
+        if let Err(error) = self.ensure_active_model().await {
+            return TurnEnd::Failed(TurnFailure::from_error(error));
+        }
 
         // Compute filtered tool definitions before entering the mutable borrow scope
         let visible_tool_definitions = self.tools.active_definitions(
@@ -267,14 +294,15 @@ where
                     doom_state: Arc::clone(&self.doom_state),
                     output_repetition: Arc::clone(&self.output_repetition),
                     repetition_guard: self.repetition_guard,
-                    last_total_tokens: Arc::clone(&self.last_total_tokens),
+                    meter: self.meter.clone(),
                     store_latch: Arc::clone(&self.store_latch),
+                    pending_summary: crate::hook::chain::PendingSummary::default(),
                     turn_usage: crate::hook::TurnUsage::default(),
                     session_usage: self.session_usage.clone(),
                     bus: self.bus.clone(),
                     cwd: self.cwd.clone(),
                 },
-                Arc::clone(&self.dyn_model),
+                self.dyn_model.cell(),
                 self.compaction.clone(),
             )
             .with_agent(self.hook_context.persona().unwrap_or_default());
@@ -401,33 +429,6 @@ where
     }
 }
 
-impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>
-where
-    Prov: ProviderManager + Send,
-    Tools: ToolManager + Send,
-    Sess: SessionManager + Send,
-    Persona: PersonaManager + Send,
-    Multi: MultiAgentManager + Send,
-{
-    /// Recompute the compaction threshold against the active model's context
-    /// window, using the build's precedence: `model_context_tokens`, then
-    /// `max_context_tokens`, then the built-in default.
-    ///
-    /// The planning spec is deliberately left alone: it describes the
-    /// startup-fixed compaction model, not the active one.
-    fn refresh_compaction_threshold(&mut self) {
-        let max_context_tokens = {
-            let config = self.provider.provider_config();
-            config
-                .model_context_tokens
-                .or_else(|| config.max_context_tokens.map(|t| t as usize))
-                .unwrap_or(crate::config::defaults::MAX_CONTEXT_TOKENS as usize)
-        };
-        self.compaction.threshold_tokens =
-            Some((max_context_tokens as f64 * self.compaction.threshold_pct) as usize);
-    }
-}
-
 impl<Prov, Tools, Sess, Persona, Multi> ModelSwitching
     for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
@@ -451,7 +452,7 @@ where
         // A session that already consumed the target's whole window cannot fit
         // the next turn, so the switch is refused rather than breaking it. An
         // unknown consumed count or window means nothing to protect.
-        let consumed = *self.lock_last_total_tokens();
+        let consumed = self.last_context_tokens();
         if let Some(consumed) = consumed
             && let Some(window) = self.max_context_tokens()
             && consumed >= window
@@ -461,20 +462,13 @@ where
                 "cannot switch to '{identity}': the session has consumed about {consumed} tokens and the model's context window is {window} tokens; compact the session first (/compact)"
             ));
         }
-        // Erase the newly-cached concrete model into a `DynModel<Completion>`
-        // and swap it into the shared slot. The next turn builds its agent from
-        // the new model; an in-flight turn keeps the model it already cloned.
-        // The model is built from the bare model name via the canonical
-        // constructor.
-        let new_model = self
-            .provider
-            .build_dyn_model()
-            .await
-            .map_err(|e| e.to_string())?;
-        *self.lock_dyn_model() = new_model;
-        // The threshold is an absolute token count, so it must follow the new
-        // model's context window.
-        self.refresh_compaction_threshold();
+        // The config is now the new model's, so the shared model no longer
+        // matches it. Mark it stale instead of building: the provider client and
+        // the model erased from it are built at the slot's next use
+        // ([`Self::ensure_active_model`]), so this call waits on no transport —
+        // a provider whose client is slow, or never answers, cannot wedge the
+        // surface here. An in-flight turn keeps the model it already cloned.
+        self.dyn_model.mark_pending();
         // Hook envelopes follow the active model.
         self.hook_context.set_model(self.active_model_identity());
         // Every successful switch publishes, so a hook observes the change. The
@@ -537,7 +531,7 @@ where
             let previous_config = self.provider.provider_config().clone();
             let pre_override_model = self.active_model_identity();
             let switched = self.provider.switch_model(&model).is_ok();
-            let consumed = *self.lock_last_total_tokens();
+            let consumed = self.last_context_tokens();
             let blocked = match (switched, consumed, self.max_context_tokens()) {
                 (true, Some(consumed), Some(window)) if consumed >= window => {
                     Some((consumed, window))
@@ -551,11 +545,12 @@ where
                      {consumed} tokens and the model's context window is {window} tokens; \
                      compact the session first (/compact)"
                 );
-            } else if let Ok(new_model) = self.provider.build_dyn_model().await {
-                // Rebuild the shared model from the bare model name so the
-                // persona's model serves the next turn (mirrors switch_model).
-                *self.lock_dyn_model() = new_model;
-                self.refresh_compaction_threshold();
+            } else if switched {
+                // The persona's model now owns the config, so the shared model
+                // is stale. Mark it, exactly as a model switch does: the next
+                // turn or compaction builds it, and this call constructs no
+                // client for a persona the surface may leave straight away.
+                self.dyn_model.mark_pending();
             }
             // The override took effect when the provider accepted it and the
             // window gate did not roll it back: the persona's model is what the
@@ -696,13 +691,11 @@ where
     Multi: MultiAgentManager,
 {
     fn clear_session(&mut self) {
-        self.session.clear();
-        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
+        reset_session_scoped_inputs(&self.store_latch, &self.meter);
     }
 
     fn new_session(&mut self) {
-        self.session.clear();
-        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
+        reset_session_scoped_inputs(&self.store_latch, &self.meter);
         let new_id = crate::session::resolver::generate_session_id();
         let prefix = crate::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
@@ -726,10 +719,6 @@ where
                 session_id: new_id,
                 hydrated: false,
             });
-    }
-
-    fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
-        *self.session.last_total_tokens_mut() = tokens;
     }
 }
 
@@ -763,14 +752,22 @@ where
             return Ok(());
         };
 
+        // A compaction reads the model, so it is a use: a switch before it is
+        // paid here, and the compactor's wire and planning spec follow.
+        self.ensure_active_model()
+            .await
+            .map_err(|e| e.to_string())?;
+
         // Run compaction against the rig-memory store of the session: the splice
         // `compact()` makes IS what the next run loads. `run_compaction` emits
         // `Started`/`SummaryChunk`/`Completed`/`Failed` (via `compact()`).
+        let model = self.dyn_model.model();
         let path = crate::hook::chain::CompactionPath::new(
             self.session.inner_memory(),
             &self.compaction,
-            &self.last_total_tokens,
+            &self.meter,
             &self.store_latch,
+            &model,
         );
         let _ = crate::hook::chain::run_compaction(
             &session_id,
@@ -781,6 +778,31 @@ where
         )
         .await;
         Ok(())
+    }
+
+    async fn uncompact(&mut self, source: CompactionSource) -> Result<(), String> {
+        let Some(session_id) = self.final_session_id.clone() else {
+            return Ok(());
+        };
+
+        // The undo reads the session's own rig-memory log and writes the
+        // restored conversation back: the entries the newest compaction's aside
+        // names are what comes back. `undo::uncompact` publishes the outcome.
+        let result = crate::conversation::compaction::undo::uncompact(
+            &session_id,
+            self.session.inner_memory(),
+            source,
+            self.bus.stream(),
+            self.bus.lifecycle(),
+        )
+        .await;
+        if result.is_ok() {
+            // The restored context is what the next decision meters whole, and
+            // the store answered: clear both session-scoped inputs, as a
+            // successful compaction does.
+            reset_session_scoped_inputs(&self.store_latch, &self.meter);
+        }
+        result
     }
 
     async fn load_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
@@ -812,8 +834,7 @@ where
         // read answers the join, the statuses, and the turns.
         let facts = rig_session_facts(&memory, &matched_id).await;
         let entries = rig_messages(&memory, &matched_id, &facts.entry_turns()).await?;
-        self.session.clear();
-        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
+        reset_session_scoped_inputs(&self.store_latch, &self.meter);
         self.final_session_id = Some(matched_id.clone());
         self.session.inner_memory().warn_repairs(&matched_id).await;
         // The switch starts a new session's usage: the totals cover the
@@ -843,12 +864,8 @@ where
             Vec::new()
         };
 
-        // Switch the runtime to the derived session. Clearing the memory cache
-        // forces the next turn to re-read the session from the store, so a
-        // resumed session continues from its persisted history and a fresh
-        // session starts empty.
-        self.session.clear();
-        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
+        // Switch the runtime to the derived session.
+        reset_session_scoped_inputs(&self.store_latch, &self.meter);
         self.final_session_id = Some(session_id.to_string());
         self.session.inner_memory().warn_repairs(session_id).await;
         // The attach starts a new session's usage: the totals cover the
@@ -865,18 +882,17 @@ where
 /// Clear the hook inputs that describe the session the runtime is leaving.
 ///
 /// Every active-session switch (`clear_session`, `new_session`, `load_session`,
-/// `attach_session`) goes through here: a store-dead latch and a last real token
-/// count belong to one conversation, so neither survives a switch to another.
+/// `attach_session`) goes through here: a store-dead latch and a last reported
+/// token count belong to one conversation, so neither survives a switch to
+/// another.
 fn reset_session_scoped_inputs(
     store_latch: &crate::hook::StoreLatch,
-    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+    meter: &crate::hook::AnchorMeter,
 ) {
     *store_latch
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-    *last_total_tokens
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    meter.reset();
 }
 
 /// Whether the rig-memory store holds a log for `session_id`.
@@ -1077,8 +1093,11 @@ where
     }
 
     /// Install `model` as the runtime's shared model.
+    ///
+    /// Installing also clears the staleness a switch set: the caller built this
+    /// model for the config in force, so it is what the next use must serve.
     pub fn replace_dyn_model(&self, model: rig::DynModel<rig::operation::Completion>) {
-        *self.lock_dyn_model() = model;
+        self.dyn_model.install(model);
     }
 
     /// The engine handle the composition root installed.
@@ -1203,10 +1222,9 @@ impl AgentConversationRuntime {
         parts: RuntimeParts,
         config: RuntimeBuildParams,
     ) -> Result<Self, LabeledError> {
-        use super::runtime_build::{build_compaction_policy, resolve_light_config};
+        use super::runtime_build::build_compaction_policy;
         use super::state::mcp::McpState;
         use super::state::permission::PermissionState;
-        use super::state::provider::ProviderState;
         use crate::config::defaults;
         use crate::conversation::compaction::compactor::NuCompactor;
         use rig::DynModel;
@@ -1236,90 +1254,56 @@ impl AgentConversationRuntime {
             &active_config.provider,
             &active_config.model,
         ));
-        // Resolve the context-window limit before the config is consumed below.
-        // Used to compute the hook's compaction threshold.
-        let max_context_tokens = active_config
-            .model_context_tokens
-            .or_else(|| active_config.max_context_tokens.map(|t| t as usize))
-            .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
         // Resolve the repetition-guard flag before the config is consumed below:
         // when unset, the guard defaults to enabled.
         let repetition_guard = active_config
             .repetition_guard
             .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
-        // The compaction (summarizer) model: the `[models.light]` role when it
-        // resolves, else the startup active model. A caller that builds the
-        // compactor itself hands it in `compactor_model`, and the compaction
-        // identity is then the active model. It is chosen once, here, and never
-        // follows a model switch.
-        let supplied_compactor = config.compactor_model;
-        let light_config = if supplied_compactor.is_some() {
-            None
-        } else {
-            resolve_light_config(config.plugin_config.as_ref())
-        };
-        // The planning spec describes the COMPACTION model: rig-memory sizes each
-        // summarized portion to its context window.
-        let compaction_config = light_config.as_ref().unwrap_or(&active_config);
-        let compaction_source = if light_config.is_some() {
-            "[models.light]"
-        } else {
-            "the startup active model"
-        };
+        // The summarizer is the active model: the in-place summary, every
+        // side-call, and the notes call all run on it. The planning spec is the
+        // active model's too: rig-memory sizes each summarized portion to its
+        // context window.
+        let compaction_config = &active_config;
         log::info!(
-            "compaction model: {}/{} ({compaction_source})",
+            "compaction model: {}/{} (the active model)",
             compaction_config.provider,
             compaction_config.model
         );
-        let compaction_spec =
-            crate::conversation::compaction::compactor::resolve_model_spec_for(compaction_config);
-        // The compactor's provider needs the plugin config after the agent
-        // provider takes ownership of it.
-        let compactor_plugin_config = config.plugin_config.clone();
+        let compaction_spec = crate::conversation::compaction::compactor::resolve_model_spec_for(
+            compaction_config,
+            config.plugin_config.as_ref(),
+        );
         // The compaction policy: rig-memory's default with the `[compaction]`
-        // block's overrides on top.
-        let compaction_config = config
+        // block's overrides on top. The block's `reserve_pct` is not a policy
+        // field: the trigger derives the room it keeps free from the turn's own
+        // spec, so the stored policy keeps rig-memory's reserve.
+        let compaction_block = config
             .plugin_config
             .as_ref()
             .and_then(|plugin_config| plugin_config.compaction.clone())
             .unwrap_or_default();
-        let compaction_policy = build_compaction_policy(&compaction_config);
+        let compaction_policy = build_compaction_policy(&compaction_block);
 
         // The shared model is the single point of model identity: the agent is
         // built from it on every turn. It is constructed eagerly at startup so it
         // is ready for any operation (including `/compact` before the first turn),
-        // and rewritten by every `switch_model()`.
+        // and a switch marks it stale for its next use to rebuild.
         let dyn_model = provider
             .build_dyn_model()
             .await
             .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
-        let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
+        let dyn_model = crate::conversation::state::provider::ModelSlot::from_model(dyn_model);
 
-        // Compactor summarizes evicted messages with its own erased model: the
-        // light role's when configured, else the startup active model. It is
-        // startup-fixed — no model switch touches it — and it is a standalone
-        // service invoked directly by the hook's compaction logic.
-        let compactor_model: Arc<Mutex<DynModel<Completion>>> = match supplied_compactor {
+        // The compactor summarizes with the active model: the runtime's own
+        // shared model cell, so every model rebuild reaches it, unless a
+        // composition root built the model itself. It is a standalone service
+        // invoked directly by the hook's compaction logic and by `/compact`.
+        let compactor_model: Arc<Mutex<DynModel<Completion>>> = match config.compactor_model {
             Some(compactor_model) => compactor_model,
-            None => {
-                let compactor_model = match light_config {
-                    Some(light_config) => {
-                        let mut light_provider =
-                            ProviderState::new(light_config, compactor_plugin_config)
-                                .with_copilot_token_dir(config.paths.copilot_token_dir.clone());
-                        light_provider.build_dyn_model().await.map_err(|e| {
-                            LabeledError::new(format!("Failed to build compactor model: {e}"))
-                        })?
-                    }
-                    None => provider.build_dyn_model().await.map_err(|e| {
-                        LabeledError::new(format!("Failed to build compactor model: {e}"))
-                    })?,
-                };
-                Arc::new(Mutex::new(compactor_model))
-            }
+            None => dyn_model.cell(),
         };
         let compactor = NuCompactor::from_shared_model(
-            Arc::clone(&compactor_model),
+            compactor_model,
             bus.clone(),
             compaction_policy,
             compaction_spec,
@@ -1331,17 +1315,11 @@ impl AgentConversationRuntime {
             session.warn_repairs(session_id).await;
         }
 
-        // Threshold used by the hook to decide when to compact: proactive_threshold_pct
-        // (default 0.8) of model_context_tokens (falling back to max_context_tokens).
-        let threshold_pct = config
-            .proactive_threshold_pct
-            .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
-        let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
-
         let compaction = crate::conversation::compaction::CompactionConfig {
             compactor,
-            threshold_tokens,
-            threshold_pct,
+            reserve_pct: compaction_block
+                .reserve_pct
+                .unwrap_or(defaults::DEFAULT_RESERVE_PCT),
         };
 
         Ok(Self {
@@ -1379,7 +1357,7 @@ impl AgentConversationRuntime {
                 crate::hook::output_repetition::RepetitionState::default(),
             )),
             repetition_guard,
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             bus,
             hook_context,
             session_usage: crate::hook::TurnUsage::default(),
@@ -1391,6 +1369,10 @@ impl AgentConversationRuntime {
 }
 
 // endregion: --- Constructors
+
+// region:    --- Support
+
+// endregion: --- Support
 
 // region:    --- Seams
 

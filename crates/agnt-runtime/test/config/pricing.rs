@@ -38,6 +38,7 @@ fn model_spec(model_id: &str, cost: Option<(f64, f64)>) -> ModelSpec {
         limit: ModelLimit {
             context: 128_000,
             output: 4_096,
+            input: None,
         },
         cost: cost.map(|(input, output)| ModelCost {
             input,

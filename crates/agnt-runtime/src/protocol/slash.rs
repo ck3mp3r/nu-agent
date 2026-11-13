@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashCommand {
     Compact,
+    Uncompact,
     Mcp,
     Help,
     Status,
@@ -16,6 +17,7 @@ impl SlashCommand {
     pub fn label(&self) -> &'static str {
         match self {
             SlashCommand::Compact => "/compact",
+            SlashCommand::Uncompact => "/uncompact",
             SlashCommand::Mcp => "/mcp",
             SlashCommand::Help => "/help",
             SlashCommand::Status => "/status",
@@ -31,6 +33,7 @@ impl SlashCommand {
     pub fn summary(&self) -> &'static str {
         match self {
             SlashCommand::Compact => "Force compaction now",
+            SlashCommand::Uncompact => "Undo the newest compaction",
             SlashCommand::Mcp => "Open MCP servers panel",
             SlashCommand::Help => "Open help panel",
             SlashCommand::Status => "Open status panel",
@@ -64,8 +67,9 @@ pub enum SlashParseResult {
     Unknown(String),
 }
 
-pub const SLASH_COMMAND_ORDER: [SlashCommand; 10] = [
+pub const SLASH_COMMAND_ORDER: [SlashCommand; 11] = [
     SlashCommand::Compact,
+    SlashCommand::Uncompact,
     SlashCommand::Mcp,
     SlashCommand::Help,
     SlashCommand::Status,
@@ -102,6 +106,7 @@ pub fn parse_slash_command(input: &str) -> SlashParseResult {
     let command = trimmed.to_ascii_lowercase();
     let parsed = match command.as_str() {
         "/compact" => Some(SlashCommand::Compact),
+        "/uncompact" => Some(SlashCommand::Uncompact),
         "/mcp" => Some(SlashCommand::Mcp),
         "/help" => Some(SlashCommand::Help),
         "/status" => Some(SlashCommand::Status),

@@ -281,7 +281,10 @@ pub struct AgentArgs {
     #[arg(short = 'q', long, global = true)]
     pub quiet: bool,
 
-    /// Log level for file-based logging (error|warn|info|debug|trace).
+    /// Log level for file-based logging (error|warn|info|debug|trace|off).
+    ///
+    /// `off` silences the file while the in-memory ring keeps recording, so the
+    /// dump a quit or a panic appends still carries the run's warnings.
     #[arg(long, global = true)]
     pub log_level: Option<String>,
 
@@ -296,10 +299,6 @@ pub struct AgentArgs {
     /// Number of recent messages to keep during compaction.
     #[arg(long, global = true)]
     pub keep_recent: Option<u32>,
-
-    /// Proactive compaction threshold percentage (0.0 to 1.0).
-    #[arg(long, global = true)]
-    pub proactive_threshold_pct: Option<f64>,
 }
 
 // endregion: --- Types
@@ -336,6 +335,10 @@ fn main() {
             dispatch::run_agent(&args, prompt, &ui).await
         }),
     };
+
+    // The run is over: append the ring to the log file so the lines a crash or
+    // a quit cut short are still on disk.
+    agnt_runtime::logging::flush_ring_to_file();
 
     if let Err(err) = result {
         eprintln!("agent: {err}");
@@ -387,45 +390,45 @@ fn resolve_prompt(positional: Option<String>) -> Option<String> {
 }
 
 fn init_logging(args: &AgentArgs) {
-    let mut builder =
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
-
-    if let Some(level) = args.log_level.as_deref() {
-        builder.filter_level(level.parse().unwrap_or(log::LevelFilter::Info));
-    }
+    // The level `--log-level` or `RUST_LOG` selects, floored at warn: the file
+    // and the ring always receive warn and above. Per-module `RUST_LOG`
+    // directives stay in effect.
+    let level = match args.log_level.as_deref() {
+        Some(level) => level.parse().unwrap_or(log::LevelFilter::Info),
+        None => environment_level(),
+    };
 
     // The state tree is readable from the environment at process start, so the
     // log target resolves here once. The grammar cache is installed after
     // config load instead: its ladder has a `[paths]` level the environment
     // cannot see.
     let paths = agnt_runtime::config::Paths::resolve_for_process(None).ok();
+    let writer = agnt_runtime::logging::start_session_log(
+        paths.as_ref().map(|paths| paths.log_path.as_path()),
+    );
+
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
 
     // Log to a file, never to stderr. The TUI renders on stderr, so stderr log
     // output corrupts the display and reappears on the terminal once the TUI
     // leaves the alternate screen.
-    builder.target(log_target(paths.as_ref()));
+    //
+    // `off` is a sink mode: the logger stays at warn so the ring still gathers
+    // warn and above, and the file target is silenced instead.
+    let (logger_level, silenced) = agnt_runtime::logging::resolved_level(level);
+    builder.filter_level(logger_level);
+    builder.target(env_logger::Target::Pipe(Box::new(writer)));
     builder.format_timestamp_millis();
     builder.init();
+    agnt_runtime::logging::set_process_sink_silenced(silenced);
 }
 
-/// Open the file log target at the resolved `Paths.log_path`.
-///
-/// The target derives from the state ladder at process start; a
-/// `[paths].state_home` value retargets the sink once config.toml loads.
-/// Falls back to a sink when the log directory or file cannot be opened, so
-/// that logging never writes to stderr.
-fn log_target(paths: Option<&agnt_runtime::config::Paths>) -> env_logger::Target {
-    let sink = || env_logger::Target::Pipe(Box::new(std::io::sink()));
-
-    let Some(paths) = paths else {
-        return sink();
-    };
-    let Ok(file_sink) = agnt_runtime::logging::FileLogSink::open(paths.log_path.clone()) else {
-        return sink();
-    };
-    agnt_runtime::logging::install_process_sink(&file_sink);
-
-    env_logger::Target::Pipe(Box::new(file_sink))
+/// The global level `RUST_LOG` selects, defaulting to `info`.
+fn environment_level() -> log::LevelFilter {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .build()
+        .filter()
 }
 
 // endregion: --- Support

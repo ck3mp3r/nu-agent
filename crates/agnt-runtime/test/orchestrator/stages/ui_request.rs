@@ -5,6 +5,9 @@
 
 // region:    --- Modules
 
+#[path = "ui_request/abandon.rs"]
+mod abandon;
+
 #[path = "ui_request/blocking.rs"]
 mod blocking;
 

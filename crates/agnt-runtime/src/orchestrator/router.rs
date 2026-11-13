@@ -80,6 +80,16 @@ impl CommandRouter {
                 }
                 true
             }
+            WorkerCommand::RunUncompact { source } => {
+                log::trace!("Router: RunUncompact source={source:?}");
+                // The runtime publishes the `Uncompacted` row and the terminal
+                // spine row itself, and a refusal as a notice record: the
+                // outcome is data, so no surface has to infer one from text.
+                if let Err(e) = runtime.uncompact(source).await {
+                    log::warn!("Uncompaction failed: {e}");
+                }
+                true
+            }
             WorkerCommand::HandleUiRequest {
                 request,
                 response_tx,
@@ -114,16 +124,11 @@ impl CommandRouter {
                                 to: SessionId::new(key.clone()),
                             },
                         ));
-                        let (records, last_total_tokens) =
+                        let (records, _last_total_tokens) =
                             crate::protocol::contracts::project_snapshots(snapshots);
                         for record in records {
                             let _ = sources.stream.publish(record);
                         }
-                        // The switch replaces the transcript the context window
-                        // is measured from, so the fresh session starts from the
-                        // count its stored rows report rather than from the
-                        // previous session's last total.
-                        runtime.seed_last_total_tokens(last_total_tokens);
                         let _ = sources.lifecycle.publish(LifecycleEvent::SessionSwitched {
                             from: None,
                             to: key,

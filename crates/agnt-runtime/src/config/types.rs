@@ -186,16 +186,18 @@ pub struct PluginConfig {
 
 /// All fields are `Option` — `None` means "use default".
 ///
-/// The `[compaction]` keys mirror rig-memory's own compaction policy table. Every
-/// policy field is optional: a missing key is rig-memory's default, and rig owns
-/// the meaning of the value. No host-side range check applies to them.
+/// The `[compaction]` keys mirror rig-memory's own compaction policy table, with
+/// one exception: `reserve_pct` is ours. It is the percent of the model's input
+/// limit the compaction trigger keeps free, range-checked here. Every other key
+/// is optional: a missing key is rig-memory's default, and rig owns the meaning
+/// of the value.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompactionConfig {
-    /// Proactive compaction threshold percentage 0.0-1.0 (default: 0.80)
-    pub proactive_threshold_pct: Option<f64>,
-    /// Tokens kept free below the model's window (rig-memory default: 16384).
-    pub reserve: Option<u64>,
-    /// The longest summary asked for, in tokens (rig-memory default: 12000).
+    /// Percent of the model's input limit kept free below the compaction
+    /// trigger, 0..=100. Unset keeps our default of 20.
+    pub reserve_pct: Option<u32>,
+    /// The longest summary asked for, in tokens (rig-memory default: 32000).
     pub summary_tokens: Option<u64>,
     /// Characters of a tool's output or arguments the summarizer sees
     /// (rig-memory default: 2000).
@@ -215,6 +217,10 @@ pub struct CompactionConfig {
     pub tracked: Option<Vec<rig_memory::TrackArgument>>,
     /// The summarizer's prompts.
     pub prompts: Option<rig_memory::SummaryPrompts>,
+    /// What a near-window compaction does instead of summarizing: `summarize`
+    /// writes notes on the outputs it clears, `clear` clears them silently
+    /// (rig-memory default: summarize).
+    pub near_window: Option<rig_memory::NearWindow>,
 }
 
 /// The type of session store backend to use.
@@ -432,15 +438,12 @@ impl CompactionConfig {
     /// Validate the compaction configuration.
     ///
     /// Rules:
-    /// - `proactive_threshold_pct` must be in 0.0..=1.0 if set
+    /// - `reserve_pct` must be in 0..=100 if set
     pub fn validate(&self) -> Result<(), String> {
-        if let Some(pct) = self.proactive_threshold_pct
-            && !(0.0..=1.0).contains(&pct)
+        if let Some(pct) = self.reserve_pct
+            && pct > 100
         {
-            return Err(format!(
-                "proactive_threshold_pct must be between 0.0 and 1.0, got {}",
-                pct
-            ));
+            return Err(format!("reserve_pct must be between 0 and 100, got {pct}"));
         }
 
         Ok(())

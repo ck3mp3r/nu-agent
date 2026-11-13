@@ -18,10 +18,14 @@ mod compaction;
 mod dispatch;
 mod events;
 mod hook_impl;
+mod in_place;
 mod not_run;
 mod outcome;
 
+pub(crate) use compaction::PendingClearance;
 pub use compaction::{CompactionPath, run_compaction};
+pub use in_place::PendingSummary;
+pub(crate) use in_place::Supersede;
 pub use not_run::{
     CANCELLED_DISPATCH_MESSAGE, CANCELLED_STOP_REASON, NotRunCall, NotRunOutcome, NotRunStart,
     emit_not_run_dispatch,
@@ -41,6 +45,7 @@ use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 
 use super::agent_hook::StopLedger;
+use super::anchor_meter::AnchorMeter;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
 use super::doom_loop::DoomLoopDetector;
 use super::history_snapshot::HistorySnapshot;
@@ -99,11 +104,11 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     /// spec, so a completion is priced at the rates of the model that served
     /// it — not at the compaction model's.
     model: rig::DynModel<rig::operation::Completion>,
-    /// Real token count from the last LLM completion, shared across turns. Used by
-    /// `decide_compaction` to check the threshold against the real context size
-    /// (plus the current prompt) instead of the chars/4 heuristic. `None` before
-    /// the first completion and after a compaction reset.
-    last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The compaction trigger's meter: the usage the last completion reported,
+    /// the request it answered, and the entry it counted through, shared across
+    /// turns. `decide_compaction` meters the next request with it; a settled
+    /// completion writes what the provider reported.
+    meter: AnchorMeter,
     /// The turn's LLM usage, accumulated as each call completes. The turn
     /// executor reads the sums when it publishes the turn-completed event.
     turn_usage: TurnUsage,
@@ -120,6 +125,10 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     unpriced_warnings: UnpricedWarnings,
     /// Why this turn's run stopped, recorded when a guard or the user stops it.
     stop: StopLedger,
+    /// The in-place summary this turn decided on, waiting for the patched call's
+    /// reply. Shared across the turn's attempts, so a retried run keeps the
+    /// plan the first attempt made.
+    pending_summary: PendingSummary,
 }
 
 // endregion: --- Types

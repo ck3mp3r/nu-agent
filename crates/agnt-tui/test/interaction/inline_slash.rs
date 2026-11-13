@@ -51,7 +51,14 @@ fn inline_slash_command_routing_table() {
     );
 
     // Immediate slash commands do not set busy or the spinner.
-    for command in ["/compact", "/mcp", "/help", "/status", "/skills"] {
+    for command in [
+        "/compact",
+        "/uncompact",
+        "/mcp",
+        "/help",
+        "/status",
+        "/skills",
+    ] {
         let mut state = AppState {
             input: InputState::default().with_pending_submit_text(command.to_string()),
             ..Default::default()
@@ -70,7 +77,7 @@ fn inline_slash_command_routing_table() {
     // Tab on a real inline-slash selection submits the highlighted command.
     let mut state = AppState::default();
     state.check_inline_slash("/");
-    for _ in 0..3 {
+    for _ in 0..4 {
         if let Some(s) = state.picker.active_state_mut() {
             s.move_down();
         }

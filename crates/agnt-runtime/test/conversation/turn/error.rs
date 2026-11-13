@@ -125,6 +125,28 @@ fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
     Ok(())
 }
 
+/// A `ProviderError::Stalled(idle)` — the driver dropped a streamed reply that
+/// sent nothing for its idle window — must classify as `ServerError`
+/// (retryable), the same kind our display path gives a "timeout_error".
+#[test]
+fn prompt_wrapped_stalled_timeout_is_server_error() -> Result<()> {
+    let turn_err = turn_error_from_prompt_wrapped(rig::error::ProviderError::Stalled(
+        std::time::Duration::from_secs(5),
+    ));
+    match turn_err {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, msg, .. } => {
+            assert_eq!(kind, CompletionErrorKind::ServerError);
+            assert!(kind.is_retryable(), "Stalled must be retryable");
+            assert!(
+                msg.contains("TimeoutError"),
+                "msg keeps the provider Display text, got: {msg}"
+            );
+        }
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
+    Ok(())
+}
+
 /// `From<PromptError>` must route `PromptError::Provider` through the
 /// same helper, producing the same kind and msg as the PromptError path.
 #[test]

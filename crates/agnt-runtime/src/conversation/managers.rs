@@ -49,15 +49,6 @@ pub trait SessionManager: Sync {
     ) -> impl std::future::Future<
         Output = Result<std::sync::Arc<dyn rig_memory::Store>, crate::session::MemoryError>,
     > + Send;
-
-    /// Clear all messages from conversation memory and reset token tracking.
-    fn clear(&mut self);
-
-    /// Return the last recorded total-token count (for compaction evaluation).
-    fn last_total_tokens(&self) -> Option<u64>;
-
-    /// Return a mutable reference to the last total token counter.
-    fn last_total_tokens_mut(&mut self) -> &mut Option<u64>;
 }
 
 // endregion: --- SessionManager

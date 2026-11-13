@@ -13,6 +13,7 @@ use super::*;
 use crate::config::{AgentsConfig, Config};
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
+use crate::conversation::managers::ProviderManager;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::mcp::McpState;
 use crate::conversation::state::memory::MemoryState;
@@ -123,10 +124,38 @@ fn build_fixture(
     tool_definitions: Vec<ToolDefinition>,
 ) -> Result<RuntimeFixture> {
     let temp_dir = tempfile::tempdir()?;
-    let cwd = temp_dir.path().to_path_buf();
-    let bus = crate::bus::Bus::default();
     let provider =
         ProviderState::with_client(runtime_config(), CachedProviderClient::Mock(model.clone()));
+    let runtime = assemble(
+        provider,
+        model,
+        &temp_dir,
+        with_caller_cwd,
+        registry,
+        tool_definitions,
+    )?;
+    Ok(RuntimeFixture { runtime, temp_dir })
+}
+
+/// Assemble a runtime over `provider`, every other part a test's.
+///
+/// Generic over the provider manager so a test can drive the switch paths via a
+/// provider of its own — a build future that never resolves is the latency
+/// contract's only witness, and no real provider can offer one. `temp_dir`
+/// supplies the cwd and the store root and must outlive the runtime.
+pub(super) fn assemble<Prov>(
+    provider: Prov,
+    model: MockCompletionModel,
+    temp_dir: &tempfile::TempDir,
+    with_caller_cwd: bool,
+    registry: McpToolRegistry,
+    tool_definitions: Vec<ToolDefinition>,
+) -> Result<AgentRuntime<Prov, ToolState, MemoryState, PersonaState, MultiAgentState>>
+where
+    Prov: ProviderManager,
+{
+    let cwd = temp_dir.path().to_path_buf();
+    let bus = crate::bus::Bus::default();
     let compaction = CompactionConfig {
         compactor: NuCompactor::from_shared_model(
             Arc::new(Mutex::new(summary_model().erase())),
@@ -137,13 +166,13 @@ fn build_fixture(
                 "gpt-4o",
                 Some(200_000),
                 Some(1_024),
+                None,
             ),
         ),
-        threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
     };
 
-    let runtime = AgentConversationRuntime {
+    Ok(AgentRuntime {
         runtime: tokio::runtime::Handle::current(),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         store_latch: Default::default(),
@@ -172,7 +201,7 @@ fn build_fixture(
         doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
         output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
         repetition_guard: true,
-        last_total_tokens: Arc::new(Mutex::new(None)),
+        meter: crate::hook::AnchorMeter::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus: bus.clone(),
         provider,
@@ -191,12 +220,29 @@ fn build_fixture(
             Some("available skills".to_string()),
         ),
         multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
-        dyn_model: Arc::new(Mutex::new(model.erase())),
+        dyn_model: crate::conversation::state::provider::ModelSlot::from_model(model.erase()),
         compaction,
         hook_context: crate::hooks::HookAgentContext::default(),
-    };
+    })
+}
 
-    Ok(RuntimeFixture { runtime, temp_dir })
+/// `assemble` with a caller cwd and no MCP state: the switch paths' fixture.
+pub(super) fn assemble_for_switch<Prov>(
+    provider: Prov,
+    model: MockCompletionModel,
+    temp_dir: &tempfile::TempDir,
+) -> Result<AgentRuntime<Prov, ToolState, MemoryState, PersonaState, MultiAgentState>>
+where
+    Prov: ProviderManager,
+{
+    assemble(
+        provider,
+        model,
+        temp_dir,
+        true,
+        McpToolRegistry::empty(),
+        Vec::new(),
+    )
 }
 
 /// A single-turn mock that streams `text` and finishes with default usage.

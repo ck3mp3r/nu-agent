@@ -46,6 +46,13 @@ impl SlashHandler for SlashStage {
                     source: CompactionSource::Manual,
                 });
             }
+            SlashParseResult::Command(SlashCommand::Uncompact) => {
+                // An uncompaction is the mirror image: the loop owner dispatches
+                // the undo to the worker asynchronously, like a compaction.
+                let _ = ctx.control.publish(ControlCommand::UncompactRequested {
+                    source: CompactionSource::Manual,
+                });
+            }
             SlashParseResult::Command(SlashCommand::New) => {
                 // The mint happens in the worker: `new_session()` publishes the
                 // session's own `Started` record and spine row, so the

@@ -428,7 +428,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             engine,
             rig,
             final_session_id: session_id,
-            proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
             base_permissions,
             effective_permissions,
             cli_permissions_overlay: None,

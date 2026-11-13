@@ -35,11 +35,6 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
 
     // -- Check
     assert!(matches!(outcome, ExecuteOutcome::Completed));
-    assert_eq!(
-        memory_state.last_total_tokens(),
-        Some(12),
-        "a completed turn must record the last total token count"
-    );
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
         persisted.is_empty(),
@@ -149,10 +144,5 @@ async fn dispatch_completed_turn_without_a_session_skips_token_tracking() -> Res
 
     // -- Check
     assert!(matches!(outcome, ExecuteOutcome::Completed));
-    assert_eq!(
-        memory_state.last_total_tokens(),
-        None,
-        "a sessionless turn must not record a token count"
-    );
     Ok(())
 }

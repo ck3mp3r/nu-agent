@@ -122,7 +122,7 @@ where
                     doom_state: self.tool_infra.doom_state.clone(),
                     output_repetition: self.tool_infra.output_repetition.clone(),
                     repetition_guard: self.tool_infra.repetition_guard,
-                    last_total_tokens: self.tool_infra.last_total_tokens.clone(),
+                    meter: self.tool_infra.meter.clone(),
                     // A retry is still the same turn: its calls accumulate into
                     // the same cells, so the turn's sums cover every attempt.
                     turn_usage: self.tool_infra.turn_usage.clone(),
@@ -130,6 +130,7 @@ where
                     bus: self.tool_infra.bus.clone(),
                     cwd: self.tool_infra.cwd.clone(),
                     store_latch: Arc::clone(&self.tool_infra.store_latch),
+                    pending_summary: self.tool_infra.pending_summary.clone(),
                 },
                 attempt_cfg.unwrap_or(self.config),
             );

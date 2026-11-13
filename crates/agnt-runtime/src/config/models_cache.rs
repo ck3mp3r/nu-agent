@@ -39,6 +39,10 @@ pub struct ModelSpec {
 pub struct ModelLimit {
     pub context: u32,
     pub output: u32,
+    /// The most input tokens one request may send, as models.dev lists it.
+    /// `None` when the row does not list `limit.input`.
+    #[serde(default)]
+    pub input: Option<u32>,
 }
 
 /// Cost for a model, in USD per million tokens.

@@ -69,6 +69,7 @@ fn test_resolve_model_cache_limits_fill_through_the_declared_catalog() -> Result
                     limit: crate::config::models_cache::ModelLimit {
                         context: 200_000,
                         output: 64_000,
+                        input: None,
                     },
                     cost: None,
                     modalities: None,

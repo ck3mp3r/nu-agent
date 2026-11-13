@@ -9,6 +9,8 @@
 mod dispatch;
 #[path = "compaction/quit.rs"]
 mod quit;
+#[path = "compaction/uncompact.rs"]
+mod uncompact;
 
 // endregion: --- Modules
 

@@ -38,6 +38,12 @@
   # Build the entire workspace in one derivation. No `-p` flag means cargo
   # builds every workspace member, so both binaries land in $out/bin and
   # every shared crate is compiled once.
+  #
+  # The test phase runs `cargo nextest` — the runner every task gate uses —
+  # instead of `buildRustPackage`'s default `cargoCheckHook`, which runs
+  # `cargo test` for a whole test binary in one process. nixpkgs owns the
+  # switch (`useNextest`), so the hook keeps `--offline` and `--target`, and
+  # brings `cargo-nextest` itself.
   combinedPackages = inputs.rustnix.lib.rust.buildTargetOutputs {
     inherit
       cargoToml
@@ -54,7 +60,10 @@
     packageName = "nu-agent";
     archiveAndHash = false;
     nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal pkgs.cacert];
-    extraArgs = {env.AGENT_GIT_SHA = gitSha;};
+    extraArgs = {
+      env.AGENT_GIT_SHA = gitSha;
+      useNextest = true;
+    };
   };
 
   # Archive the combined derivation: .tgz with both binaries plus hashes.

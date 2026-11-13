@@ -21,7 +21,6 @@ async fn attach_a2a_context_failure_fails_the_task_without_enqueueing()
         cwd,
         snapshots: Vec::new(),
         current_session_id: None,
-        seeded_tokens: None,
         attach_error: Some("session store unavailable".to_string()),
     };
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);

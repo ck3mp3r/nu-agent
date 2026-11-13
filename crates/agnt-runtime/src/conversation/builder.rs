@@ -25,10 +25,7 @@ pub fn merge_compaction_configs(
 ) -> CompactionConfig {
     let base = base.cloned().unwrap_or_default();
     CompactionConfig {
-        proactive_threshold_pct: override_cfg
-            .proactive_threshold_pct
-            .or(base.proactive_threshold_pct),
-        reserve: override_cfg.reserve.or(base.reserve),
+        reserve_pct: override_cfg.reserve_pct.or(base.reserve_pct),
         summary_tokens: override_cfg.summary_tokens.or(base.summary_tokens),
         snippet_chars: override_cfg.snippet_chars.or(base.snippet_chars),
         unknown_window_chars: override_cfg
@@ -39,6 +36,7 @@ pub fn merge_compaction_configs(
         clearing: override_cfg.clearing.clone().or(base.clearing),
         tracked: override_cfg.tracked.clone().or(base.tracked),
         prompts: override_cfg.prompts.clone().or(base.prompts),
+        near_window: override_cfg.near_window.or(base.near_window),
     }
 }
 

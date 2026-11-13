@@ -37,21 +37,18 @@ async fn total_tokens_stored_from_the_counters_when_the_usage_reports_no_total()
         ModelUsage::new().input_tokens(1_000).output_tokens(500),
     )?;
     let TurnHook {
-        hook,
-        bus,
-        last_total_tokens,
-        ..
+        hook, bus, meter, ..
     } = turn_hook(&model, pricing_less_summarizer())?;
 
     // -- Exec
     drive_turn(hook, &bus, model).await?;
 
     // -- Check
-    let stored = *last_total_tokens.lock().unwrap_or_else(|e| e.into_inner());
+    let stored = meter.context_tokens();
     assert_eq!(
         stored,
         Some(1_500),
-        "a total-less usage must store input + output"
+        "a total-less usage must record input + output"
     );
     Ok(())
 }

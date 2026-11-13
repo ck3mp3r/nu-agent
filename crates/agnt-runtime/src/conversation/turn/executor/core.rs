@@ -93,9 +93,10 @@ pub struct ToolInfra {
     /// Enable/disable the repetition guard (doom-loop + output-repetition
     /// detection). Passed through to the hook chain.
     pub repetition_guard: bool,
-    /// Real token count from the last LLM completion, shared across turns. Used by
-    /// the hook's compaction threshold check.
-    pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The compaction trigger's meter, shared across turns: the usage the last
+    /// completion reported, the request it answered, and the entry it counted
+    /// through. Read by the hook's decision and the model-switch gate.
+    pub meter: crate::hook::AnchorMeter,
     /// The turn's LLM usage, accumulated by the hook chain as each call
     /// completes. Created per turn; read when the turn-completed event is
     /// published.
@@ -113,6 +114,10 @@ pub struct ToolInfra {
     /// once the session store could not be opened, `None` while it opens. The
     /// runtime clears it when the session changes.
     pub store_latch: crate::hook::StoreLatch,
+    /// The in-place summary this turn decided on, waiting for the patched call's
+    /// reply. Created per turn, so the executor can read it after the run and no
+    /// other turn sees it.
+    pub pending_summary: crate::hook::chain::PendingSummary,
 }
 
 impl ToolInfra {

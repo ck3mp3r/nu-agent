@@ -36,6 +36,8 @@ pub(super) struct HarnessParts<'a> {
     pub(super) concurrent_tx: &'a mpsc::Sender<UiRequestResponse>,
     pub(super) bus: &'a Bus,
     pub(super) worker_rx: &'a mut Option<mpsc::Receiver<WorkerCommand>>,
+    pub(super) blocking_rx: &'a mut Option<mpsc::Receiver<UiRequestResponse>>,
+    pub(super) concurrent_rx: &'a mut Option<mpsc::Receiver<UiRequestResponse>>,
     pub(super) narration_rx: &'a mut NarrationRx,
     pub(super) facts_rx: &'a mut FactsRx,
     pub(super) lifecycle_rx: &'a mut LifecycleRx,
@@ -48,7 +50,9 @@ pub(super) struct Harness {
     worker_tx: mpsc::Sender<WorkerCommand>,
     worker_rx: Option<mpsc::Receiver<WorkerCommand>>,
     blocking_tx: mpsc::Sender<UiRequestResponse>,
+    blocking_rx: Option<mpsc::Receiver<UiRequestResponse>>,
     concurrent_tx: mpsc::Sender<UiRequestResponse>,
+    concurrent_rx: Option<mpsc::Receiver<UiRequestResponse>>,
     bus: Bus,
     narration_rx: NarrationRx,
     facts_rx: FactsRx,
@@ -60,8 +64,8 @@ pub(super) struct Harness {
 impl Harness {
     pub(super) fn new() -> Self {
         let (worker_tx, worker_rx) = mpsc::channel::<WorkerCommand>(256);
-        let (blocking_tx, _blocking_rx) = mpsc::channel::<UiRequestResponse>(256);
-        let (concurrent_tx, _concurrent_rx) = mpsc::channel::<UiRequestResponse>(256);
+        let (blocking_tx, blocking_rx) = mpsc::channel::<UiRequestResponse>(256);
+        let (concurrent_tx, concurrent_rx) = mpsc::channel::<UiRequestResponse>(256);
         let bus = Bus::default();
         let narration_rx = bus.narration().subscribe();
         let facts_rx = bus.facts().subscribe();
@@ -72,7 +76,9 @@ impl Harness {
             worker_tx,
             worker_rx: Some(worker_rx),
             blocking_tx,
+            blocking_rx: Some(blocking_rx),
             concurrent_tx,
+            concurrent_rx: Some(concurrent_rx),
             narration_rx,
             facts_rx,
             lifecycle_rx,
@@ -97,6 +103,8 @@ impl Harness {
             concurrent_tx: &self.concurrent_tx,
             bus: &self.bus,
             worker_rx: &mut self.worker_rx,
+            blocking_rx: &mut self.blocking_rx,
+            concurrent_rx: &mut self.concurrent_rx,
             narration_rx: &mut self.narration_rx,
             facts_rx: &mut self.facts_rx,
             lifecycle_rx: &mut self.lifecycle_rx,
@@ -134,6 +142,20 @@ pub(super) fn recv_command(
     worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>,
 ) -> Option<WorkerCommand> {
     worker_rx.as_mut()?.try_recv().ok()
+}
+
+/// The next response the blocking lane received, if any is queued.
+pub(super) fn recv_blocking(
+    blocking_rx: &mut Option<mpsc::Receiver<UiRequestResponse>>,
+) -> Option<UiRequestResponse> {
+    blocking_rx.as_mut()?.try_recv().ok()
+}
+
+/// The next response the concurrent lane received, if any is queued.
+pub(super) fn recv_concurrent(
+    concurrent_rx: &mut Option<mpsc::Receiver<UiRequestResponse>>,
+) -> Option<UiRequestResponse> {
+    concurrent_rx.as_mut()?.try_recv().ok()
 }
 
 pub(super) fn take_warnings(narration_rx: &mut NarrationRx) -> Vec<String> {

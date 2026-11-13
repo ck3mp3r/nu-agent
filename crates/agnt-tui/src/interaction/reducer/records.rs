@@ -169,6 +169,13 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
             source_label(*source),
             message,
         ),
+        RenderInput::Record(SessionRecord::Compaction(CompactionRecord::Uncompacted {
+            source,
+        })) => state.compaction.uncompacted(
+            &mut state.transcript,
+            &mut state.status,
+            source_label(*source),
+        ),
         RenderInput::Record(SessionRecord::Turn(TurnRecord::Completed { .. })) => {
             state.finalize_cycle();
             // A cancel can end the turn while a card is still up (A2A task

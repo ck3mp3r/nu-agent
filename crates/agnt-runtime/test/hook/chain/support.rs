@@ -30,45 +30,73 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 // Compaction threshold with real token count
 // ---------------------------------------------------------------------------
 
-/// Shared fixtures for the `decide_compaction` threshold tests: an in-memory
+/// Shared fixtures for the `decide_compaction` trigger tests: an in-memory
 /// store (no markers), a compactor backed by a deterministic mock model, an
-/// empty `last_total_tokens` slot, and the compaction config + bus.
+/// empty meter, the compaction config + bus, and the spec the decision meters
+/// against (a 10k-token input limit, so a short conversation is under it).
 pub(super) struct DecideFixture {
     pub(super) memory: Arc<CachedMemory>,
     pub(super) compaction: CompactionConfig,
     pub(super) bus: Bus,
-    pub(super) last_total_tokens: Arc<Mutex<Option<u64>>>,
+    pub(super) meter: crate::hook::AnchorMeter,
+    pub(super) pending: crate::hook::chain::PendingSummary,
+    pub(super) spec: rig::catalog::ModelSpec,
+    /// The model this turn sends to: every side-call runs on it.
+    pub(super) model: DynModel<Completion>,
+    /// The same model, kept so a test can assert what the side-call asked it.
+    pub(super) turn_model: MockCompletionModel,
     /// The summarizer model, kept so a test can assert it was never called.
     pub(super) summary_model: MockCompletionModel,
 }
 
-/// Build the fixtures shared by the `decide_compaction` threshold tests.
+/// Build the fixtures shared by the `decide_compaction` trigger tests.
 pub(super) fn decide_fixture() -> Result<DecideFixture> {
+    decide_fixture_with_policy(rig_memory::CompactionPolicy::default())
+}
+
+/// The same fixtures over `policy`: the clearing and notes branches of the ladder
+/// read it, so a test that pins them supplies its own.
+pub(super) fn decide_fixture_with_policy(
+    policy: rig_memory::CompactionPolicy,
+) -> Result<DecideFixture> {
     let summary_model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
+    let bus = Bus::default();
     let compactor = NuCompactor::new(
         summary_model.clone().erase(),
-        Bus::default(),
-        rig_memory::CompactionPolicy::default(),
+        bus.clone(),
+        policy,
         test_model_spec(),
     );
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
-    let bus = Bus::default();
     let compaction = CompactionConfig {
         compactor,
-        threshold_tokens: Some(80_000),
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
     };
-    let last_total_tokens = Arc::new(Mutex::new(None));
+    // The turn's model answers the side-calls the ladder asks for; every call
+    // consumes one scripted streaming turn. It carries the turn's spec, as the
+    // wire serving a real turn does: the settle site reads it for the fallback.
+    let spec = spec_with_input_limit(60_000)?;
+    let turn_model = MockCompletionModel::from_stream_turns((0..4).map(|_| {
+        [
+            MockStreamEvent::Text("summary".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ]
+    }))
+    .priced_as(spec.clone());
     Ok(DecideFixture {
         memory,
         compaction,
         bus,
-        last_total_tokens,
+        meter: crate::hook::AnchorMeter::default(),
+        pending: crate::hook::chain::PendingSummary::default(),
+        spec,
+        model: turn_model.clone().erase(),
+        turn_model,
         summary_model,
     })
 }
@@ -80,7 +108,20 @@ pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
         "gpt-4o",
         Some(200_000),
         Some(1_024),
+        None,
     )
+}
+
+/// A spec whose input limit is `tokens`, so a decision meters against it.
+pub(super) fn spec_with_input_limit(tokens: u32) -> Result<rig::catalog::ModelSpec> {
+    crate::conversation::compaction::compactor::resolve_model_spec(
+        "openai",
+        "gpt-4o",
+        Some(tokens),
+        Some(1_024),
+        None,
+    )
+    .ok_or_else(|| "openai must resolve to a registered provider id".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +138,9 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
+    // The compactor publishes the compaction rows on the session's bus; the
+    // fixture must wire the same one the chain publishes on.
+    let compaction_bus = bus.clone();
     HookChain::new(
         HookEnv {
             bus,
@@ -118,18 +162,18 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
             compaction: CompactionConfig {
                 compactor: NuCompactor::new(
                     MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
+                    compaction_bus,
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
             },
             model: MockCompletionModel::default().erase(),
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             store_latch: Default::default(),
+            pending_summary: Default::default(),
         },
     )
 }
@@ -161,8 +205,9 @@ impl RepetitionTurnFixture {
         let dyn_model = Arc::new(std::sync::Mutex::new(
             MockCompletionModel::default().erase(),
         ));
+        let bus = Bus::default();
         Ok(Self {
-            bus: Bus::default(),
+            bus: bus.clone(),
             dyn_model: dyn_model.clone(),
             hook_state: HookState {
                 circuit_breaker: Arc::new(std::sync::Mutex::new(
@@ -176,21 +221,27 @@ impl RepetitionTurnFixture {
                 compaction: CompactionConfig {
                     compactor: NuCompactor::new(
                         MockCompletionModel::text("summary").erase(),
-                        Bus::default(),
+                        bus.clone(),
                         rig_memory::CompactionPolicy::default(),
                         test_model_spec(),
                     ),
-                    threshold_tokens: None,
-                    threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                    reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
                 },
                 model: dyn_model.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-                last_total_tokens: Arc::new(std::sync::Mutex::new(None)),
+                meter: crate::hook::AnchorMeter::default(),
                 turn_usage: crate::hook::TurnUsage::default(),
                 session_usage: crate::hook::TurnUsage::default(),
                 store_latch: Default::default(),
+                pending_summary: Default::default(),
             },
             _temp_dir: temp_dir,
         })
+    }
+
+    /// The in-place summary slot this fixture's turns share, so a test can
+    /// stash a plan before a turn and read its verdict after.
+    pub(super) fn pending_summary(&self) -> crate::hook::chain::PendingSummary {
+        self.hook_state.pending_summary.clone()
     }
 
     /// Queue a script of one or more streaming turns on the shared model.
@@ -242,10 +293,11 @@ impl RepetitionTurnFixture {
                 conversation_id: self.hook_state.conversation_id.clone(),
                 compaction: self.hook_state.compaction.clone(),
                 model: model.clone(),
-                last_total_tokens: self.hook_state.last_total_tokens.clone(),
+                meter: self.hook_state.meter.clone(),
                 turn_usage: self.hook_state.turn_usage.clone(),
                 session_usage: self.hook_state.session_usage.clone(),
                 store_latch: self.hook_state.store_latch.clone(),
+                pending_summary: self.hook_state.pending_summary.clone(),
             },
         );
         let builder = rig::agent::AgentBuilder::new(model).add_hook(hook);

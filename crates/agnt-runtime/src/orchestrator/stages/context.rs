@@ -89,6 +89,14 @@ pub(crate) trait UiRequestHandler {
     async fn drain_queued(&mut self, ctx: &mut OrchestrationContext<'_>) {
         let _ = ctx;
     }
+    /// Give up on the requests whose responses will never arrive.
+    ///
+    /// Quit runs this once the worker is idle: an unanswered blocking or
+    /// concurrent entry defers the exit forever, so each one is named and its
+    /// slot released.
+    async fn abandon_unanswered(&mut self, ctx: &mut OrchestrationContext<'_>) {
+        let _ = ctx;
+    }
     fn has_blocking_pending(&self) -> bool {
         false
     }

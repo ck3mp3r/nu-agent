@@ -5,8 +5,8 @@ use std::sync::Arc;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::test::{
-    default_circuit_breaker, default_doom_state, default_last_total_tokens,
-    default_output_repetition, default_repetition_guard,
+    default_circuit_breaker, default_doom_state, default_meter, default_output_repetition,
+    default_repetition_guard,
 };
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
@@ -61,6 +61,7 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
         &mut memory_state,
         ToolInfra {
             store_latch: Default::default(),
+            pending_summary: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
@@ -74,7 +75,7 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
             doom_state: default_doom_state(),
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
-            last_total_tokens: default_last_total_tokens(),
+            meter: default_meter(),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,

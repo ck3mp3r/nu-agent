@@ -119,7 +119,10 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
     println!("Model: {}", view.model.as_deref().unwrap_or(""));
     println!("Messages: {}", view.messages.len());
     let compaction = load_compaction_config();
-    for line in compaction_display(&build_compaction_policy(&compaction)) {
+    let reserve_pct = compaction
+        .reserve_pct
+        .unwrap_or(agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT);
+    for line in compaction_display(&build_compaction_policy(&compaction), reserve_pct) {
         println!("{line}");
     }
     for repair in &view.repairs {
@@ -140,13 +143,17 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
 
 // region:    --- Support
 
-/// The compaction record lines for a resolved policy: the values the runtime
-/// compacts with, not a hardcoded default.
-fn compaction_display(policy: &CompactionPolicy) -> Vec<String> {
+/// The compaction record lines for a resolved policy and the trigger's knob: the
+/// values the runtime compacts with, not a hardcoded default.
+///
+/// `reserve_pct` is reported instead of the policy's own reserve: the trigger
+/// derives its room from the percent and the turn's model, so the stored
+/// policy's reserve is not what the user configured.
+fn compaction_display(policy: &CompactionPolicy, reserve_pct: u32) -> Vec<String> {
     vec![
         format!("Compaction keep_recent: {}", policy.keep_recent),
         format!("Compaction keep_asked: {}", policy.keep_asked),
-        format!("Compaction reserve: {}", policy.summarizer.limits.reserve),
+        format!("Compaction reserve_pct: {reserve_pct}"),
         format!(
             "Compaction summary_tokens: {}",
             policy.summarizer.limits.summary_tokens

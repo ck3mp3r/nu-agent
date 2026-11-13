@@ -81,6 +81,10 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
                         summary = Some(text.clone());
                     }
                     CompactionRecord::Failed { .. } => tags.push("compaction_failed"),
+                    CompactionRecord::Uncompacted { source } => {
+                        tags.push("compaction_uncompacted");
+                        sources.push(*source);
+                    }
                 },
                 SessionRecord::Inference(_) => tags.push("inference"),
                 SessionRecord::Tool(_) => tags.push("tool"),
@@ -124,6 +128,35 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
         summary.as_deref(),
         Some("ab"),
         "the completed record carries the summary content"
+    );
+    Ok(())
+}
+
+/// The undo row is terminal on its own: it opens no bracket, and its source is
+/// the enumerated producer fact, never text.
+#[tokio::test]
+async fn test_records_uncompacted_is_a_terminal_row() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = Bus::new();
+    let mut rx = bus.stream().subscribe();
+
+    // -- Exec
+    bus.stream()
+        .publish(SessionRecord::Compaction(CompactionRecord::Uncompacted {
+            source: CompactionSource::Manual,
+        }))
+        .map_err(|e| format!("publish uncompacted: {e:?}"))?;
+    drop(bus);
+
+    // -- Check
+    let record = rx.recv().await?;
+    let SessionRecord::Compaction(CompactionRecord::Uncompacted { source }) = record else {
+        panic!("the undo row must be Uncompacted, got: {record:?}");
+    };
+    assert_eq!(source, CompactionSource::Manual);
+    assert!(
+        matches!(rx.recv().await, Err(crate::bus::ReceiveError::Closed)),
+        "the undo row is the whole sequence: nothing follows it"
     );
     Ok(())
 }
