@@ -8,7 +8,7 @@ integration = []
 
 [dependencies]
 rig-memory = { workspace = true }
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
 thiserror = { workspace = true }
 tokio = { version = "1.52.3", features = ["rt", "sync"] }
 log = { workspace = true }
