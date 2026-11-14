@@ -130,6 +130,7 @@ impl RuntimeCoordinator {
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(None)
                     .end_symbol(None)
+                    .thumb_symbol("┃")
                     .thumb_style(self.theme.focus)
                     .track_style(self.theme.subtle_meta),
                 transcript_content_area,

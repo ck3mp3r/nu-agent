@@ -23,6 +23,9 @@ mod preview;
 #[path = "transcript/render_loop.rs"]
 mod render_loop;
 
+#[path = "transcript/scrollbar.rs"]
+mod scrollbar;
+
 #[path = "transcript/separators.rs"]
 mod separators;
 
