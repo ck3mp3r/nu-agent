@@ -49,7 +49,7 @@ const TERMINAL_LIBRARY: &str = "ratatui";
 const DYNAMIC_DISPATCH: &str = "dyn ";
 
 /// Calls that mutate the event-fold state. They belong to the reducer's arms.
-const FOLD_WRITERS: [&str; 17] = [
+const FOLD_WRITERS: [&str; 18] = [
     ".llm.started(",
     ".llm.chunk(",
     ".llm.completed(",
@@ -62,6 +62,7 @@ const FOLD_WRITERS: [&str; 17] = [
     ".permission.submit_decision(",
     ".permission.close_prompt(",
     ".permission.close_prompt_if(",
+    ".compaction.clear(",
     ".compaction.started(",
     ".compaction.summary_chunk(",
     ".compaction.completed(",

@@ -218,6 +218,19 @@ A session whose calls are only partly priced shows the summed price with a
 lists no rate for: the known parts are summed, and the `+` says the figure is
 a lower bound.
 
+### What the status bar's figures measure
+
+The two figures the status bar shows side by side carry different scopes. The
+token figure — `12.3k`, with a percent of the context window beside it when the
+model reports a window — is the arriving session's history: what that session's
+own turns reported, placed by the replay when the surface switches into it. The
+dollar figure after the `·` is cumulative across sessions on this surface: a
+session switch and `/new` both leave it alone, and only a live priced call adds
+to it. A replayed history's calls carry no price, so switching into one puts the
+`+` lower-bound marker on the figure; the marker adds no money. Switching into
+the same history repeatedly adds nothing to and removes nothing from either
+figure: the token figure re-places, the dollar figure holds.
+
 ## Tool authorization (permissions DSL)
 
 Authorization uses a **map-style** `permissions` DSL (not a rules array).
@@ -769,6 +782,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - `/help`, `/status`, `/mcp`, and `/skills` route to the same action handlers as Ctrl-P entries.
 - `/models` and Ctrl-P `Models` route to the same shared model-picker action handler.
 - `/new` clears the transcript, starts a new session, and shows the startup logo.
+- `/new` and a session switch both settle the display the session that left was showing: the status line, an open permission card, the compaction display, and a stranded busy phase do not cross the boundary into the session that arrives. A turn still running keeps its own display.
 - While a turn runs, `/new`, a model switch, and an agent switch apply when that turn finishes, and the status bar says so when the command arrives.
 - Unknown slash commands emit deterministic warning text and the interactive loop continues.
 - Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
@@ -784,7 +798,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - The queue drains as one submission, and that submitted block renders the same one-row-per-message rhythm as the stack — no blank line between the coalesced prompts.
 - Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
 - Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.
-- Stopping a turn shows `Turn stopped` in the status bar until the next turn starts, and keeps the turn's completed work in the session.
+- Stopping a turn shows `Turn stopped` in the status bar until the next turn starts or the surface moves to another session, and keeps the turn's completed work in the session.
 - `Esc` while a turn runs arms the cancel confirmation (`Esc again to cancel`); a second `Esc` cancels the turn. While a picker or an info panel is open, `Esc` closes it and does nothing else: the next bare `Esc` arms the confirmation. The arm lives exactly as long as its message — once the message expires, the next `Esc` arms again instead of cancelling.
 - If the turn finishes between the two presses, the next `Esc` shows `turn already finished — nothing to cancel` instead of silently toggling the input mode. The notice appears once and expires through its own TTL.
 

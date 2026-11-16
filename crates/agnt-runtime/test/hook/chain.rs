@@ -50,8 +50,6 @@ use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::chain::compaction::{CompactionPath, decide_compaction};
 use crate::hook::chain::run_compaction;
-use crate::hook::doom_loop::DoomLoopState;
-use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{InteractivePermissionResolver, PolicyPermissionResolver};
 use crate::llm::PricingSkip;
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;

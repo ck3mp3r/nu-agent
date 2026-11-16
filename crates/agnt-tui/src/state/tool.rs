@@ -86,6 +86,12 @@ impl ToolState {
         self.replay_open = false;
     }
 
+    /// Whether a replay batch is folding: a switch published the switched-to
+    /// session's log and the first live turn has not started yet.
+    pub(crate) fn replay_open(&self) -> bool {
+        self.replay_open
+    }
+
     /// Derive a replayed call's pre-run card while a replay batch is folding.
     ///
     /// No producer content is supplied: only the gate computes a diff, and a

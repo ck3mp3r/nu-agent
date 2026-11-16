@@ -128,19 +128,117 @@ pub(super) fn spec_with_input_limit(tokens: u32) -> Result<rig::catalog::ModelSp
 // Hook chain construction
 // ---------------------------------------------------------------------------
 
-/// Build a hook chain over `bus` with `permission` as its resolver, no tools
-/// registered, and no scripted model. The chain subscribes to the cancel
-/// channel in `new`, so build it before publishing any cancel.
-pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
+/// The session state a chain fixture builds: the tree's shared `HookState`
+/// plus the two compaction parts a site may repoint. Cloning the fixture keeps
+/// the state's Arcs, so consecutive turns accumulate exactly as the executor's
+/// do. Set the deltas with the `with_…` setters.
+#[derive(Clone)]
+pub(super) struct HookStateFixture {
+    state: HookState,
+    compactor_model: DynModel<Completion>,
+    compaction_bus: Bus,
+}
+
+impl Default for HookStateFixture {
+    fn default() -> Self {
+        Self {
+            state: HookState {
+                circuit_breaker: Arc::new(Mutex::new(
+                    crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                )),
+                doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+                output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
+                repetition_guard: true,
+                memory: Arc::new(CachedMemory::new(
+                    crate::session::RigStoreConfig::in_memory(),
+                )),
+                conversation_id: "chain-test-conv".to_string(),
+                compaction: CompactionConfig {
+                    compactor: NuCompactor::new(
+                        MockCompletionModel::text("summary").erase(),
+                        Bus::default(),
+                        rig_memory::CompactionPolicy::default(),
+                        test_model_spec(),
+                    ),
+                    reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
+                },
+                model: MockCompletionModel::default().erase(),
+                meter: crate::hook::AnchorMeter::default(),
+                turn_usage: crate::hook::TurnUsage::default(),
+                session_usage: crate::hook::TurnUsage::default(),
+                store_latch: Default::default(),
+                pending_summary: Default::default(),
+            },
+            compactor_model: MockCompletionModel::text("summary").erase(),
+            compaction_bus: Bus::default(),
+        }
+    }
+}
+
+impl HookStateFixture {
+    /// The conversation this hook compacts.
+    pub(super) fn with_conversation_id(mut self, conversation_id: impl Into<String>) -> Self {
+        self.state.conversation_id = conversation_id.into();
+        self
+    }
+
+    /// Whether the doom-loop and output-repetition detectors run.
+    pub(super) fn with_repetition_guard(mut self, on: bool) -> Self {
+        self.state.repetition_guard = on;
+        self
+    }
+
+    /// The wire serving the turn's completions.
+    pub(super) fn with_model(mut self, model: DynModel<Completion>) -> Self {
+        self.state.model = model;
+        self
+    }
+
+    /// The bus the compactor publishes its rows on.
+    pub(super) fn with_compaction_bus(mut self, bus: Bus) -> Self {
+        self.compaction_bus = bus;
+        self.recompacted()
+    }
+
+    /// The summarizer wire the compactor runs on.
+    pub(super) fn with_compactor_model(mut self, model: DynModel<Completion>) -> Self {
+        self.compactor_model = model;
+        self.recompacted()
+    }
+
+    /// The compaction trigger's meter, when a test reads what it metered.
+    pub(super) fn with_meter(mut self, meter: crate::hook::AnchorMeter) -> Self {
+        self.state.meter = meter;
+        self
+    }
+
+    /// The turn's usage accumulator, when a test reads its sums.
+    pub(super) fn with_turn_usage(mut self, turn_usage: crate::hook::TurnUsage) -> Self {
+        self.state.turn_usage = turn_usage;
+        self
+    }
+
+    /// The fixture with its compactor back in step with its model and bus.
+    fn recompacted(mut self) -> Self {
+        self.state.compaction.compactor = NuCompactor::new(
+            self.compactor_model.clone(),
+            self.compaction_bus.clone(),
+            rig_memory::CompactionPolicy::default(),
+            test_model_spec(),
+        );
+        self
+    }
+}
+
+/// Build a chain over `bus` with `permission` as its resolver, no tools
+/// registered, and no scripted model, carrying the fixture's state. The chain
+/// subscribes to the cancel channel in `new`, so build it before publishing any
+/// cancel.
+pub(super) fn build_chain<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
     bus: Bus,
     permission: P,
+    fixture: HookStateFixture,
 ) -> HookChain<P> {
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
-    // The compactor publishes the compaction rows on the session's bus; the
-    // fixture must wire the same one the chain publishes on.
-    let compaction_bus = bus.clone();
     HookChain::new(
         HookEnv {
             bus,
@@ -150,32 +248,18 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
         None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: true,
-            memory,
-            conversation_id: "chain-test-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    compaction_bus,
-                    rig_memory::CompactionPolicy::default(),
-                    test_model_spec(),
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: MockCompletionModel::default().erase(),
-            meter: crate::hook::AnchorMeter::default(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
+        fixture.state,
     )
+}
+
+/// A chain over `bus` on the default fixture state, its compactor publishing on
+/// the same bus the chain publishes on.
+pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
+    bus: Bus,
+    permission: P,
+) -> HookChain<P> {
+    let fixture = HookStateFixture::default().with_compaction_bus(bus.clone());
+    build_chain(bus, permission, fixture)
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +274,7 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
 pub(super) struct RepetitionTurnFixture {
     pub(super) bus: Bus,
     dyn_model: Arc<std::sync::Mutex<DynModel<Completion>>>,
-    hook_state: HookState,
+    session: HookStateFixture,
     _temp_dir: TempDir, // keeps the store backing the memory alive
 }
 
@@ -199,41 +283,19 @@ impl RepetitionTurnFixture {
     /// queued scripted model, and a real bus.
     pub(super) fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-        let memory = Arc::new(CachedMemory::new(
-            crate::session::RigStoreConfig::in_memory(),
-        ));
         let dyn_model = Arc::new(std::sync::Mutex::new(
             MockCompletionModel::default().erase(),
         ));
         let bus = Bus::default();
+        // The compactor publishes the compaction rows on the session's bus; the
+        // fixture must wire the same one the chain publishes on.
+        let session = HookStateFixture::default()
+            .with_compaction_bus(bus.clone())
+            .with_model(dyn_model.lock().unwrap_or_else(|e| e.into_inner()).clone());
         Ok(Self {
-            bus: bus.clone(),
-            dyn_model: dyn_model.clone(),
-            hook_state: HookState {
-                circuit_breaker: Arc::new(std::sync::Mutex::new(
-                    crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-                )),
-                doom_state: Arc::new(std::sync::Mutex::new(DoomLoopState::default())),
-                output_repetition: Arc::new(std::sync::Mutex::new(RepetitionState::default())),
-                repetition_guard: true,
-                memory,
-                conversation_id: "chain-test-conv".to_string(),
-                compaction: CompactionConfig {
-                    compactor: NuCompactor::new(
-                        MockCompletionModel::text("summary").erase(),
-                        bus.clone(),
-                        rig_memory::CompactionPolicy::default(),
-                        test_model_spec(),
-                    ),
-                    reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-                },
-                model: dyn_model.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-                meter: crate::hook::AnchorMeter::default(),
-                turn_usage: crate::hook::TurnUsage::default(),
-                session_usage: crate::hook::TurnUsage::default(),
-                store_latch: Default::default(),
-                pending_summary: Default::default(),
-            },
+            bus,
+            dyn_model,
+            session,
             _temp_dir: temp_dir,
         })
     }
@@ -241,7 +303,7 @@ impl RepetitionTurnFixture {
     /// The in-place summary slot this fixture's turns share, so a test can
     /// stash a plan before a turn and read its verdict after.
     pub(super) fn pending_summary(&self) -> crate::hook::chain::PendingSummary {
-        self.hook_state.pending_summary.clone()
+        self.session.state.pending_summary.clone()
     }
 
     /// Queue a script of one or more streaming turns on the shared model.
@@ -268,11 +330,12 @@ impl RepetitionTurnFixture {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let hook = HookChain::new(
-            HookEnv {
-                bus: self.bus.clone(),
-                cwd: std::path::PathBuf::from("/tmp"),
-            },
+        // A fresh chain per turn, carrying the fixture's state Arcs: that is
+        // what makes the cross-turn accumulation match the executor's.
+        let mut session = self.session.clone();
+        session.state.model = model.clone();
+        let hook = build_chain(
+            self.bus.clone(),
             PolicyPermissionResolver {
                 permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
                 session_grants: Arc::new(std::sync::Mutex::new(
@@ -281,24 +344,7 @@ impl RepetitionTurnFixture {
                 closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
                 mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
             },
-            Arc::new(crate::tools::closure::ClosureRegistry::default()),
-            Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-            None,
-            HookState {
-                circuit_breaker: self.hook_state.circuit_breaker.clone(),
-                doom_state: self.hook_state.doom_state.clone(),
-                output_repetition: self.hook_state.output_repetition.clone(),
-                repetition_guard: self.hook_state.repetition_guard,
-                memory: self.hook_state.memory.clone(),
-                conversation_id: self.hook_state.conversation_id.clone(),
-                compaction: self.hook_state.compaction.clone(),
-                model: model.clone(),
-                meter: self.hook_state.meter.clone(),
-                turn_usage: self.hook_state.turn_usage.clone(),
-                session_usage: self.hook_state.session_usage.clone(),
-                store_latch: self.hook_state.store_latch.clone(),
-                pending_summary: self.hook_state.pending_summary.clone(),
-            },
+            session,
         );
         let builder = rig::agent::AgentBuilder::new(model).add_hook(hook);
         let agent = if with_tool {

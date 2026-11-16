@@ -13,7 +13,6 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
     assert_eq!(state.status.tokens.latest_input_tokens, None);
     assert_eq!(state.status.tokens.latest_output_tokens, None);
     assert_eq!(state.status.tokens.latest_total_tokens, None);
-    assert_eq!(state.status.tokens.session_total_tokens, 0);
 }
 
 #[test]

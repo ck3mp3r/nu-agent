@@ -19,7 +19,7 @@ async fn model_picker_dims_rows_the_session_does_not_fit() -> Result<()> {
     // dimmed row.
     let mut driver = RenderLoopDriver::new(120, 30);
     let state = &mut driver.coordinator_mut().state;
-    state.status.tokens.hydrate_latest_total_tokens(2_000);
+    state.status.tokens.latest_total_tokens = Some(2_000);
     state.status.identity.active_model_identity = "ollama/large".to_string();
     state.set_picker_options(
         ActivePicker::Model,
@@ -80,7 +80,7 @@ async fn model_picker_never_dims_the_active_model() -> Result<()> {
     // the active model.
     let mut driver = RenderLoopDriver::new(120, 30);
     let state = &mut driver.coordinator_mut().state;
-    state.status.tokens.hydrate_latest_total_tokens(2_000);
+    state.status.tokens.latest_total_tokens = Some(2_000);
     state.status.identity.active_model_identity = "ollama/small".to_string();
     state.set_picker_options(
         ActivePicker::Model,

@@ -222,6 +222,13 @@ impl CompactionState {
             .iter()
             .any(|item| item.status == CompactionStatus::InProgress)
     }
+
+    /// Return the display state to rest: the blocks listed here describe rows
+    /// a transcript clear dropped, so no sweep is left running for a surface
+    /// that no longer shows their rows.
+    pub(crate) fn clear(&mut self) {
+        self.blocks.clear();
+    }
 }
 
 // region:    --- Support

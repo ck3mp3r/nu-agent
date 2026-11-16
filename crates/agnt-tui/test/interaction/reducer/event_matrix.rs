@@ -194,7 +194,6 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.status.tokens.latest_input_tokens, Some(4));
                 assert_eq!(state.status.tokens.latest_output_tokens, Some(8));
                 assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
-                assert_eq!(state.status.tokens.session_total_tokens, 12);
                 assert!(state.status.message.status_line().is_empty());
             }
             "warning_sets_status_line" => {

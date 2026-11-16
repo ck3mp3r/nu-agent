@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::runtime::status::content::model_activity_label;
+use crate::test_support::session_switched;
+
 #[test]
 fn hydration_compaction_creates_block_structure() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
@@ -169,6 +172,40 @@ fn uncompacted_record_closes_the_block_and_reports_the_undo() {
     assert!(
         !coordinator.state().compaction.in_progress(),
         "the undone block must not stay in progress: {texts:?}"
+    );
+}
+
+/// WHEN the surface switches away from a session whose sweep was still running,
+/// THE status bar SHALL drop the busy indicator it read from that sweep: the
+/// block list describes rows the switch's transcript clear dropped, so the
+/// arriving session has no work of its own to show.
+#[test]
+fn switch_settles_the_departed_sessions_compaction_indicator() {
+    // -- Setup & Fixtures: a session compacting at rest.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.fold_record(&compaction_started(CompactionSource::Auto));
+    assert!(
+        coordinator.state().compaction.in_progress(),
+        "the fixture is compacting"
+    );
+    assert_eq!(
+        model_activity_label(coordinator.state()),
+        "busy",
+        "the idle phase still reads busy while a sweep runs"
+    );
+
+    // -- Exec
+    coordinator.fold_record(&session_switched());
+
+    // -- Check: the arriving surface is at rest.
+    assert!(
+        !coordinator.state().compaction.in_progress(),
+        "the departed session's sweep does not cross the boundary"
+    );
+    assert_eq!(
+        model_activity_label(coordinator.state()),
+        "idle",
+        "the busy indicator belongs to the session that left"
     );
 }
 

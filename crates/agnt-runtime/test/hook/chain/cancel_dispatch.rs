@@ -77,44 +77,8 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
     bus: Bus,
     permission: P,
 ) -> HookChain<P> {
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
-    HookChain::new(
-        HookEnv {
-            bus,
-            cwd: std::path::PathBuf::from("/tmp"),
-        },
-        permission,
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: true,
-            memory,
-            conversation_id: "cancel-dispatch-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
-                    rig_memory::CompactionPolicy::default(),
-                    test_model_spec(),
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: MockCompletionModel::default().erase(),
-            meter: crate::hook::AnchorMeter::default(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
-    )
+    let session = HookStateFixture::default().with_conversation_id("cancel-dispatch-conv");
+    build_chain(bus, permission, session)
 }
 
 /// The cancel arm's emission publishes `ToolStarted` then

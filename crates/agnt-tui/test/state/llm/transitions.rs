@@ -35,13 +35,16 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
         inference_completed(20, 10, Some(30), Some(0.001), true),
     );
 
-    // -- Check: latest values and the session total.
+    // -- Check: latest values and the priced call.
     assert_eq!(state.status.tokens.latest_input_tokens, Some(20));
     assert_eq!(state.status.tokens.latest_output_tokens, Some(10));
     assert_eq!(state.status.tokens.latest_total_tokens, Some(30));
-    assert_eq!(state.status.tokens.session_total_tokens, 30);
+    assert_eq!(
+        state.status.tokens.session_cost.label().as_deref(),
+        Some("$0.001")
+    );
 
-    // -- Exec: a second completion accumulates the session total.
+    // -- Exec: a second completion replaces the displayed total and sums the cost.
     reduce_llm(
         &mut state,
         inference_completed(5, 7, Some(12), Some(0.002), true),
@@ -51,7 +54,10 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     assert_eq!(state.status.tokens.latest_input_tokens, Some(5));
     assert_eq!(state.status.tokens.latest_output_tokens, Some(7));
     assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
-    assert_eq!(state.status.tokens.session_total_tokens, 42);
+    assert_eq!(
+        state.status.tokens.session_cost.label().as_deref(),
+        Some("$0.003")
+    );
 
     // -- Setup & Fixtures: a busy state with a clean transcript.
     let mut busy = busy_state_with_clean_transcript();
@@ -63,7 +69,6 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     assert_eq!(busy.status.tokens.latest_input_tokens, Some(4));
     assert_eq!(busy.status.tokens.latest_output_tokens, Some(8));
     assert_eq!(busy.status.tokens.latest_total_tokens, Some(12));
-    assert_eq!(busy.status.tokens.session_total_tokens, 12);
     assert!(busy.status.message.status_line().is_empty());
     Ok(())
 }

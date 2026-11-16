@@ -102,7 +102,7 @@ pub(crate) fn hydrate_by_replay(
     let (records, projected_total) = project_snapshots(messages);
     replay_records(state, records);
     if let Some(tokens) = last_total_tokens.or(projected_total) {
-        state.status.tokens.hydrate_latest_total_tokens(tokens);
+        state.status.tokens.latest_total_tokens = Some(tokens);
     }
 }
 

@@ -27,6 +27,9 @@ mod phase;
 #[path = "reducer/scroll.rs"]
 mod scroll;
 
+#[path = "reducer/session_switch.rs"]
+mod session_switch;
+
 #[path = "reducer/spine_release.rs"]
 mod spine_release;
 

@@ -33,45 +33,11 @@ struct ToolTurn {
 
 /// Build the hook chain a turn runs with, and clone its tool log out.
 fn tool_turn(model: &MockCompletionModel) -> Result<ToolTurn> {
-    let bus = Bus::default();
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
-    let hook = HookChain::new(
-        HookEnv {
-            bus: bus.clone(),
-            cwd: std::path::PathBuf::from("/tmp"),
-        },
-        AllowAllResolver,
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: false,
-            memory,
-            conversation_id: "turn-tools-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
-                    rig_memory::CompactionPolicy::default(),
-                    test_model_spec(),
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: model.clone().erase(),
-            meter: crate::hook::AnchorMeter::default(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
-    );
+    let session = HookStateFixture::default()
+        .with_conversation_id("turn-tools-conv")
+        .with_repetition_guard(false)
+        .with_model(model.clone().erase());
+    let hook = build_chain(Bus::default(), AllowAllResolver, session);
     let turn_tools = hook.turn_tools();
     Ok(ToolTurn { hook, turn_tools })
 }

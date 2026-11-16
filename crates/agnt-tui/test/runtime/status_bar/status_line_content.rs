@@ -254,11 +254,7 @@ fn status_line_shows_cost_without_percentage_when_max_unknown() -> Result<()> {
 fn test_token_usage_total_less_completion_preserves_hydrated_count() -> Result<()> {
     // -- Setup & Fixtures: a resumed session's hydrated count and window.
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator
-        .state
-        .status
-        .tokens
-        .hydrate_latest_total_tokens(42_300);
+    coordinator.state.status.tokens.latest_total_tokens = Some(42_300);
     coordinator
         .state
         .status

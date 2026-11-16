@@ -20,9 +20,6 @@ use crate::hook::permission_resolver::permission_resolver_test::submit_decision;
 async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
     let bus = Bus::default();
     let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let resolver = InteractivePermissionResolver::new(
@@ -49,44 +46,15 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
         ])
         .erase(),
     ));
-    let hook = HookChain::new(
-        HookEnv {
-            bus: bus.clone(),
-            cwd: std::path::PathBuf::from("/tmp"),
-        },
-        resolver,
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: true,
-            memory,
-            conversation_id: "fifo-invariant-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
-                    rig_memory::CompactionPolicy::default(),
-                    test_model_spec(),
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: shared_model
+    let session = HookStateFixture::default()
+        .with_conversation_id("fifo-invariant-conv")
+        .with_model(
+            shared_model
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            meter: crate::hook::AnchorMeter::default(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
-    );
+        );
+    let hook = build_chain(bus.clone(), resolver, session);
     // The "add" tool is not in `safe_defaults(true)`'s allow list, so the
     // global Ask action fires and the resolver publishes PermissionRequested.
     let agent = rig::agent::AgentBuilder::new(
@@ -154,9 +122,6 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
 #[tokio::test]
 async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Result<()> {
     // -- Setup & Fixtures: `add` is not a builtin, so it takes the fallback path.
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
     let bus = Bus::default();
     let shared_model = Arc::new(Mutex::new(
         MockCompletionModel::from_stream_turns([
@@ -171,48 +136,23 @@ async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Resu
         ])
         .erase(),
     ));
-    let hook = HookChain::new(
-        HookEnv {
-            bus: bus.clone(),
-            cwd: std::path::PathBuf::from("/tmp"),
-        },
+    let session = HookStateFixture::default()
+        .with_conversation_id("fallback-call-line-conv")
+        .with_model(
+            shared_model
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+        );
+    let hook = build_chain(
+        bus.clone(),
         PolicyPermissionResolver {
             permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
             session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
             closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
             mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
         },
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: true,
-            memory,
-            conversation_id: "fallback-call-line-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
-                    rig_memory::CompactionPolicy::default(),
-                    test_model_spec(),
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: shared_model
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone(),
-            meter: crate::hook::AnchorMeter::default(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
+        session,
     );
     let agent = rig::agent::AgentBuilder::new(
         shared_model
@@ -258,9 +198,6 @@ async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Resu
 #[tokio::test]
 async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
     // -- Setup & Fixtures
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
     let bus = Bus::default();
     let shared_model = Arc::new(Mutex::new(
         MockCompletionModel::from_stream_turns([
@@ -275,48 +212,23 @@ async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
         ])
         .erase(),
     ));
-    let hook = HookChain::new(
-        HookEnv {
-            bus: bus.clone(),
-            cwd: std::path::PathBuf::from("/tmp"),
-        },
+    let session = HookStateFixture::default()
+        .with_conversation_id("render-registry-conv")
+        .with_model(
+            shared_model
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+        );
+    let hook = build_chain(
+        bus.clone(),
         PolicyPermissionResolver {
             permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
             session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
             closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
             mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
         },
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: true,
-            memory,
-            conversation_id: "render-registry-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
-                    rig_memory::CompactionPolicy::default(),
-                    test_model_spec(),
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: shared_model
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone(),
-            meter: crate::hook::AnchorMeter::default(),
-            turn_usage: crate::hook::TurnUsage::default(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
+        session,
     );
     let agent = rig::agent::AgentBuilder::new(
         shared_model

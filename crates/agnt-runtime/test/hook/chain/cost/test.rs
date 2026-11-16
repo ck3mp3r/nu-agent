@@ -83,51 +83,24 @@ fn turn_hook(
     compactor_model: MockCompletionModel,
 ) -> Result<TurnHook> {
     let bus = Bus::default();
-    let memory = Arc::new(CachedMemory::new(
-        crate::session::RigStoreConfig::in_memory(),
-    ));
     let meter = crate::hook::AnchorMeter::default();
     let turn_usage = crate::hook::TurnUsage::default();
-    let compactor = NuCompactor::new(
-        compactor_model.erase(),
-        Bus::default(),
-        rig_memory::CompactionPolicy::default(),
-        test_model_spec(),
-    );
-    let hook = HookChain::new(
-        HookEnv {
-            bus: bus.clone(),
-            cwd: std::path::PathBuf::from("/tmp"),
-        },
+    let session = HookStateFixture::default()
+        .with_conversation_id("cost-test-conv")
+        .with_repetition_guard(false)
+        .with_model(model.clone().erase())
+        .with_compactor_model(compactor_model.erase())
+        .with_meter(meter.clone())
+        .with_turn_usage(turn_usage.clone());
+    let hook = build_chain(
+        bus.clone(),
         PolicyPermissionResolver {
             permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
             session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
             closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
             mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
         },
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
-        HookState {
-            circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
-            )),
-            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
-            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
-            repetition_guard: false,
-            memory,
-            conversation_id: "cost-test-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor,
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
-            model: model.clone().erase(),
-            meter: meter.clone(),
-            turn_usage: turn_usage.clone(),
-            session_usage: crate::hook::TurnUsage::default(),
-            store_latch: Default::default(),
-            pending_summary: Default::default(),
-        },
+        session,
     );
     Ok(TurnHook {
         hook,

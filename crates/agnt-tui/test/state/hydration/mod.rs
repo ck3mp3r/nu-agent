@@ -117,13 +117,12 @@ fn projected_records(messages: Vec<UiMessageSnapshot>) -> Vec<SessionRecord> {
 }
 
 /// The displayed token counters, in the order the status line reads them.
-fn token_state(state: &AppState) -> (Option<u64>, Option<u64>, Option<u64>, u64) {
+fn token_state(state: &AppState) -> (Option<u64>, Option<u64>, Option<u64>) {
     let tokens = &state.status.tokens;
     (
         tokens.latest_input_tokens,
         tokens.latest_output_tokens,
         tokens.latest_total_tokens,
-        tokens.session_total_tokens,
     )
 }
 

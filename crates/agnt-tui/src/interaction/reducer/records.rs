@@ -1,7 +1,7 @@
 //! The record and control fold: what each bus datum does to the surface, and
 //! the notice rows and permission card that come out of it.
 
-use crate::state::{AppState, PromptFacts};
+use crate::state::{AppState, PromptFacts, UiPhase};
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::entry::{NoticeEntry, TranscriptEntry};
 use agnt_render::transcript::ir::NoticeKind;
@@ -193,21 +193,35 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
         // never drops a step — so a lagged stream ring cannot strand the input
         // lock. Its ring record is display-only and releases nothing.
         RenderInput::Lifecycle(LifecycleEvent::TurnCompleted { .. }) => release_turn(state),
-        // The turn end's ring record is display-only: the stream ring is lossy,
-        // so it is never the observer of a release. A record that outlives a
-        // lag, or folds after the next turn started, carries no state change.
-        RenderInput::Record(SessionRecord::Turn(TurnRecord::Completed { .. })) => false,
+        // The turn end's ring record is display-only for a live turn: the
+        // stream ring is lossy, so it is never the observer of a release, and a
+        // record that outlives a lag or folds after the next turn started
+        // carries no state change. A replay batch is the exception: the switch
+        // publishes the switched-to session's whole log through this fold, and
+        // that log ends every turn it closed at rest, exactly as the startup
+        // lane's boundary does. The latch closes on the first live turn's
+        // start, so a live record still folds as a no-op.
+        RenderInput::Record(SessionRecord::Turn(TurnRecord::Completed { .. })) => {
+            if state.tool.replay_open() {
+                release_turn(state)
+            } else {
+                false
+            }
+        }
         // A session boundary. A fresh start is a new transcript: `/new` mints
         // the session the surface now shows, so the rows of the session that
-        // ended leave the screen and the startup banner takes their place. A
-        // hydrated start is a resume — the history it loaded arrived with it,
-        // so the fold keeps every row it has and pushes nothing of its own.
+        // ended leave the screen and the startup banner takes their place. The
+        // display does not cross the boundary either: a fresh start settles the
+        // departed session exactly as a switch does. A hydrated start is a
+        // resume — the history it loaded arrived with it, so the fold keeps every
+        // row it has and pushes nothing of its own.
         RenderInput::Record(SessionRecord::Session(SessionLifecycle::Started {
             hydrated: false,
             ..
         })) => {
             state.clear_transcript();
             state.push_startup_logo();
+            settle_previous_session(state);
             true
         }
         RenderInput::Record(SessionRecord::Session(SessionLifecycle::Started {
@@ -218,10 +232,17 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
         // session that left go, the banner marks the new one, and the replay
         // that the switch publishes next appends the loaded history below it.
         // The replay folds here and ends at the first live turn's start.
+        //
+        // The display does not cross the boundary: `phase`, the input lock, the
+        // open card, the compaction display, and the status line are the
+        // surface's, not a session's, so the session that left can leave them
+        // set. A cycle still owning the surface is a live turn and keeps its
+        // state.
         RenderInput::Record(SessionRecord::Session(SessionLifecycle::Switched { .. })) => {
             state.clear_transcript();
             state.push_startup_logo();
             state.tool.open_replay();
+            settle_previous_session(state);
             true
         }
         // The first live turn after a replay batch ends it: from here the gate
@@ -280,6 +301,39 @@ pub(crate) fn release_turn(state: &mut AppState) -> bool {
         &mut state.status,
         &mut state.input_locked,
     )
+}
+
+/// Settle the display the session that left was showing.
+///
+/// `phase`, the input lock, the open permission card, the compaction display,
+/// and the status line belong to the surface, not to a session, so the session
+/// that left can leave them set and the session that arrived would inherit them:
+/// a card that swallows every key, a spinner for a sweep whose rows the
+/// boundary's transcript clear dropped, and a marker with no lifetime of its own
+/// (`StatusMessageKind::Notice` has no TTL, so nothing but the next turn start
+/// retires it — and a replay of an empty history starts no turn). A prompt cycle
+/// still owning the surface is a live turn and keeps its state; with none, the
+/// display state is dropped and the invariant re-derives the rest.
+///
+/// Both boundaries run it: a switch, whose replay restores the arriving history
+/// below the banner, and a fresh start, whose session has none to restore. The
+/// fold sits beside the live turn's own release: both write the event-fold state,
+/// and the reducer is its single writer.
+pub(crate) fn settle_previous_session(state: &mut AppState) {
+    let live = state.active_prompt_id.is_some() || !state.pending_prompt_ids.is_empty();
+    if !live {
+        state.phase = UiPhase::Idle;
+        state.input_locked = false;
+        // The card answers a request the session that left owned: the resolver
+        // dropped that request with its session, so the arriving surface must
+        // not hold a card it can only dismiss.
+        state.permission.close_prompt();
+        state.compaction.clear();
+        // The status line is the departing session's report to a surface no
+        // cycle owns, so it does not cross either.
+        state.status.message.clear();
+    }
+    state.ensure_invariants();
 }
 
 /// A turn-level error is shown as a system notice in the transcript and closes

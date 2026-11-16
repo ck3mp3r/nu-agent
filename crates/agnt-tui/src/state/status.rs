@@ -108,7 +108,6 @@ pub struct TokenUsage {
     pub(crate) latest_input_tokens: Option<u64>,
     pub(crate) latest_output_tokens: Option<u64>,
     pub(crate) latest_total_tokens: Option<u64>,
-    pub(crate) session_total_tokens: u64,
     pub(crate) session_cost: SessionCost,
     pub(crate) context_window_max_tokens: Option<u64>,
 }
@@ -126,14 +125,6 @@ impl TokenUsage {
         // displayed count alone rather than collapse it.
         if let Some(total_tokens) = total_tokens {
             self.latest_total_tokens = Some(total_tokens);
-            self.session_total_tokens = self.session_total_tokens.saturating_add(total_tokens);
-        }
-    }
-
-    pub fn hydrate_latest_total_tokens(&mut self, total_tokens: u64) {
-        self.latest_total_tokens = Some(total_tokens);
-        if self.session_total_tokens < total_tokens {
-            self.session_total_tokens = total_tokens;
         }
     }
 

@@ -83,13 +83,10 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
 
     // -- Check: the displayed tokens. Replay applies the persisted total after
     // the fold, exactly where the live status line leaves it.
-    let (input, output, total, session_total) = token_state(&replayed);
+    let (input, output, total) = token_state(&replayed);
     let live_tokens = token_state(&live);
     assert_eq!((input, output), (live_tokens.0, live_tokens.1));
     assert_eq!(total, Some(14000), "the persisted total is displayed");
-    // The persisted session total is authoritative over the per-message sums.
-    assert_eq!(session_total, 14000);
-    assert_eq!(live.status.tokens.session_total_tokens, 5);
 
     // -- Check: the replay ends at rest, not mid-turn.
     assert_eq!(replayed.phase, UiPhase::Idle);
