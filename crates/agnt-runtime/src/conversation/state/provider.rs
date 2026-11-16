@@ -77,7 +77,7 @@ impl ProviderState {
             return Ok(());
         }
         let provider_key = self.config.provider.as_str();
-        let provider_type = self.config.provider_impl.as_deref().unwrap_or(provider_key);
+        let provider_type = self.config.provider_kind.as_deref().unwrap_or(provider_key);
         log::info!(
             "creating {} client (type={}) for model={}",
             provider_key,
@@ -181,18 +181,31 @@ impl ProviderState {
 /// from it build at the slot's next use ([`Self::ensure`]), never inside the
 /// switch. A switch therefore awaits no transport: a provider whose client takes
 /// seconds to answer, or never answers, cannot wedge the surface.
+///
+/// Three states, one owner, two consumers (the turn executor and the compactor):
+///
+/// - *built*: the slot holds the model the active config names.
+/// - *pending*: a switch left it stale, so its next use builds.
+/// - *building*: a consumer owns the build, and the slot is being written.
+///
+/// The build is the only slow step and only one consumer may own it, so a
+/// second consumer that finds the slot pending or building YIELDS
+/// ([`Self::try_built`] answers `None`) instead of waiting: a slow or wedged
+/// build then holds nobody but the consumer that started it.
 #[derive(Clone)]
 pub struct ModelSlot {
     cell: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     pending: Arc<AtomicBool>,
+    building: Arc<AtomicBool>,
 }
 
 impl ModelSlot {
-    /// A slot holding a built model, with nothing pending.
+    /// A slot holding a built model, with nothing pending and nothing building.
     pub fn from_model(model: rig::DynModel<rig::operation::Completion>) -> Self {
         Self {
             cell: Arc::new(Mutex::new(model)),
             pending: Arc::new(AtomicBool::new(false)),
+            building: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -217,6 +230,11 @@ impl ModelSlot {
         self.pending.load(Ordering::SeqCst)
     }
 
+    /// Whether a consumer is building the slot right now.
+    fn is_building(&self) -> bool {
+        self.building.load(Ordering::SeqCst)
+    }
+
     /// Record that the config no longer matches the model in the slot.
     ///
     /// This is a switch's only model write: no client is created and nothing is
@@ -225,17 +243,39 @@ impl ModelSlot {
         self.pending.store(true, Ordering::SeqCst);
     }
 
-    /// Install `model` and clear the staleness.
+    /// Record that this consumer owns the build.
+    ///
+    /// A second consumer reads the slot through [`Self::try_built`] and yields
+    /// on it, so the build has one owner and no reader waits for it.
+    pub(crate) fn mark_building(&self) {
+        self.building.store(true, Ordering::SeqCst);
+    }
+
+    /// The model the slot holds when it is built and fresh.
+    ///
+    /// `None` while a switch left the slot stale or a consumer is building it:
+    /// a reader that cannot be served yields rather than waits, so a slow or
+    /// wedged build holds only the consumer that started it.
+    pub(crate) fn try_built(&self) -> Option<rig::DynModel<rig::operation::Completion>> {
+        (!self.is_pending() && !self.is_building()).then(|| self.model())
+    }
+
+    /// Install `model` and clear the staleness the build answered.
+    ///
+    /// The install is the build's own write, so it releases the ownership too.
     pub fn install(&self, model: rig::DynModel<rig::operation::Completion>) {
         *self.lock() = model;
         self.pending.store(false, Ordering::SeqCst);
+        self.building.store(false, Ordering::SeqCst);
     }
 
     /// The model the active config names, built when the slot is stale.
     ///
     /// `build` is the provider's own construction ([`ProviderState::build_dyn_model`]),
-    /// so the provider client is created here, at first use. A failed build
-    /// leaves the slot stale, so the next use tries again.
+    /// so the provider client is created here, at first use. This is the
+    /// awaiting form: the build belongs to the caller that asked for it. A
+    /// failed build releases the ownership and leaves the slot stale, so the
+    /// next use tries again.
     pub async fn ensure<F, Fut>(
         &self,
         build: F,
@@ -249,9 +289,21 @@ impl ModelSlot {
         if !self.is_pending() {
             return Ok(self.model());
         }
-        let model = build().await?;
+        self.mark_building();
+        let model = match build().await {
+            Ok(model) => model,
+            Err(e) => {
+                self.release_building();
+                return Err(e);
+            }
+        };
         self.install(model.clone());
         Ok(model)
+    }
+
+    /// Give the build ownership back after a build that landed no model.
+    fn release_building(&self) {
+        self.building.store(false, Ordering::SeqCst);
     }
 
     /// The shared cell, recovered if a switch panicked mid-write.
@@ -297,3 +349,11 @@ impl ProviderManager for ProviderState {
         self.startup_plugin_config.as_ref()
     }
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/conversation/state/provider.rs"]
+mod provider_test;
+
+// endregion: --- Tests

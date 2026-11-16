@@ -16,7 +16,7 @@ mod support;
 
 pub use fold::{Fold, RenderInput, reduce};
 
-pub(crate) use records::prompt_facts;
+pub(crate) use records::{prompt_facts, release_turn};
 
 pub(crate) use support::VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS;
 

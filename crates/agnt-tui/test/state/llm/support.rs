@@ -67,6 +67,7 @@ pub(super) fn reduce_llm(state: &mut AppState, datum: impl Into<LlmDatum>) -> bo
 /// both carry the full text.
 pub(super) fn assistant_message(text: &str) -> NarrationEvent {
     agnt_runtime::protocol::events::NarrationEvent::InferenceChunk {
+        inference: crate::test_support::inference(),
         delta: text.to_string(),
         aggregated: text.to_string(),
     }

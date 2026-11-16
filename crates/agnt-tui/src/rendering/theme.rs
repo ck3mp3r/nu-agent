@@ -225,6 +225,9 @@ pub struct TuiTheme {
     pub role_user: Style,
     pub role_assistant: Style,
     pub role_system: Style,
+    /// The in-transcript notice line: a notice row's content and its marker.
+    /// Calm and distinct from the system yellow, which the banner keeps.
+    pub role_notice: Style,
     pub role_compaction: Style,
     pub lane_prefix_compaction: Style,
     pub row_compaction: Style,
@@ -334,6 +337,7 @@ impl TuiTheme {
             role_user: fg(palette.lavender),
             role_assistant: fg(palette.lavender),
             role_system: fg(palette.yellow),
+            role_notice: fg(palette.subtext0),
             role_compaction: fg(palette.overlay1),
             lane_prefix_compaction: fg_dim(palette.overlay1),
             row_compaction: Style::default(),
@@ -420,6 +424,7 @@ pub fn diff_tint_to_bg(tint: &DiffTint, theme: &TuiTheme) -> Option<Color> {
 impl From<&TuiTheme> for agnt_render::Theme {
     fn from(theme: &TuiTheme) -> Self {
         let system = neutral_color(&theme.role_system);
+        let notice_line = neutral_color(&theme.role_notice);
         Self {
             base: neutral_color(&Style::default().fg(theme.base)),
             text: neutral_color(&theme.row_assistant),
@@ -432,7 +437,7 @@ impl From<&TuiTheme> for agnt_render::Theme {
             error: neutral_color(&theme.status_failed),
             user_surface: neutral_color(&Style::default().fg(theme.row_user_bg)),
             code_surface: neutral_color(&Style::default().fg(theme.surface0)),
-            notice: system,
+            notice: notice_line,
             banner: system,
             diff_add_bg: neutral_color(&Style::default().fg(theme.diff_add_bg)),
             diff_remove_bg: neutral_color(&Style::default().fg(theme.diff_remove_bg)),

@@ -45,3 +45,5 @@ agent-client-protocol = { version = "3", features = ["process"] }
 agnt-testkit = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }
+# `start_paused` drives the drain-budget tests without real time.
+tokio = { workspace = true, features = ["test-util"] }

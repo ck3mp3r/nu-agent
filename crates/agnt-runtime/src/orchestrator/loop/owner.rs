@@ -6,9 +6,9 @@ use tokio::sync::mpsc;
 
 use crate::catalog::PickerCatalogSource;
 use crate::orchestrator::config::LoopParts;
+use crate::orchestrator::engine::{WORKER_CMD_CAPACITY, run_orchestrator_loop};
 use crate::orchestrator::events::{OrchestratorEvent, UiRequestResponse, WorkerCommand};
 use crate::orchestrator::external::{ExternalTaskStore, NoExternalTaskStore};
-use crate::orchestrator::loop_impl::{WORKER_CMD_CAPACITY, run_orchestrator_loop};
 use crate::orchestrator::router::{CommandRouter, DispatchSources};
 use crate::orchestrator::stages::OrchestrationContext;
 use crate::orchestrator::turn_outcome::TurnResult;

@@ -133,6 +133,7 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.stream().subscribe();
+    let mut text_rx = bus.stream().subscribe_text();
     let compactor = make_compactor(&["first ", "second"], bus)?;
 
     // -- Exec
@@ -159,19 +160,6 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
         ),
         "compaction must announce Started first, got {records:?}"
     );
-    let chunks = records
-        .iter()
-        .filter(|record| {
-            matches!(
-                record,
-                SessionRecord::Compaction(CompactionRecord::SummaryChunk { .. })
-            )
-        })
-        .count();
-    assert_eq!(
-        chunks, 2,
-        "one SummaryChunk per text delta, got {records:?}"
-    );
     assert!(
         matches!(
             records.last(),
@@ -179,6 +167,26 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
                 if summary == "first second"
         ),
         "compaction must end with Completed carrying the summary, got {records:?}"
+    );
+    assert!(
+        !records.iter().any(|record| matches!(
+            record,
+            SessionRecord::Compaction(CompactionRecord::SummaryChunk { .. })
+        )),
+        "a per-delta summary chunk must ride the text lane, got {records:?}"
+    );
+    let mut chunks = 0;
+    while let Ok(record) = text_rx.try_recv() {
+        if matches!(
+            record,
+            SessionRecord::Compaction(CompactionRecord::SummaryChunk { .. })
+        ) {
+            chunks += 1;
+        }
+    }
+    assert_eq!(
+        chunks, 2,
+        "one SummaryChunk per text delta on the text lane"
     );
     Ok(())
 }

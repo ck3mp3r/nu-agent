@@ -83,7 +83,7 @@ pub fn resolve_model_spec_for(
     config: &Config,
     plugin_config: Option<&PluginConfig>,
 ) -> Option<ModelSpec> {
-    let vendor = config.provider_impl.as_deref().unwrap_or(&config.provider);
+    let vendor = config.provider_kind.as_deref().unwrap_or(&config.provider);
     let context_window = config
         .model_context_tokens
         .or_else(|| config.max_context_tokens.map(|t| t as usize))

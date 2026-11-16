@@ -94,12 +94,12 @@ impl CommandPaletteAction {
             Self::Compact => "Run /compact now",
             Self::Help => "View key help",
             Self::Status => "View runtime status",
-            Self::Mcps => "Manage MCP servers",
+            Self::Mcps => "Enable or disable MCP servers",
             Self::Skills => "List available skills",
-            Self::Models => "Open model picker",
-            Self::Agents => "Open agent picker",
+            Self::Models => "Switch the active model",
+            Self::Agents => "Switch the active agent",
             Self::Sessions => "Switch to an existing session",
-            Self::Theme => "Open theme picker",
+            Self::Theme => "Change the color theme",
         }
     }
 

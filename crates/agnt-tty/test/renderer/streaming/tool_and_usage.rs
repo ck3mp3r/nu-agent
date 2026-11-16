@@ -57,11 +57,14 @@ fn llm_end_prints_token_usage() -> core::result::Result<(), Box<dyn std::error::
     );
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "hi".to_string(),
             aggregated: "hi".to_string(),
         },

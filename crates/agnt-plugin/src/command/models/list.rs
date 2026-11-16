@@ -2,6 +2,7 @@ use agnt_runtime::config::{ModelSpec, ModelsCache};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Span, SyntaxShape, Value};
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 pub struct AgentModelsList;
@@ -49,20 +50,27 @@ impl SimplePluginCommand for AgentModelsList {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
-            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
-        let cache = ModelsCache::load_from(&paths.models_cache_path).map_err(|e| {
-            LabeledError::new(format!(
-                "Failed to load models cache: {e}\nRun 'agent models sync' first."
-            ))
-        })?;
-        let provider_filter = call.get_flag::<String>("provider").ok().flatten();
-        let models = cache.list_models(provider_filter.as_deref());
-        let rows: Vec<Value> = models
-            .iter()
-            .map(|(provider, model, spec)| model_record(provider, model, spec, call.head))
-            .collect();
-        Ok(Value::list(rows, call.head))
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let paths =
+                agnt_runtime::config::Paths::resolve_from_config_or_default().map_err(|e| {
+                    LabeledError::new(format!("Failed to resolve application paths: {e}"))
+                })?;
+            let cache = ModelsCache::load_from(&paths.models_cache_path).map_err(|e| {
+                LabeledError::new(format!(
+                    "Failed to load models cache: {e}\nRun 'agent models sync' first."
+                ))
+            })?;
+            let provider_filter = call.get_flag::<String>("provider").ok().flatten();
+            let models = cache.list_models(provider_filter.as_deref());
+            let rows: Vec<Value> = models
+                .iter()
+                .map(|(provider, model, spec)| model_record(provider, model, spec, call.head))
+                .collect();
+            Ok(Value::list(rows, call.head))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }
 

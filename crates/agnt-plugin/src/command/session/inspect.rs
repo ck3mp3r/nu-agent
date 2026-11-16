@@ -1,3 +1,4 @@
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 use agnt_runtime::config::CompactionConfig;
 use agnt_runtime::conversation::runtime_build::build_compaction_policy;
@@ -275,12 +276,17 @@ impl SimplePluginCommand for AgentSessionInspect {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let store_type = plugin.resolve_store_type(call)?;
-        let rig = crate::plugin::rig_store_config(store_type)?;
-        let compaction = agnt_runtime::config::toml_config::load()
-            .unwrap_or_default()
-            .compaction
-            .unwrap_or_default();
-        crate::block_on!(plugin, self.run_inner(engine, call, &rig, &compaction))
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let store_type = plugin.resolve_store_type(call)?;
+            let rig = crate::plugin::rig_store_config(store_type)?;
+            let compaction = agnt_runtime::config::toml_config::load()
+                .unwrap_or_default()
+                .compaction
+                .unwrap_or_default();
+            crate::block_on!(plugin, self.run_inner(engine, call, &rig, &compaction))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

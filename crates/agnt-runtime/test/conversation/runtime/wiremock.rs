@@ -10,7 +10,7 @@ use super::*;
 fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Config {
     crate::config::Config {
         provider: "openai".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: model.to_string(),
         api_key: Some("fake-key".to_string()),

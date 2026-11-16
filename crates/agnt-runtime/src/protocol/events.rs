@@ -11,7 +11,7 @@ pub use agnt_kernel::bus::{LifecycleEvent, NarrationEvent};
 /// A drawer reads records and derives its own display from them, so it names
 /// the record types, never the producer's rendering.
 pub use agnt_kernel::{
-    AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind,
+    AutoResolution, CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind,
     PermissionRecord, PromptRecord, PromptStamps, RequestId, SessionId, SessionLifecycle,
     SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind, ToolName, ToolOutcome,
     ToolRecord, ToolStatus, TurnRecord, Usage,

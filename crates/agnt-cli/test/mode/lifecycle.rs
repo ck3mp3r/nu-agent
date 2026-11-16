@@ -169,6 +169,76 @@ fn test_mode_shutdown_reason_maps_ok_and_err() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn test_mode_agent_lifecycle_drain_delivers_the_pair_behind_a_slow_invocation() -> Result<()>
+{
+    // -- Setup & Fixtures
+    let agent_tx = AgentTx::new("agent", 16);
+    let delay = std::time::Duration::from_millis(600);
+    let process = DelayedProcess::new(delay);
+    let hooks = vec![resolved_hook(
+        "audit",
+        &[HookEvent::AgentStarted, HookEvent::AgentShutdown],
+    )];
+
+    // -- Exec
+    let lifecycle = AgentLifecycle::start(
+        agent_tx,
+        "acp",
+        &hooks,
+        std::path::Path::new("/tmp"),
+        &agent_context(),
+        process.clone(),
+    )
+    .await;
+    lifecycle.shutdown("shutdown").await;
+    lifecycle.drain().await;
+
+    // -- Check
+    let calls = process.calls();
+    assert_eq!(
+        calls.iter().map(|call| call.0.as_str()).collect::<Vec<_>>(),
+        vec!["agent_started", "agent_shutdown"],
+        "the shutdown invocation is queued behind the started one; the drain must \
+         cover both or the shutdown envelope is never dispatched"
+    );
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_mode_agent_lifecycle_drain_budget_is_shared_across_runners() -> Result<()> {
+    // -- Setup & Fixtures
+    let agent_tx = AgentTx::new("agent", 16);
+    let hooks = vec![
+        resolved_hook("one", &[HookEvent::AgentStarted, HookEvent::AgentShutdown]),
+        resolved_hook("two", &[HookEvent::AgentStarted, HookEvent::AgentShutdown]),
+    ];
+
+    // -- Exec
+    let lifecycle = AgentLifecycle::start(
+        agent_tx,
+        "tui",
+        &hooks,
+        std::path::Path::new("/tmp"),
+        &agent_context(),
+        HangingProcess,
+    )
+    .await;
+    lifecycle.shutdown("completed").await;
+    let started = tokio::time::Instant::now();
+    let drained = lifecycle.drain().await;
+    let waited = started.elapsed();
+
+    // -- Check
+    assert_eq!(drained, 2, "one runner per agent-class hook");
+    assert!(
+        waited <= HOOK_DRAIN_TIMEOUT,
+        "one drain shares one deadline across its runners; waited {waited:?}, \
+         budget {HOOK_DRAIN_TIMEOUT:?}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_mode_run_with_agent_lifecycle_shuts_down_on_early_body_error() -> Result<()> {
     // -- Setup & Fixtures

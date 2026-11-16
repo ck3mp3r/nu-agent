@@ -1,7 +1,7 @@
 //! Cancel-contract tests: the strict steering ring.
 
 use crate::bus::{Bus, CancelEvent};
-use crate::records::{InferenceRecord, SessionRecord};
+use crate::records::{InferenceId, InferenceRecord, SessionRecord};
 
 use crate::test_support::Result;
 
@@ -45,6 +45,7 @@ async fn test_cancel_remains_independent_of_stream_flood() -> Result<()> {
         let _published = bus
             .stream()
             .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+                inference: InferenceId::mint(),
                 delta: i.to_string(),
                 aggregated: i.to_string(),
             }));

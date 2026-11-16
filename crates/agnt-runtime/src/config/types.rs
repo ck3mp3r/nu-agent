@@ -458,7 +458,7 @@ pub struct Config {
 
     /// Provider implementation to use (e.g., "openai" for a github-copilot provider)
     /// If None, uses the provider name itself
-    pub provider_impl: Option<String>,
+    pub provider_kind: Option<String>,
 
     /// The models-cache section this config's provider serves, resolved from
     /// the block's declared `catalog`. `None` means the provider name is its

@@ -1,22 +1,30 @@
 use super::*;
 
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::bus::LifecycleEvent;
 use agnt_runtime::protocol::events::{
     NarrationEvent, PermissionRecord, RequestId, SessionRecord, ToolCall, ToolOutcome, Usage,
 };
 use agnt_runtime::session::tool_status::ToolStatus;
 
-/// One matrix row's fold input: a stream record or a narration event.
+/// One matrix row's fold input: a stream record, a narration event, or a step
+/// of the turn spine.
 ///
 /// The record is boxed because a record is much larger than a narration event.
 enum CaseEvent {
     Record(Box<SessionRecord>),
     Narration(NarrationEvent),
+    Lifecycle(Box<LifecycleEvent>),
 }
 
 /// A matrix row's stream record.
 fn record(record: SessionRecord) -> CaseEvent {
     CaseEvent::Record(Box::new(record))
+}
+
+/// A matrix row's turn-spine step.
+fn lifecycle(event: LifecycleEvent) -> CaseEvent {
+    CaseEvent::Lifecycle(Box::new(event))
 }
 
 #[test]
@@ -126,7 +134,15 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_empty_status,
         },
         Case {
-            name: "completed_finalizes_cycle",
+            name: "spine_completion_finalizes_cycle",
+            event: lifecycle(LifecycleEvent::TurnCompleted {
+                task_id: None,
+                duration_ms: 0,
+            }),
+            pre: busy_with_status,
+        },
+        Case {
+            name: "ring_completion_is_display_only",
             event: record(turn_completed(0)),
             pre: busy_with_status,
         },
@@ -140,6 +156,9 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             }
             CaseEvent::Narration(event) => {
                 reduce_narration(&mut state, event);
+            }
+            CaseEvent::Lifecycle(event) => {
+                reduce(&mut state, RenderInput::Lifecycle(&event), None);
             }
         }
 
@@ -205,11 +224,18 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert!(text.contains("line 1"), "raw md should contain 'line 1'");
                 assert!(text.contains("line 2"), "raw md should contain 'line 2'");
             }
-            "completed_finalizes_cycle" => {
+            "spine_completion_finalizes_cycle" => {
                 assert_eq!(state.phase, UiPhase::Idle);
                 assert!(!state.input_locked);
                 assert!(!state.abort.pending);
                 assert!(state.status.message.status_line().is_empty());
+            }
+            "ring_completion_is_display_only" => {
+                // The ring is lossy, so its record is never the release: the
+                // turn stays live on the surface until the spine closes it.
+                assert_eq!(state.phase, UiPhase::Busy);
+                assert!(state.input_locked);
+                assert_eq!(state.status.message.status_line(), "Tool: prior");
             }
             _ => unreachable!("unknown case: {}", case.name),
         }

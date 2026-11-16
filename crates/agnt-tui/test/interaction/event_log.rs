@@ -12,36 +12,53 @@ use crate::interaction::{
 };
 use crate::state::{AppState, InputMode, UiPhase};
 use crate::test_support::{
-    inference_chunk, inference_completed, inference_started, tool_completed, tool_started,
-    turn_completed,
+    inference, inference_chunk, inference_completed, inference_started, spine_turn_completed,
+    tool_completed, tool_started,
 };
 use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::transcript::ir::{MessageRole, ToolName};
 use agnt_render::transcript::renderer::ItemStatus;
-use agnt_runtime::bus::ControlCommand;
+use agnt_runtime::bus::{ControlCommand, LifecycleEvent};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::event::PermissionDecision;
 use agnt_runtime::protocol::events::{
-    NarrationEvent, PermissionRecord, RequestId, SessionRecord, ToolCall, ToolOutcome,
+    InferenceRecord, NarrationEvent, PermissionRecord, RequestId, SessionRecord, ToolCall,
+    ToolOutcome,
 };
 use agnt_runtime::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+// region:    --- Modules
+
+// The key-path scenarios live beside the record scenarios: one file each, both
+// folding through the same entry point.
+#[path = "event_log/key_paths.rs"]
+mod key_paths;
+
+// endregion: --- Modules
+
 // region:    --- Fixtures
 
-/// One datum of a scripted session log: a stream record or a narration event.
+/// One datum of a scripted session log: a stream record, a narration event, or
+/// a step of the turn spine.
 ///
 /// The record is boxed because a record is much larger than a narration event.
 #[derive(Clone)]
 enum Datum {
     Record(Box<SessionRecord>),
     Narration(NarrationEvent),
+    Lifecycle(Box<LifecycleEvent>),
 }
 
 /// A scripted stream record.
 fn record(record: SessionRecord) -> Datum {
     Datum::Record(Box::new(record))
+}
+
+/// A scripted turn-spine step.
+fn lifecycle(event: LifecycleEvent) -> Datum {
+    Datum::Lifecycle(Box::new(event))
 }
 
 /// Fold one scripted datum through the reducer, exactly as the render loop does.
@@ -55,6 +72,11 @@ fn fold_datum(state: &mut AppState, datum: &Datum, cancel_controller: &CancelCon
         Datum::Narration(event) => reduce(
             state,
             RenderInput::Narration(event),
+            Some(cancel_controller),
+        ),
+        Datum::Lifecycle(event) => reduce(
+            state,
+            RenderInput::Lifecycle(event),
             Some(cancel_controller),
         ),
     }
@@ -133,11 +155,13 @@ fn golden_log_prompt_submit_streaming_and_turn_completion() -> Result<()> {
     // -- Setup & Fixtures
     let cancel_controller = CancelController::default();
     let log = vec![
-        record(inference_started()),
+        record(SessionRecord::Inference(InferenceRecord::Started {
+            inference: inference(),
+        })),
         Datum::Narration(inference_chunk("hi", "hi")),
         Datum::Narration(inference_chunk(" there", "hi there")),
         record(inference_completed(3, 2, Some(5), None, true)),
-        record(turn_completed(12)),
+        lifecycle(spine_turn_completed()),
     ];
 
     // -- Exec: the Enter key submits, the coordinator drains the effect and
@@ -341,158 +365,3 @@ fn golden_log_permission_decision_writes_one_effect() -> Result<()> {
 }
 
 // endregion: --- Scenarios
-
-// region:    --- Key-path scenarios
-
-/// The insert-exit chord: one `j` arms the chord, the second one leaves
-/// insert mode. The same fold must hold when the keymap lives in the reducer
-/// instead of the input lens.
-#[test]
-fn golden_key_insert_exit_chord_reaches_normal_mode() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-    assert_eq!(state.input.mode, InputMode::Insert, "starts in insert mode");
-
-    // -- Exec: the first `j` only arms the chord.
-    let first = reduce(
-        &mut state,
-        UiInput::KeyPressed {
-            key: Key::Char('j'),
-        },
-        None,
-    );
-
-    // -- Check: arming the chord edits nothing.
-    assert!(!first, "the armed chord reports no change");
-    assert_eq!(state.input.mode, InputMode::Insert);
-
-    // -- Exec: the second `j` is the chord.
-    let second = reduce(
-        &mut state,
-        UiInput::KeyPressed {
-            key: Key::Char('j'),
-        },
-        None,
-    );
-
-    // -- Check
-    assert!(second, "the chord transition is a visible change");
-    assert_eq!(state.input.mode, InputMode::Normal);
-    Ok(())
-}
-
-/// Normal-mode navigation: `g` arms the pending key and the second `g` jumps
-/// to the top of the transcript.
-#[test]
-fn golden_key_normal_pending_g_scrolls_to_top() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut state = AppState {
-        input: crate::state::InputState::default().with_mode(InputMode::Normal),
-        ..Default::default()
-    };
-    state.scroll.viewport_height = 10;
-    state.scroll.cursor_visual_row = 5;
-    state.scroll.total_visual_rows = 30;
-
-    // -- Exec: the first `g` only arms the pending key.
-    let first = reduce(
-        &mut state,
-        UiInput::KeyPressed {
-            key: Key::Char('g'),
-        },
-        None,
-    );
-
-    // -- Check: arming the pending key reports no change.
-    assert!(!first, "the armed pending key reports no change");
-    assert_eq!(state.scroll.cursor_visual_row, 5);
-
-    // -- Exec: the second `g` scrolls to the top.
-    let second = reduce(
-        &mut state,
-        UiInput::KeyPressed {
-            key: Key::Char('g'),
-        },
-        None,
-    );
-
-    // -- Check
-    assert!(second);
-    assert_eq!(state.scroll.cursor_visual_row, 0);
-    Ok(())
-}
-
-/// A busy-mode Esc leaves insert mode and arms the turn-cancel confirmation.
-#[test]
-fn golden_key_busy_escape_arms_abort_confirmation() -> Result<()> {
-    // -- Setup & Fixtures: a running turn, input locked. The cycle starts at
-    // the surface's own submit lane — the record fold never submits.
-    let mut state = AppState::default();
-    state.enqueue_prompt("say hi".to_string());
-    let _ = state.activate_next_prompt();
-    reduce(&mut state, RenderInput::Record(&inference_started()), None);
-    assert_eq!(state.phase, UiPhase::Busy);
-    assert_eq!(state.input.mode, InputMode::Insert);
-
-    // -- Exec
-    let changed = reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
-
-    // -- Check: mode left insert and the abort confirmation is armed.
-    assert!(changed);
-    assert_eq!(state.input.mode, InputMode::Normal);
-    assert_eq!(state.phase, UiPhase::AbortPending);
-    assert_eq!(
-        state.status.message.status_line(),
-        crate::interaction::reducer::ESC_ABORT_CONFIRM_STATUS
-    );
-    Ok(())
-}
-
-/// The permission card owns its decision keys: `a` writes exactly one
-/// AllowOnce decision through the key path.
-#[test]
-fn golden_key_permission_card_decision() -> Result<()> {
-    // -- Setup & Fixtures
-    let cancel_controller = CancelController::default();
-    let arguments = r#"{"path":"a.rs"}"#;
-    let call = edit_call(arguments);
-    let mut state = AppState::default();
-    fold_datum(
-        &mut state,
-        &record(tool_started(call.clone())),
-        &cancel_controller,
-    );
-    fold_datum(
-        &mut state,
-        &permission_requested(&call, None),
-        &cancel_controller,
-    );
-    assert!(state.permission.has_prompt(), "the card is up");
-
-    // -- Exec
-    let changed = reduce(
-        &mut state,
-        UiInput::KeyPressed {
-            key: Key::Char('a'),
-        },
-        Some(&cancel_controller),
-    );
-    let effects = state.take_pending_events(&cancel_controller);
-
-    // -- Check
-    assert!(changed);
-    assert!(
-        !state.permission.has_prompt(),
-        "the card closes on decision"
-    );
-    assert_eq!(effects.len(), 1, "exactly one permission decision");
-    assert!(matches!(
-        effects.first(),
-        Some(OrchestratorEvent::PermissionDecision { decision })
-            if decision.decision == PermissionDecision::AllowOnce
-                && decision.request_id == "ask-1"
-    ));
-    Ok(())
-}
-
-// endregion: --- Key-path scenarios

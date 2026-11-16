@@ -8,7 +8,7 @@ use super::*;
 async fn test_handle_accessors_expose_server_state() -> Result<()> {
     let handle = AgentBuilder::new("handle-accessors")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(0)
         .mesh_key("mesh-handle".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
@@ -69,7 +69,7 @@ async fn test_handle_accessors_expose_server_state() -> Result<()> {
 async fn test_handle_take_receivers_once() -> Result<()> {
     let mut handle = AgentBuilder::new("handle-receivers")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(0)
         .mesh_key("mesh".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
@@ -110,7 +110,7 @@ async fn test_builder_bind_failure_returns_error() -> Result<()> {
 
     let result = AgentBuilder::new("bind-fail")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(port)
         .mesh_key("mesh".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
@@ -146,7 +146,7 @@ async fn test_builder_static_discovery_populates_peer_cache() -> Result<()> {
 
     let handle = AgentBuilder::new("static-discovery")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Static(
+        .discovery(PeerDiscovery::Static(
             crate::discovery::static_discovery::StaticPeerDiscovery::new(vec![peer]),
         ))
         .port(0)

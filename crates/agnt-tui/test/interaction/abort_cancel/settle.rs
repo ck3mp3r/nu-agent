@@ -2,7 +2,7 @@
 //! confirming one, the next idle Esc reports it once and changes nothing else.
 
 use super::*;
-use crate::test_support::{fold_record, turn_completed};
+use crate::test_support::fold_turn_completed;
 
 /// WHEN the turn settles between the arming press and the confirming press, THE
 /// next idle Esc SHALL show the settled notice and SHALL leave the input mode
@@ -21,7 +21,7 @@ fn test_interaction_abort_cancel_settle_race_shows_finished_notice() -> Result<(
     assert_eq!(state.input.mode, InputMode::Normal);
 
     // -- Exec: the turn settles before the confirming press.
-    let settled = fold_record(&mut state, turn_completed(0));
+    let settled = fold_turn_completed(&mut state);
 
     // -- Check: idle, unarmed, and the arm's status is gone.
     assert!(settled);
@@ -49,7 +49,7 @@ fn test_interaction_abort_cancel_settle_race_shows_finished_notice() -> Result<(
         &TerminalEvent::Key(TerminalKey::Esc),
         Some(&cancel_controller),
     );
-    fold_record(&mut state, turn_completed(0));
+    fold_turn_completed(&mut state);
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('i')),
@@ -89,7 +89,7 @@ fn test_interaction_abort_cancel_settle_notice_is_consumed_once() -> Result<()> 
         &TerminalEvent::Key(TerminalKey::Esc),
         Some(&cancel_controller),
     );
-    fold_record(&mut state, turn_completed(0));
+    fold_turn_completed(&mut state);
     dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('i')),

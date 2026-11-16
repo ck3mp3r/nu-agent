@@ -4,14 +4,14 @@
 //! through `dispatch_turn_event` (the single turn dispatch seam).
 
 use crate::state::{AppState, StatusMessageKind, UiPhase};
-use crate::test_support::{fold_record, turn_completed};
+use crate::test_support::{fold_record, fold_turn_completed, turn_completed};
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::MessageRole;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn finalize_turn(state: &mut AppState) {
-    fold_record(state, turn_completed(0));
+    fold_turn_completed(state);
 }
 
 #[test]
@@ -53,6 +53,7 @@ fn finalize_cycle_effects() -> Result<()> {
 #[test]
 fn turn_started_and_task_outcomes_are_render_noops() {
     let mut state = AppState {
+        phase: UiPhase::Busy,
         input_locked: true,
         ..Default::default()
     };
@@ -60,8 +61,13 @@ fn turn_started_and_task_outcomes_are_render_noops() {
 
     // The record vocabulary carries only `TurnRecord::Completed`: a turn start
     // and an A2A task outcome have no record, so they cannot reach the reducer
-    // at all. The completed turn is the one turn fact that changes state.
-    assert!(fold_record(&mut state, turn_completed(0)));
+    // at all. That record is display-only — the ring is lossy — so the spine's
+    // completion is the one turn fact that changes state.
+    assert!(!fold_record(&mut state, turn_completed(0)));
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert!(state.input_locked);
+
+    assert!(fold_turn_completed(&mut state));
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(state.transcript.assistant_stream_start.is_none());

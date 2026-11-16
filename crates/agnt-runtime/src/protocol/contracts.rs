@@ -4,8 +4,9 @@ use crate::conversation::turn::TurnEnd;
 use crate::orchestrator::events::OrchestratorEvent;
 use crate::session::tool_status::ToolStatus;
 use agnt_kernel::{
-    CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, NoticeRecord, PromptRecord,
-    PromptStamps, SessionRecord, ToolCall, ToolOutcome, ToolRecord, ToolSource, TurnRecord, Usage,
+    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind, NoticeRecord,
+    PromptRecord, PromptStamps, SessionRecord, ToolCall, ToolOutcome, ToolRecord, ToolSource,
+    TurnRecord, Usage,
 };
 
 /// The panels every surface shares — the kernel's own closed set, re-exported
@@ -231,8 +232,14 @@ pub fn project_snapshots(
                 }
                 let usage = usage_of(message.usage());
                 last_total_tokens = usage.total_tokens.or(last_total_tokens);
-                records.push(SessionRecord::Inference(InferenceRecord::Started));
+                // One replayed assistant message is one completion call: its own
+                // id keeps its block apart from the message before and after it.
+                let inference = InferenceId::mint();
+                records.push(SessionRecord::Inference(InferenceRecord::Started {
+                    inference,
+                }));
                 records.push(SessionRecord::Inference(InferenceRecord::Chunk {
+                    inference,
                     delta: text.to_string(),
                     aggregated: text.to_string(),
                 }));

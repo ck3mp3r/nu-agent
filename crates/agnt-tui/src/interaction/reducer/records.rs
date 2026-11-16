@@ -39,28 +39,40 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
             state.push_user_row(record.text.clone(), prompt_facts(&record.stamps));
             true
         }
-        RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started)) => {
+        RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started { inference })) => {
             state.llm.started(
                 &mut state.transcript,
                 &mut state.status,
                 &mut state.phase,
                 &mut state.input_locked,
+                *inference,
             );
             state.ensure_invariants();
             true
         }
-        RenderInput::Narration(NarrationEvent::InferenceChunk { aggregated, .. }) => state
-            .llm
-            .chunk(&mut state.transcript, &mut state.scroll, aggregated),
+        RenderInput::Narration(NarrationEvent::InferenceChunk {
+            inference,
+            aggregated,
+            ..
+        }) => state.llm.chunk(
+            &mut state.transcript,
+            &mut state.scroll,
+            *inference,
+            aggregated,
+        ),
         // A record chunk carries the same aggregated text a narrated one does:
         // the replay path publishes chunks on the stream, and both vocabularies
         // fold to one streamed block.
         RenderInput::Record(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference,
             aggregated,
             ..
-        })) => state
-            .llm
-            .chunk(&mut state.transcript, &mut state.scroll, aggregated),
+        })) => state.llm.chunk(
+            &mut state.transcript,
+            &mut state.scroll,
+            *inference,
+            aggregated,
+        ),
         RenderInput::Record(SessionRecord::Inference(InferenceRecord::Completed { usage })) => {
             state.llm.completed(&mut state.status, usage)
         }
@@ -176,18 +188,15 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
             &mut state.status,
             source_label(*source),
         ),
-        RenderInput::Record(SessionRecord::Turn(TurnRecord::Completed { .. })) => {
-            state.finalize_cycle();
-            // A cancel can end the turn while a card is still up (A2A task
-            // cancel, Ctrl-C quit+cancel). The request is gone by then, so the
-            // card must not outlive the turn.
-            state.permission.close_prompt();
-            state.turn.finalize(
-                &mut state.transcript,
-                &mut state.status,
-                &mut state.input_locked,
-            )
-        }
+        // The spine is the turn end's single observer: the executor publishes
+        // this step on a successful turn and on a cancelled one, and the spine
+        // never drops a step — so a lagged stream ring cannot strand the input
+        // lock. Its ring record is display-only and releases nothing.
+        RenderInput::Lifecycle(LifecycleEvent::TurnCompleted { .. }) => release_turn(state),
+        // The turn end's ring record is display-only: the stream ring is lossy,
+        // so it is never the observer of a release. A record that outlives a
+        // lag, or folds after the next turn started, carries no state change.
+        RenderInput::Record(SessionRecord::Turn(TurnRecord::Completed { .. })) => false,
         // A session boundary. A fresh start is a new transcript: `/new` mints
         // the session the surface now shows, so the rows of the session that
         // ended leave the screen and the startup banner takes their place. A
@@ -254,17 +263,30 @@ pub(crate) fn prompt_facts(stamps: &PromptStamps) -> PromptFacts {
     }
 }
 
-/// A turn-level error is shown as a system notice in the transcript and closes
-/// the turn, exactly as the former `TurnError` arm did.
-fn handle_turn_error(state: &mut AppState, message: &str) -> bool {
-    push_system_notice(state, format!("Error: {message}"));
+/// The turn-end release: complete the turn's cycle, close a surviving card,
+/// and close the turn's transcript block.
+///
+/// The live turn's spine completion owns it. The replay boundary owns it too:
+/// a replayed log ends every turn it closed at rest, exactly as the live turn
+/// did, so both call sites run this one sequence.
+pub(crate) fn release_turn(state: &mut AppState) -> bool {
     state.finalize_cycle();
+    // A cancel can end the turn while a card is still up (A2A task cancel,
+    // Ctrl-C quit+cancel). The request is gone by then, so the card must not
+    // outlive the turn.
     state.permission.close_prompt();
     state.turn.finalize(
         &mut state.transcript,
         &mut state.status,
         &mut state.input_locked,
     )
+}
+
+/// A turn-level error is shown as a system notice in the transcript and closes
+/// the turn, exactly as the former `TurnError` arm did.
+fn handle_turn_error(state: &mut AppState, message: &str) -> bool {
+    push_system_notice(state, format!("Error: {message}"));
+    release_turn(state)
 }
 
 /// Push a system line into the transcript. Both the live error path and the

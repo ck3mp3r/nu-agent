@@ -34,15 +34,15 @@ impl SlashCommand {
         match self {
             SlashCommand::Compact => "Force compaction now",
             SlashCommand::Uncompact => "Undo the newest compaction",
-            SlashCommand::Mcp => "Open MCP servers panel",
-            SlashCommand::Help => "Open help panel",
-            SlashCommand::Status => "Open status panel",
-            SlashCommand::Models => "Open model picker",
+            SlashCommand::Mcp => "Enable or disable MCP servers",
+            SlashCommand::Help => "View key help",
+            SlashCommand::Status => "View runtime status",
+            SlashCommand::Models => "Switch the active model",
             SlashCommand::Agent => "Switch agent persona",
             SlashCommand::New => "Start a new session",
             SlashCommand::Session => "Switch to an existing session",
             SlashCommand::Theme => "Switch color theme",
-            SlashCommand::Skills => "Open skills panel",
+            SlashCommand::Skills => "List available skills",
         }
     }
 }

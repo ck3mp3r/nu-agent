@@ -47,8 +47,11 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
     assert!(
         events.iter().any(|e| matches!(
             e,
-            TurnTestObservation::Narration(NarrationEvent::InferenceChunk { delta, aggregated })
-                if delta == "final answer" && aggregated == "final answer"
+            TurnTestObservation::Narration(NarrationEvent::InferenceChunk {
+                delta,
+                aggregated,
+                ..
+            }) if delta == "final answer" && aggregated == "final answer"
         )),
         "a non-streamed turn must emit one chunk with both fields = the full text; got: {events:?}"
     );

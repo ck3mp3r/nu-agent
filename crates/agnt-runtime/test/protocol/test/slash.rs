@@ -131,3 +131,37 @@ fn extract_session_id_variants() {
     assert_eq!(extract_session_id("/Session abc123"), Some("abc123"));
     assert_eq!(extract_session_id("  /session   abc123  "), Some("abc123"));
 }
+
+/// Each slash row names the outcome the user wants, never the mechanism that
+/// carries it: no "Open … panel" copy, and the eleven rows in canonical order.
+#[test]
+fn test_slash_command_summaries_name_outcomes() -> Result<()> {
+    // -- Setup & Fixtures
+    let expected = [
+        "Force compaction now",
+        "Undo the newest compaction",
+        "Enable or disable MCP servers",
+        "View key help",
+        "View runtime status",
+        "Switch the active model",
+        "Switch agent persona",
+        "Start a new session",
+        "Switch to an existing session",
+        "Switch color theme",
+        "List available skills",
+    ];
+
+    // -- Exec
+    let found: Vec<&str> = SLASH_COMMAND_ORDER
+        .iter()
+        .map(SlashCommand::summary)
+        .collect();
+
+    // -- Check
+    assert_eq!(
+        found.as_slice(),
+        expected.as_slice(),
+        "every row must name its outcome"
+    );
+    Ok(())
+}

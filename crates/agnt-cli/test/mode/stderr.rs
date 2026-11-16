@@ -21,7 +21,6 @@ fn test_paths() -> agnt_runtime::config::Paths {
         copilot_token_dir: dir.join("copilot"),
         store_path: dir.join("store.json"),
         log_dir: dir.join("log"),
-        log_path: dir.join("log/agent.log"),
         audit_log_path: dir.join("audit.log"),
         secrets_path: dir.join("secrets"),
         models_cache_path: dir.join("models.json"),

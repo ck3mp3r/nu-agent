@@ -12,7 +12,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
     let config = Config {
         a2a_port: None,
         provider: "unsupported-provider".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "some-model".to_string(),
         api_key: Some("test-key".to_string()),
@@ -61,7 +61,7 @@ fn client_cache_key_contains_provider_and_model() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
@@ -118,7 +118,7 @@ fn client_cache_key_includes_base_url_when_set() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
@@ -175,7 +175,7 @@ fn active_model_identity_returns_provider_slash_model() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "claude-sonnet-4".to_string(),
         api_key: None,
@@ -262,7 +262,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: Some("fake-key".to_string()),

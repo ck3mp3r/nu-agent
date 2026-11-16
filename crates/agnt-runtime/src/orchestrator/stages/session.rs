@@ -67,8 +67,19 @@ impl SessionHandler for SessionStage {
                 );
                 // Fail the external task the turn ran for — the A2A listener
                 // needs the task id to transition the task.
-                self.publish_task_failed(error.msg.clone(), task_id, ctx)
+                self.publish_task_failed(error.msg.clone(), task_id.clone(), ctx)
                     .await;
+                // The turn's spine step. The executor publishes it on a
+                // successful turn and on a cancelled one, and every failure
+                // path returns before those sites — so the failed turn's end
+                // is published here. The spine never drops a step, so the input
+                // lock's release cannot ride the narration lane the error
+                // notice below rides. A synthesized turn end reports no
+                // duration, exactly as a replayed boundary does.
+                let _ = ctx.lifecycle.publish(LifecycleEvent::TurnCompleted {
+                    task_id,
+                    duration_ms: 0,
+                });
                 let _ = ctx.narration.publish(NarrationEvent::SystemMessage {
                     kind: NoticeKind::TurnError,
                     text: error.msg,

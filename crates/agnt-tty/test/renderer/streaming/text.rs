@@ -43,11 +43,14 @@ fn normal_mode_streams_text() {
     // -- Exec
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "hello world".to_string(),
             aggregated: "hello world".to_string(),
         },
@@ -77,7 +80,9 @@ fn normal_mode_prints_each_chunk_new_suffix() -> Result<()> {
     // -- Exec
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
 
     // -- Check: nothing printed before the first chunk.
@@ -89,6 +94,7 @@ fn normal_mode_prints_each_chunk_new_suffix() -> Result<()> {
         narrate(
             &mut renderer,
             NarrationEvent::InferenceChunk {
+                inference: InferenceId::mint(),
                 delta: delta.to_string(),
                 aggregated: aggregated.to_string(),
             },
@@ -122,11 +128,14 @@ fn quiet_mode_suppresses_streaming() {
     // -- Exec
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "hello world".to_string(),
             aggregated: "hello world".to_string(),
         },
@@ -151,11 +160,14 @@ fn streaming_completed_resets_state() -> Result<()> {
     // -- Exec: first streaming sequence.
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "first".to_string(),
             aggregated: "first".to_string(),
         },
@@ -169,11 +181,14 @@ fn streaming_completed_resets_state() -> Result<()> {
     draw(&mut renderer, turn_completed_record());
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "second".to_string(),
             aggregated: "second".to_string(),
         },
@@ -215,7 +230,9 @@ fn normal_mode_incremental_streaming() -> Result<()> {
     // -- Exec
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
 
     // -- Check: nothing printed before the first chunk.
@@ -227,6 +244,7 @@ fn normal_mode_incremental_streaming() -> Result<()> {
         narrate(
             &mut renderer,
             NarrationEvent::InferenceChunk {
+                inference: InferenceId::mint(),
                 delta: delta.to_string(),
                 aggregated: aggregated.to_string(),
             },
@@ -264,7 +282,9 @@ fn spinner_stops_when_streaming_starts() -> Result<()> {
     // -- Exec: the spinner starts with the inference call.
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
 
     // -- Check: the spinner owns the line before the first chunk.
@@ -274,6 +294,7 @@ fn spinner_stops_when_streaming_starts() -> Result<()> {
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "streaming text".to_string(),
             aggregated: "streaming text".to_string(),
         },
@@ -287,6 +308,7 @@ fn spinner_stops_when_streaming_starts() -> Result<()> {
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: " continues".to_string(),
             aggregated: "streaming text continues".to_string(),
         },
@@ -310,11 +332,14 @@ fn streaming_adds_newline_on_completion() {
     // -- Exec
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "no newline yet".to_string(),
             aggregated: "no newline yet".to_string(),
         },

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use agnt_runtime::bus::Bus;
+use agnt_runtime::bus::{Bus, LifecycleEvent};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::contracts::UiMessageSnapshot;
 use agnt_runtime::protocol::events::{PermissionRecord, RequestId, SessionRecord, TurnRecord};
@@ -153,6 +153,18 @@ fn hydrate_transcript_with_no_messages_leaves_the_transcript_empty() {
 }
 
 #[test]
+fn test_render_loop_log_lag_composes_lane_and_count() {
+    // -- Exec
+    let message = super::render_loop::log_lag("stream", 5);
+
+    // -- Check
+    assert!(
+        message.contains("tui-lag: stream lane lagged: 5 record(s)"),
+        "the lag line must name the lane and the drop count: {message}"
+    );
+}
+
+#[test]
 fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let mut ui = make_ui();
     let event = SessionRecord::Permission(PermissionRecord::Requested {
@@ -250,12 +262,27 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
         "second prompt must not drain while the turn is still active"
     );
 
-    // Complete the turn. The turn-completion branch must drain the stacked
-    // prompt into a PromptSubmitted event without any further terminal input.
+    // The ring's own record is display-only: it must not drain the stack while
+    // the turn it describes is still the surface's live turn.
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 0,
         }))
+        .map_err(|_| "should publish the ring record")?;
+    let after_record = tokio::time::timeout(Duration::from_millis(50), event_rx.recv()).await;
+    assert!(
+        after_record.is_err(),
+        "the lossy ring's record must not drain the stacked prompt"
+    );
+
+    // Complete the turn on the strict spine. The spine fold must drain the
+    // stacked prompt into a PromptSubmitted event without any further terminal
+    // input.
+    bus.lifecycle()
+        .publish(LifecycleEvent::TurnCompleted {
+            task_id: None,
+            duration_ms: 0,
+        })
         .map_err(|_| "should publish TurnCompleted")?;
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
         .await

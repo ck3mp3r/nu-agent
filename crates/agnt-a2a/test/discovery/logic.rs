@@ -4,7 +4,7 @@ use mdns_sd::{Receiver, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInf
 use tokio::sync::mpsc;
 
 use crate::discovery::static_discovery::StaticPeerDiscovery;
-use crate::discovery::{DiscoveryService, PeerDiscoveryImpl, PeerEvent, mdns_name_for_switch};
+use crate::discovery::{DiscoveryService, PeerDiscovery, PeerEvent, mdns_name_for_switch};
 use crate::{AgentCard, Peer};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -166,14 +166,14 @@ fn test_raw_mdns_sd_register_and_browse() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// PeerDiscoveryImpl — Noop
+// PeerDiscovery — Noop
 // ---------------------------------------------------------------------------
 
-/// Verify that [`PeerDiscoveryImpl::Noop`] can be created and all methods
+/// Verify that [`PeerDiscovery::Noop`] can be created and all methods
 /// are safe no-ops.
 #[tokio::test]
-async fn test_peer_discovery_impl_noop() -> Result<()> {
-    let mut discovery = PeerDiscoveryImpl::Noop;
+async fn test_peer_discovery_noop() -> Result<()> {
+    let mut discovery = PeerDiscovery::Noop;
     discovery.start("noop", 0, &AgentCard::default(), "mesh");
     assert!(discovery.take_peer_rx().is_none());
     discovery.shutdown();
@@ -246,27 +246,27 @@ fn test_mdns_name_for_switch_handles_same_name_different_port() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// PeerDiscoveryImpl — fullname and rename dispatch
+// PeerDiscovery — fullname and rename dispatch
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_peer_discovery_impl_fullname_noop() -> Result<()> {
-    let impl_ = PeerDiscoveryImpl::Noop;
-    assert!(impl_.fullname().is_none());
+fn test_peer_discovery_fullname_noop() -> Result<()> {
+    let discovery = PeerDiscovery::Noop;
+    assert!(discovery.fullname().is_none());
     Ok(())
 }
 
 #[test]
-fn test_peer_discovery_impl_fullname_static() -> Result<()> {
-    let impl_ = PeerDiscoveryImpl::Static(StaticPeerDiscovery::new(vec![]));
-    assert!(impl_.fullname().is_none());
+fn test_peer_discovery_fullname_static() -> Result<()> {
+    let discovery = PeerDiscovery::Static(StaticPeerDiscovery::new(vec![]));
+    assert!(discovery.fullname().is_none());
     Ok(())
 }
 
 #[test]
-fn test_peer_discovery_impl_rename_noop_does_not_panic() -> Result<()> {
-    let mut impl_ = PeerDiscoveryImpl::Noop;
-    impl_.rename(
+fn test_peer_discovery_rename_noop_does_not_panic() -> Result<()> {
+    let mut discovery = PeerDiscovery::Noop;
+    discovery.rename(
         "old._nu-agent-a2a._tcp.local.",
         "new-name",
         12345,
@@ -278,9 +278,9 @@ fn test_peer_discovery_impl_rename_noop_does_not_panic() -> Result<()> {
 }
 
 #[test]
-fn test_peer_discovery_impl_rename_static_does_not_panic() -> Result<()> {
-    let mut impl_ = PeerDiscoveryImpl::Static(StaticPeerDiscovery::new(vec![]));
-    impl_.rename(
+fn test_peer_discovery_rename_static_does_not_panic() -> Result<()> {
+    let mut discovery = PeerDiscovery::Static(StaticPeerDiscovery::new(vec![]));
+    discovery.rename(
         "old._nu-agent-a2a._tcp.local.",
         "new-name",
         12345,

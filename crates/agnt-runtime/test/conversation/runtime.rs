@@ -12,6 +12,8 @@ use super::*;
 
 #[path = "runtime/accessors.rs"]
 mod accessors;
+#[path = "runtime/compaction_slot.rs"]
+mod compaction_slot;
 #[path = "runtime/depth.rs"]
 mod depth;
 #[cfg(all(test, feature = "integration"))]

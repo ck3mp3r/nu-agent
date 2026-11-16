@@ -416,7 +416,7 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
 }
 
 #[test]
-fn test_wheel_scroll_insert_mode_noop_reports_mode_change() -> Result<()> {
+fn test_wheel_scroll_insert_mode_noop_reports_scroll_change_only() -> Result<()> {
     // -- Setup & Fixtures: insert mode, cursor at the top, nothing to scroll.
     let mut state = wheel_noop_state(InputMode::Insert);
 
@@ -431,10 +431,11 @@ fn test_wheel_scroll_insert_mode_noop_reports_mode_change() -> Result<()> {
         None,
     );
 
-    // -- Check: the scroll is a no-op, but the mode transition is visible.
-    assert!(changed);
-    assert_eq!(state.input.mode, InputMode::Normal);
-    assert_eq!(state.scroll.pane_focus, PaneFocus::Transcript);
+    // -- Check: the notch reports the scroll change alone — here there is none,
+    // so the frame stays clean and the composer keeps insert mode.
+    assert!(!changed);
+    assert_eq!(state.input.mode, InputMode::Insert);
+    assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
     assert_eq!(state.scroll.cursor_visual_row, 0);
     assert_eq!(state.scroll.scroll_offset, 0);
     assert!(!state.scroll.following_tail);
@@ -484,9 +485,11 @@ fn test_wheel_scroll_insert_mode_scroll_change_reports_change() -> Result<()> {
         None,
     );
 
-    // -- Check: the scroll moved and the mode transitioned.
+    // -- Check: the scroll moved under insert mode; the composer keeps the
+    // mode and the input focus.
     assert!(changed);
-    assert_eq!(state.input.mode, InputMode::Normal);
+    assert_eq!(state.input.mode, InputMode::Insert);
+    assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
     assert_eq!(state.scroll.cursor_visual_row, 7);
     assert_eq!(state.scroll.scroll_offset, 4);
     Ok(())

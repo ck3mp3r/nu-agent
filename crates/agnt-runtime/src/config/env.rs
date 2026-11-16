@@ -76,7 +76,7 @@ impl Config {
 
         Self {
             provider: provider.to_string(),
-            provider_impl: None, // from_env doesn't use provider_impl
+            provider_kind: None, // from_env doesn't use provider_kind
             catalog: None,       // resolved by `resolve_model` from the block
             model: model.to_string(),
             api_key,

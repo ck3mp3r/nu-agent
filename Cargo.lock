@@ -234,6 +234,7 @@ dependencies = [
  "similar",
  "sqlx",
  "tempfile",
+ "testing_logger",
  "thiserror 2.0.21",
  "tokio",
  "toml",

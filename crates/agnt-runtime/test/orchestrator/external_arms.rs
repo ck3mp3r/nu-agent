@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::conversation::turn::TurnEnd;
 use crate::orchestrator::SourceChannels;
+use crate::orchestrator::engine::WORKER_CMD_CAPACITY;
 use crate::orchestrator::external::{ExternalCompletion, ExternalTask, external_session_key};
-use crate::orchestrator::loop_impl::WORKER_CMD_CAPACITY;
 
 // ---------------------------------------------------------------------------
 // External task intake

@@ -54,3 +54,34 @@ fn command_palette_order_and_fuzzy_matching() -> Result<()> {
     assert_eq!(CommandPaletteAction::Agents.info_panel(), None);
     Ok(())
 }
+
+/// Each palette row names the outcome the user wants, never the mechanism that
+/// carries it: no "Open … picker" copy, and the eight actions in canonical order.
+#[test]
+fn test_command_palette_action_summaries_name_outcomes() -> Result<()> {
+    // -- Setup & Fixtures
+    let expected = [
+        "View key help",
+        "View runtime status",
+        "Enable or disable MCP servers",
+        "List available skills",
+        "Switch the active model",
+        "Switch the active agent",
+        "Switch to an existing session",
+        "Change the color theme",
+    ];
+
+    // -- Exec
+    let found: Vec<&str> = CommandPaletteAction::PALETTE_ACTIONS
+        .iter()
+        .map(CommandPaletteAction::summary)
+        .collect();
+
+    // -- Check
+    assert_eq!(
+        found.as_slice(),
+        expected.as_slice(),
+        "every row must name its outcome"
+    );
+    Ok(())
+}

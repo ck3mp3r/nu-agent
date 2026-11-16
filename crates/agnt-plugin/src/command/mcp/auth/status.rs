@@ -8,6 +8,7 @@ use rmcp::transport::auth::StoredCredentials;
 use agnt_runtime::config::vault::Vault;
 use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpConfig};
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 /// Determine the authentication status string for a single MCP server.
@@ -97,45 +98,52 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        // 1. Load MCP config
-        let plugin_config = agnt_runtime::config::toml_config::load()
-            .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
-        let mcp_config = McpConfig::from_toml_config(&plugin_config).map_err(|msg| {
-            LabeledError::new("Failed to load MCP config").with_label(msg, call.head)
-        })?;
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            // 1. Load MCP config
+            let plugin_config = agnt_runtime::config::toml_config::load()
+                .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
+            let mcp_config = McpConfig::from_toml_config(&plugin_config).map_err(|msg| {
+                LabeledError::new("Failed to load MCP config").with_label(msg, call.head)
+            })?;
 
-        // 2. Construct the vault
-        let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
-            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
-        let vault = Vault::auto_detect(&application_paths.secrets_path)
-            .map_err(|e| LabeledError::new(e.to_string()))?;
+            // 2. Construct the vault
+            let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
+                .map_err(|e| {
+                LabeledError::new(format!("Failed to resolve application paths: {e}"))
+            })?;
+            let vault = Vault::auto_detect(&application_paths.secrets_path)
+                .map_err(|e| LabeledError::new(e.to_string()))?;
 
-        // 3. Build status rows
-        let mut rows: Vec<Value> = Vec::new();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            // 3. Build status rows
+            let mut rows: Vec<Value> = Vec::new();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
 
-        for server in &mcp_config.mcp {
-            let auth_type = match &server.auth {
-                McpAuthConfig::None => "none".to_string(),
-                McpAuthConfig::Bearer { .. } => "bearer".to_string(),
-                McpAuthConfig::OAuth { .. } => "oauth".to_string(),
-            };
+            for server in &mcp_config.mcp {
+                let auth_type = match &server.auth {
+                    McpAuthConfig::None => "none".to_string(),
+                    McpAuthConfig::Bearer { .. } => "bearer".to_string(),
+                    McpAuthConfig::OAuth { .. } => "oauth".to_string(),
+                };
 
-            let creds = vault.get_mcp_credentials(&server.name).unwrap_or(None);
-            let status = determine_status(&server.auth, creds.as_ref(), now);
+                let creds = vault.get_mcp_credentials(&server.name).unwrap_or(None);
+                let status = determine_status(&server.auth, creds.as_ref(), now);
 
-            let record = nu_protocol::record! {
-                "server" => Value::string(&server.name, call.head),
-                "auth_type" => Value::string(auth_type, call.head),
-                "status" => Value::string(status, call.head),
-            };
+                let record = nu_protocol::record! {
+                    "server" => Value::string(&server.name, call.head),
+                    "auth_type" => Value::string(auth_type, call.head),
+                    "status" => Value::string(status, call.head),
+                };
 
-            rows.push(Value::record(record, call.head));
-        }
+                rows.push(Value::record(record, call.head));
+            }
 
-        Ok(Value::list(rows, call.head))
+            Ok(Value::list(rows, call.head))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

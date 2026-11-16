@@ -217,7 +217,7 @@ pub fn apply_persona_model(
     };
 
     // Re-resolve the full config using resolve_model with the role config.
-    // This replaces provider, model, provider_impl, and all role-level overrides.
+    // This replaces provider, model, provider_kind, and all role-level overrides.
     let pc = plugin_config
         .ok_or_else(|| LabeledError::new("Plugin config required for persona model resolution"))?;
     *config = pc

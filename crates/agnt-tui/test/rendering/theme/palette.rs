@@ -2,7 +2,8 @@ use ratatui::style::{Color, Modifier};
 
 use super::theme_support_test::{
     MOCHA_BLUE, MOCHA_GREEN, MOCHA_LAVENDER, MOCHA_MAUVE, MOCHA_OVERLAY0, MOCHA_OVERLAY1,
-    MOCHA_OVERLAY2, MOCHA_PEACH, MOCHA_RED, MOCHA_SAPPHIRE, MOCHA_SKY, MOCHA_TEXT, MOCHA_YELLOW,
+    MOCHA_OVERLAY2, MOCHA_PEACH, MOCHA_RED, MOCHA_SAPPHIRE, MOCHA_SKY, MOCHA_SUBTEXT0, MOCHA_TEXT,
+    MOCHA_YELLOW,
 };
 use crate::rendering::theme::{CatppuccinPalette, ThemeName, TuiTheme};
 
@@ -199,6 +200,7 @@ fn existing_role_and_status_channels_remain_unchanged() {
     assert_eq!(theme.role_user.fg, Some(MOCHA_LAVENDER));
     assert_eq!(theme.role_assistant.fg, Some(MOCHA_LAVENDER));
     assert_eq!(theme.role_system.fg, Some(MOCHA_YELLOW));
+    assert_eq!(theme.role_notice.fg, Some(MOCHA_SUBTEXT0));
     assert_eq!(theme.role_compaction.fg, Some(MOCHA_OVERLAY1));
     assert_eq!(theme.role_tool.fg, Some(MOCHA_MAUVE));
 
@@ -208,6 +210,32 @@ fn existing_role_and_status_channels_remain_unchanged() {
     assert_eq!(theme.status_failed.fg, Some(MOCHA_RED));
     assert_eq!(theme.status_cancelled.fg, Some(MOCHA_OVERLAY0));
     assert_eq!(theme.row_user_bg, Color::Rgb(43, 44, 61));
+}
+
+#[test]
+fn role_notice_uses_subtext0_for_all_flavors() {
+    let cases = [
+        (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
+        (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
+        (TuiTheme::catppuccin_frappe(), CatppuccinPalette::frappe()),
+        (
+            TuiTheme::catppuccin_macchiato(),
+            CatppuccinPalette::macchiato(),
+        ),
+    ];
+
+    for (theme, palette) in cases {
+        assert_eq!(
+            theme.role_notice.fg,
+            Some(palette.subtext0),
+            "the notice role follows the flavor's subtext0"
+        );
+        assert_ne!(
+            theme.role_notice.fg,
+            Some(palette.yellow),
+            "the notice role is not the system yellow"
+        );
+    }
 }
 
 #[test]

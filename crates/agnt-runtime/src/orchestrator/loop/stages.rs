@@ -1,6 +1,6 @@
 //! The production composition of the four stage capabilities.
 
-use crate::orchestrator::loop_impl::Stages;
+use crate::orchestrator::engine::Stages;
 use crate::orchestrator::stages::permission::PermissionStage;
 use crate::orchestrator::stages::session::SessionStage;
 use crate::orchestrator::stages::slash::SlashStage;

@@ -30,7 +30,7 @@ impl PluginConfig {
     ///
     /// # Resolution order (last wins)
     /// 1. `Config::from_env(provider_name, model_name)` — env vars (lowest priority)
-    /// 2. Provider config — `api_key`, `base_url`, `provider_impl`
+    /// 2. Provider config — `api_key`, `base_url`, `provider_kind`
     /// 3. Model config — `temperature`, `limits` (context/output) from `ProviderConfig.models.<name>`
     /// 4. Role config — all `ModelRoleConfig` fields override model config (highest priority)
     ///
@@ -89,9 +89,9 @@ impl PluginConfig {
 
         // Step 2: Merge provider-level settings (if provider block exists)
         if let Some(pc) = provider_config
-            && let Some(impl_name) = &pc.provider
+            && let Some(provider_kind) = &pc.provider
         {
-            config.provider_impl = Some(impl_name.clone());
+            config.provider_kind = Some(provider_kind.clone());
         }
         // Only merge the provider config key when env vars did not provide one.
         // Env vars outrank the config file; without this guard the config's

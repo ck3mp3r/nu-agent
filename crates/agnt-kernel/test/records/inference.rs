@@ -2,7 +2,7 @@
 //! producer of [`SessionRecord`]s must honor.
 
 use crate::bus::Bus;
-use crate::records::{InferenceRecord, SessionRecord, StopCause, TurnRecord, Usage};
+use crate::records::{InferenceId, InferenceRecord, SessionRecord, StopCause, TurnRecord, Usage};
 
 use crate::test_support::Result;
 
@@ -13,19 +13,24 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
+    let inference = InferenceId::mint();
 
     // -- Exec
     bus.stream()
-        .publish(SessionRecord::Inference(InferenceRecord::Started))
+        .publish(SessionRecord::Inference(InferenceRecord::Started {
+            inference,
+        }))
         .map_err(|e| format!("publish started: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference,
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))
@@ -57,7 +62,7 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
         match rx.recv().await {
             Ok(record) => {
                 match record {
-                    SessionRecord::Inference(InferenceRecord::Started) => {}
+                    SessionRecord::Inference(InferenceRecord::Started { .. }) => {}
                     SessionRecord::Inference(InferenceRecord::Stopped { .. }) => {}
                     SessionRecord::Tool(_) => {}
                     SessionRecord::Permission(_) => {}
@@ -110,19 +115,24 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
+    let inference = InferenceId::mint();
 
     // -- Exec
     bus.stream()
-        .publish(SessionRecord::Inference(InferenceRecord::Started))
+        .publish(SessionRecord::Inference(InferenceRecord::Started {
+            inference,
+        }))
         .map_err(|e| format!("publish started: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference,
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))
@@ -151,7 +161,7 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
     loop {
         match rx.recv().await {
             Ok(record) => match &record {
-                SessionRecord::Inference(InferenceRecord::Started) => tags.push("started"),
+                SessionRecord::Inference(InferenceRecord::Started { .. }) => tags.push("started"),
                 SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
                     tags.push("chunk");
                     aggregates.push(aggregated.clone());
@@ -196,13 +206,17 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
+    let inference = InferenceId::mint();
 
     // -- Exec
     bus.stream()
-        .publish(SessionRecord::Inference(InferenceRecord::Started))
+        .publish(SessionRecord::Inference(InferenceRecord::Started {
+            inference,
+        }))
         .map_err(|e| format!("publish started: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
@@ -227,7 +241,7 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
     loop {
         match rx.recv().await {
             Ok(record) => match &record {
-                SessionRecord::Inference(InferenceRecord::Started) => tags.push("started"),
+                SessionRecord::Inference(InferenceRecord::Started { .. }) => tags.push("started"),
                 SessionRecord::Inference(InferenceRecord::Chunk { .. }) => tags.push("chunk"),
                 SessionRecord::Inference(InferenceRecord::Completed { .. }) => {
                     tags.push("completed")

@@ -132,6 +132,16 @@ pub fn failure_warning(hook: &str, event: &str, error: &HookProcessError) -> Str
     format!("hook '{hook}' failed on {event}: {error}")
 }
 
+/// The warning text for a hook's lagged re-sync on the record stream.
+///
+/// The dropped count is the whole evidence the loss leaves: the records are
+/// already gone, so the line names the hook and how much it missed.
+pub(crate) fn lag_warning(hook: &str, dropped: u64) -> String {
+    format!(
+        "hook '{hook}' lagged on the record stream: {dropped} record(s) dropped, re-synced at the tail"
+    )
+}
+
 /// Spawn one observe-only subscriber task per agent-class hook.
 ///
 /// Spawned once per process against the standalone agent channel. The runner
@@ -328,7 +338,7 @@ async fn run_hook<P>(
                 Some(_) => {}
                 None => lifecycle_rx = None,
             },
-            event = recv_ring_optional(&mut stream_rx) => match event {
+            event = recv_ring_optional(&mut stream_rx, &hook.name) => match event {
                 Some(SessionRecord::Tool(ToolRecord::Started { call })) => {
                     turn.tool_calls += 1;
                     if hook.events.contains(&HookEvent::ToolStarted) {
@@ -454,10 +464,15 @@ async fn recv_optional<T: Clone + Send + 'static>(rx: &mut Option<BroadcastRx<T>
     }
 }
 
-/// The same await for a ring subscription: a lagged reader re-syncs at the tail
-/// and resumes in receipt order.
+/// Receive the next event on the record stream, re-syncing at the tail after a
+/// lag.
+///
+/// `None` means the stream closed; the caller drops that arm from the loop. A
+/// `Lagged` re-sync is a delivery the hook will never see, so it is reported at
+/// warn level: the line is the only trace a dropped window leaves.
 async fn recv_ring_optional<T: Clone>(
     rx: &mut Option<agnt_kernel::bus::Subscription<T>>,
+    hook: &str,
 ) -> Option<T> {
     let Some(rx) = rx else {
         return std::future::pending().await;
@@ -465,7 +480,10 @@ async fn recv_ring_optional<T: Clone>(
     loop {
         match rx.recv().await {
             Ok(event) => return Some(event),
-            Err(agnt_kernel::bus::ReceiveError::Lagged(_)) => continue,
+            Err(agnt_kernel::bus::ReceiveError::Lagged(dropped)) => {
+                log::warn!("{}", lag_warning(hook, dropped));
+                continue;
+            }
             Err(_) => return None,
         }
     }

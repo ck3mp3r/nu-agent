@@ -4,10 +4,10 @@ pub mod mdns_discovery;
 pub mod service;
 pub mod static_discovery;
 
-mod impl_enum;
+mod backends;
 
+pub use backends::PeerDiscovery;
 pub use browser::*;
-pub use impl_enum::PeerDiscoveryImpl;
 pub use service::*;
 
 #[cfg(test)]
@@ -23,5 +23,5 @@ mod logic_test;
 mod test;
 
 #[cfg(test)]
-#[path = "../../test/discovery/impl_enum.rs"]
-mod impl_enum_test;
+#[path = "../../test/discovery/backends.rs"]
+mod backends_test;

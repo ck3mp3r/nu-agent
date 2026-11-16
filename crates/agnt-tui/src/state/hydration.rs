@@ -12,11 +12,11 @@
 
 use agnt_render::tool_view::ToolView;
 use agnt_runtime::protocol::contracts::{UiMessageSnapshot, project_snapshots};
-use agnt_runtime::protocol::events::{CompactionRecord, SessionRecord, ToolRecord};
+use agnt_runtime::protocol::events::{CompactionRecord, SessionRecord, ToolRecord, TurnRecord};
 
 use super::{AppState, PromptFacts};
 use crate::interaction::cancel::CancelController;
-use crate::interaction::reducer::{Fold, RenderInput, prompt_facts, reduce};
+use crate::interaction::reducer::{Fold, RenderInput, prompt_facts, reduce, release_turn};
 
 // region:    --- Types
 
@@ -64,6 +64,20 @@ impl Fold for ReplayedPrompt<'_> {
     }
 }
 
+/// A replayed turn boundary: the log's history ends every turn it closed, so
+/// the restored surface is at rest exactly as the live turn left it.
+///
+/// The live release belongs to the strict spine alone; the replay is not an
+/// observer of a live turn, it is the drawer restoring history. Both run the
+/// one release sequence.
+struct ReplayedTurnBoundary;
+
+impl Fold for ReplayedTurnBoundary {
+    fn fold(self, state: &mut AppState, _cancel_controller: Option<&CancelController>) -> bool {
+        release_turn(state)
+    }
+}
+
 // endregion: --- Types
 
 // region:    --- Public
@@ -103,9 +117,12 @@ pub(crate) fn replay_records(
     let cancel_controller = CancelController::default();
     for record in records {
         match &record {
-            // The two records whose replay label the log cannot carry: the
-            // drawer's own history row for a compaction, and the prompt row the
-            // submit queue places once the replay drain consumes it.
+            // The records whose fold the log cannot carry as-is. Two the replay
+            // label names for the drawer: its own history row for a compaction,
+            // and the prompt row the submit queue places once the replay drain
+            // consumes it. One is the turn boundary: the ring's completed record
+            // is display-only, so the drawer's replay restores the turn at rest
+            // itself.
             SessionRecord::Compaction(CompactionRecord::Completed { summary, .. }) => {
                 reduce(state, ReplayedCompaction { summary }, None);
             }
@@ -118,6 +135,9 @@ pub(crate) fn replay_records(
                     },
                     None,
                 );
+            }
+            SessionRecord::Turn(TurnRecord::Completed { .. }) => {
+                reduce(state, ReplayedTurnBoundary, None);
             }
             other => {
                 reduce(state, RenderInput::Record(other), None);

@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_runtime::bus::LifecycleEvent;
 use agnt_runtime::protocol::events::{
-    CompactionRecord, CompactionSource, InferenceRecord, NarrationEvent, NoticeKind, PromptRecord,
-    PromptStamps, SessionId, SessionLifecycle, SessionRecord, ToolCall, ToolOutcome, ToolRecord,
-    TurnRecord, Usage,
+    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NarrationEvent, NoticeKind,
+    PromptRecord, PromptStamps, SessionId, SessionLifecycle, SessionRecord, ToolCall, ToolOutcome,
+    ToolRecord, TurnRecord, Usage,
 };
 
 use crate::interaction::reducer::{RenderInput, reduce};
@@ -19,6 +20,23 @@ pub(crate) fn fold_record(state: &mut AppState, record: SessionRecord) -> bool {
 /// Fold one narration event through the reducer.
 pub(crate) fn fold_narration(state: &mut AppState, event: NarrationEvent) -> bool {
     reduce(state, RenderInput::Narration(&event), None)
+}
+
+/// The turn-end step the strict spine carries: published on a successful turn
+/// and on a cancelled one, and never dropped.
+pub(crate) fn spine_turn_completed() -> LifecycleEvent {
+    LifecycleEvent::TurnCompleted {
+        task_id: None,
+        duration_ms: 0,
+    }
+}
+
+/// Fold the spine's turn-end step through the reducer, exactly as the render
+/// loop does. This is the live release; the ring's `TurnRecord::Completed` is
+/// display-only.
+pub(crate) fn fold_turn_completed(state: &mut AppState) -> bool {
+    let event = spine_turn_completed();
+    reduce(state, RenderInput::Lifecycle(&event), None)
 }
 
 /// The prompt record a surface submission produces.
@@ -59,9 +77,24 @@ pub(crate) fn peer_prompt_record(
     })
 }
 
+/// The call identity a fixture's streamed records share.
+///
+/// A fixture models one call: its `Started` and every chunk it streams name the
+/// same call, exactly as the producer publishes them. A test that drives a
+/// second call mints one with [`InferenceId::mint`].
+pub(crate) fn inference() -> InferenceId {
+    static FIXTURE_CALL: std::sync::OnceLock<InferenceId> = std::sync::OnceLock::new();
+    *FIXTURE_CALL.get_or_init(InferenceId::mint)
+}
+
 /// The record that opens an inference call.
+///
+/// A start opens a NEW call, so it mints its own identity: a fixture that
+/// streams chunks of one call writes the record with [`inference`] instead.
 pub(crate) fn inference_started() -> SessionRecord {
-    SessionRecord::Inference(InferenceRecord::Started)
+    SessionRecord::Inference(InferenceRecord::Started {
+        inference: InferenceId::mint(),
+    })
 }
 
 /// The record that closes an inference call with its usage totals.
@@ -109,6 +142,7 @@ pub(crate) fn inference_chunk(
     aggregated: impl Into<String>,
 ) -> NarrationEvent {
     NarrationEvent::InferenceChunk {
+        inference: inference(),
         delta: delta.into(),
         aggregated: aggregated.into(),
     }

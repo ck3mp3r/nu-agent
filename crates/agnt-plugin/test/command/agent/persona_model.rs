@@ -14,7 +14,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         ..Config::default()
     };
 
@@ -67,7 +67,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
     assert!(applied, "Should apply persona model");
     assert_eq!(config.provider, "github-copilot");
     assert_eq!(config.model, "claude-opus-4.6");
-    assert_eq!(config.provider_impl, None);
+    assert_eq!(config.provider_kind, None);
     Ok(())
 }
 
@@ -76,7 +76,7 @@ fn apply_persona_model_cli_wins() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         ..Config::default()
     };
 
@@ -99,7 +99,7 @@ fn apply_persona_model_no_slash_ignored() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         ..Config::default()
     };
 
@@ -118,7 +118,7 @@ fn apply_persona_model_none_preserves_config() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         ..Config::default()
     };
 
@@ -132,13 +132,13 @@ fn apply_persona_model_none_preserves_config() -> Result<()> {
 }
 
 #[test]
-fn apply_persona_model_clears_provider_impl() -> Result<()> {
+fn apply_persona_model_clears_provider_kind() -> Result<()> {
     use std::collections::HashMap;
 
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
-        provider_impl: Some("openai".to_string()),
+        provider_kind: Some("openai".to_string()),
         ..Config::default()
     };
 
@@ -192,8 +192,8 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-sonnet-4-20250514");
     assert_eq!(
-        config.provider_impl, None,
-        "provider_impl should be cleared"
+        config.provider_kind, None,
+        "provider_kind should be cleared"
     );
     Ok(())
 }

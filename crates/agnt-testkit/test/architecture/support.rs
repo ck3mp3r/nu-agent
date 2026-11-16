@@ -46,6 +46,14 @@ pub const ARCH_11B: &str = "ARCH-11.b";
 /// The assertion ARCH-12, the kernel's dependency boundary.
 pub const ARCH_12: &str = "ARCH-12";
 
+/// The file-name marker check. It carries no ARCH number: it is a naming rule of
+/// the suite, not a target assertion, and it holds no baseline row.
+pub const NAMES: &str = "NAMES";
+
+/// The type-name marker check, the twin of [`NAMES`] for type declarations. It
+/// carries no ARCH number either, and it holds no baseline row.
+pub const TYPES: &str = "TYPES";
+
 /// The recorded baselines, one row per assertion.
 ///
 /// An empty row is a property that holds everywhere in today's tree. A row that
@@ -84,9 +92,9 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
     (
         ARCH_4,
         &[
-            "ARCH-4 agnt-kernel/src/records.rs:450: `NoticeKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:472: `NoticeKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/ir.rs:41: `NoticeKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:416: `PermissionDecision` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:438: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-runtime/src/hook/permission_resolver.rs:58: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/state/app_state/types.rs:33: `ToolCallStatus` is declared 2 times in the workspace",
             "ARCH-4 agnt-storage/src/services/tool_calls.rs:20: `ToolCallStatus` is declared 2 times in the workspace",
@@ -94,22 +102,22 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-tty/src/renderer/ui_renderer.rs:8: `RenderInput` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/interaction/reducer/fold.rs:25: `RenderInput` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:541: `TurnOutcome` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:563: `TurnOutcome` is declared 2 times in the workspace",
             "ARCH-4 agnt-runtime/src/orchestrator/turn_outcome.rs:12: `TurnOutcome` is declared 2 times in the workspace",
         ],
     ),
     (
         ARCH_8,
         &[
-            "ARCH-8 agnt-acp/src/session.rs:90: `Bus` is a struct field",
+            "ARCH-8 agnt-acp/src/session/types.rs:61: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/builder.rs:535: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:142: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:162: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:182: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/contracts.rs:27: `Bus` is a return type",
             "ARCH-8 agnt-runtime/src/conversation/runtime_build.rs:59: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:398: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:657: `Bus` is a parameter",
+            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:405: `Bus` is a struct field",
+            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:664: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/turn/executor/core.rs:109: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/turn/proxy.rs:18: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/hook/chain/mod.rs:67: `Bus` is a struct field",
@@ -117,7 +125,7 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
             "ARCH-8 agnt-runtime/src/orchestrator/config.rs:125: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/orchestrator/config.rs:211: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/orchestrator/config.rs:34: `Bus` is a struct field",
-            "ARCH-8 agnt-tui/src/interactive.rs:191: `Bus` is a parameter",
+            "ARCH-8 agnt-tui/src/interactive.rs:206: `Bus` is a parameter",
         ],
     ),
     (ARCH_11A, &[]),
@@ -140,15 +148,18 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
     (
         ARCH_10,
         &[
-            "ARCH-10 agnt-acp/src/runtime.rs:16: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/runtime.rs:186: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:134: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:154: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:161: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:27: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:778: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:789: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:91: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/runtime/builder.rs:10: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/runtime/builder.rs:36: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/runtime/mod.rs:36: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/mod.rs:42: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/support.rs:21: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/support.rs:32: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/support.rs:9: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/types.rs:105: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/types.rs:125: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/types.rs:132: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/types.rs:15: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session/types.rs:62: AgentConversationRuntime",
         ],
     ),
     (ARCH_11B, &[]),
@@ -193,7 +204,21 @@ pub fn write_manifest(root: &Path, krate: &str, text: &str) -> Result<()> {
 /// Write `text` as the source at `relative` inside `krate`'s `src` directory in
 /// the fixture workspace `root`.
 pub fn write_source(root: &Path, krate: &str, relative: &str, text: &str) -> Result<()> {
-    let path = root.join("crates").join(krate).join("src").join(relative);
+    write_crate_file(root, krate, "src", relative, text)
+}
+
+/// Write `text` as the source at `relative` inside `krate`'s `test` directory in
+/// the fixture workspace `root`.
+///
+/// The test tree is not in [`Workspace::sources`] — the census parses `src` only —
+/// but a file-name check that measures every `.rs` path under `crates/` reads it.
+pub fn write_test_source(root: &Path, krate: &str, relative: &str, text: &str) -> Result<()> {
+    write_crate_file(root, krate, "test", relative, text)
+}
+
+/// Write `text` at `relative` inside `krate`'s `dir` in the fixture workspace.
+fn write_crate_file(root: &Path, krate: &str, dir: &str, relative: &str, text: &str) -> Result<()> {
+    let path = root.join("crates").join(krate).join(dir).join(relative);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

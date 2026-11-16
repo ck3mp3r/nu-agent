@@ -23,12 +23,18 @@ pub(super) fn reduce_key(
     key: Key,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    // The input lock drops the editing keys the coordinator owns while a turn
-    // runs. Enter is not one of them: a prompt typed during the turn must queue
-    // instead of vanishing. The card's own keys stay reachable, so a decision
-    // can be taken while the input is locked.
+    // The input lock drops insert mode's editing keys — the ones the
+    // coordinator owns — while a turn runs. Enter is not one of them: a prompt
+    // typed during the turn must queue instead of vanishing. The normal and
+    // visual keymaps stay reachable, so jk, gg, the paging keys and `i` still
+    // work under a running turn. A modal picker edits its own query, so the gate
+    // leaves its keys to the picker; the inline slash list belongs to the
+    // composer, so the gate keeps dropping its keys. The card's own keys stay
+    // reachable too, so a decision can be taken while the input is locked.
     let locked = state.input_locked && !state.permission.has_prompt();
-    if locked && edits_input(key) {
+    let modal_picker_open =
+        state.picker.active().is_some() && state.picker.active() != Some(ActivePicker::InlineSlash);
+    if locked && state.input.mode == InputMode::Insert && !modal_picker_open && edits_input(key) {
         return false;
     }
 
@@ -357,24 +363,20 @@ pub(super) fn reduce_wheel_event(state: &mut AppState, up: bool, column: u16, ro
     reduce_wheel(state, up, column, row)
 }
 
-/// A wheel notch over the transcript leaves insert mode and scrolls. The
-/// insert-to-normal transition mutates the rendered mode indicator and pane
-/// focus, so it is a visible change even when the scroll is a no-op.
+/// A wheel notch over the transcript scrolls three lines. The notch is a
+/// transient gesture: it leaves the input mode and the pane focus alone, so a
+/// composer stays a composer.
 fn reduce_wheel(state: &mut AppState, up: bool, column: u16, row: u16) -> bool {
     let select = state.input.mode == InputMode::Visual;
     if !state.scroll.contains_transcript_point(column, row) {
         return false;
-    }
-    let mode_changed = state.input.mode == InputMode::Insert;
-    if mode_changed {
-        state.enter_normal_mode();
     }
     let action = if up {
         ScrollAction::WheelUp { select }
     } else {
         ScrollAction::WheelDown { select }
     };
-    state.scroll.reduce_scroll_action(action) || mode_changed
+    state.scroll.reduce_scroll_action(action)
 }
 
 // endregion: --- Key arms

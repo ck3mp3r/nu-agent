@@ -15,6 +15,19 @@
   # instead. `dirtyRev` carries a `-dirty` suffix past the 8-char cut.
   gitSha = builtins.substring 0 8 (self.dirtyRev or self.rev or "unknown");
 
+  # Shared by both buildTargetOutputs calls. Identical extraArgs make both
+  # resolve to the same build.nix derivation (extraArgs merges last there), so
+  # cargo runs once and the archive tars that same output.
+  #
+  # libsqlite3-sys: nixpkgs' cargo hook exports LIBSQLITE3_SYS_USE_PKG_CONFIG=1
+  # from preConfigureHooks, which outranks sqlx's `bundled` feature. preBuild
+  # runs after configurePhase, so the override sticks there.
+  buildArgs = {
+    env.AGENT_GIT_SHA = gitSha;
+    useNextest = true;
+    preBuild = ''export LIBSQLITE3_SYS_USE_PKG_CONFIG=0'';
+  };
+
   # Install data for pre-built releases (will be generated during release)
   installData = {
     aarch64-darwin =
@@ -60,10 +73,7 @@
     packageName = "nu-agent";
     archiveAndHash = false;
     nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal pkgs.cacert];
-    extraArgs = {
-      env.AGENT_GIT_SHA = gitSha;
-      useNextest = true;
-    };
+    extraArgs = buildArgs;
   };
 
   # Archive the combined derivation: .tgz with both binaries plus hashes.
@@ -83,7 +93,7 @@
     packageName = "archive";
     archiveAndHash = true;
     nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal pkgs.cacert];
-    extraArgs = {env.AGENT_GIT_SHA = gitSha;};
+    extraArgs = buildArgs;
   };
 
   # Named packages symlink into the combined derivation. They reference the

@@ -415,3 +415,57 @@ fn test_panels_scroll_panel_title_fits_title_row_at_every_popup_width() -> Resul
     }
     Ok(())
 }
+
+/// A resolved instance log path ends the Status popup's rows as one `Log:` row,
+/// and the four existing rows keep their order and content.
+#[test]
+fn test_status_build_status_lines_appends_instance_log_path_row() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let path = std::path::PathBuf::from("/home/dev/.local/state/nu-agent-dev/logs/agent-4242.log");
+
+    // -- Exec
+    state
+        .status
+        .identity
+        .set_instance_log_path(Some(path.clone()));
+    let lines = status_lines_for_test(&mut state, "openai/gpt-4o-mini");
+
+    // -- Check
+    assert_eq!(
+        lines.len(),
+        5,
+        "a process log must add exactly one row; lines: {lines:?}"
+    );
+    assert_eq!(lines[0], "Model: openai/gpt-4o-mini (idle)");
+    assert_eq!(lines[3], "Failures: none (healthy)");
+    assert_eq!(
+        lines[4],
+        format!("Log: {}", path.display()),
+        "the log row must end the rows and carry the full path"
+    );
+    Ok(())
+}
+
+/// With no resolved instance log path the popup keeps its four rows and shows
+/// no `Log:` row.
+#[test]
+fn test_status_build_status_lines_omits_instance_log_path_row_without_path() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    let lines = status_lines_for_test(&mut state, "openai/gpt-4o-mini");
+
+    // -- Check
+    assert_eq!(
+        lines.len(),
+        4,
+        "an unresolved path must leave the four rows alone; lines: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.starts_with("Log: ")),
+        "an unresolved path must add no log row; lines: {lines:?}"
+    );
+    Ok(())
+}

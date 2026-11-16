@@ -87,7 +87,7 @@ The block has exactly three keys: `data_home`, `cache_home`, `state_home`. Rules
 
 - **No file pins.** An override re-roots its whole tree: the tree keeps the
   `{APP_DIR_NAME}/<tail>` substructure, so `config.toml`, `.env`, `agents/`,
-  `logs/agent.log`, `sessions.db`, `tool_audit.log`, `secrets.json`,
+  `logs/`, `sessions.db`, `tool_audit.log`, `secrets.json`,
   `models.json`, and `theme.json` all move with their tree. There is no per-file
   override.
 - **The config tree has no `[paths]` key.** The file that would hold it is the

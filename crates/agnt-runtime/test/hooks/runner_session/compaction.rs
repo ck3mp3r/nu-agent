@@ -174,11 +174,14 @@ async fn test_hooks_runner_compaction_summary_chunk_invokes_nothing() -> Result<
         ],
     )];
     let handles = spawn(&bus, &hooks, &process);
+    // Hold the text lane open so the chunk below is delivered rather than
+    // rejected as unpublishable.
+    let _text_rx = bus.stream().subscribe_text();
 
     // -- Exec
     let _ = bus
         .stream()
-        .publish(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
+        .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
             delta: "chunk".to_string(),
             aggregated: "chunk".to_string(),

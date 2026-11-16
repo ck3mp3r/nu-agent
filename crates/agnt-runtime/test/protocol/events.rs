@@ -10,10 +10,10 @@ use agnt_kernel::bus::{
     SharedUiAction, WorkerPhase,
 };
 use agnt_kernel::{
-    AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, NoticeRecord,
-    PermissionDecision, PermissionRecord, PromptRecord, PromptStamps, RequestId, SessionId,
-    SessionLifecycle, SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind, ToolOutcome,
-    ToolRecord, ToolSource, ToolStatus, TurnRecord, Usage,
+    AutoResolution, CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind,
+    NoticeRecord, PermissionDecision, PermissionRecord, PromptRecord, PromptStamps, RequestId,
+    SessionId, SessionLifecycle, SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind,
+    ToolOutcome, ToolRecord, ToolSource, ToolStatus, TurnRecord, Usage,
 };
 
 // region:    --- Tests
@@ -68,8 +68,11 @@ fn test_records_stream_vocabulary_covers_every_family() -> Result<()> {
             stamps: PromptStamps::default(),
             task_id: None,
         }),
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
         SessionRecord::Inference(InferenceRecord::Chunk {
+            inference: InferenceId::mint(),
             delta: "hi".to_string(),
             aggregated: "hi".to_string(),
         }),
@@ -254,6 +257,7 @@ fn test_events_spine_narration_and_control_cover_every_family() -> Result<()> {
     let narration = [
         NarrationEvent::InferenceStarted,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "hi".to_string(),
             aggregated: "hi".to_string(),
         },

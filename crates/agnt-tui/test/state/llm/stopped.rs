@@ -221,7 +221,7 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
 /// with the record reason text and SHALL NOT append a transcript entry,
 /// scroll the transcript, or leave the streaming cursor set.
 #[test]
-fn test_state_llm_stopped_impl_user_cause_sets_footer_notice() -> Result<()> {
+fn test_state_llm_stopped_user_cause_sets_footer_notice() -> Result<()> {
     // -- Setup & Fixtures: stream an assistant block.
     let mut state = busy_state_with_clean_transcript();
     reduce_llm(&mut state, assistant_message("partial answer"));

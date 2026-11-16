@@ -78,6 +78,7 @@ fn assistant_streaming_append_and_replace() -> Result<()> {
     reduce_llm(
         &mut stream,
         agnt_runtime::protocol::events::NarrationEvent::InferenceChunk {
+            inference: crate::test_support::inference(),
             delta: " world".to_string(),
             aggregated: "hello world".to_string(),
         },

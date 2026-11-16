@@ -12,7 +12,9 @@
 use std::time::Duration;
 
 use super::*;
-use crate::test_support::{fold_record, inference_started, peer_prompt_record, turn_completed};
+use crate::test_support::{
+    fold_record, fold_turn_completed, inference_started, peer_prompt_record,
+};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 
 /// WHEN a peer turn streams — the peer's row and an `InferenceStarted` folded
@@ -159,7 +161,7 @@ fn test_interaction_abort_cancel_queue_less_settle_owes_the_notice() -> Result<(
         Some(&cancel_controller),
     );
     assert_eq!(state.phase, UiPhase::AbortPending);
-    let settled = fold_record(&mut state, turn_completed(15));
+    let settled = fold_turn_completed(&mut state);
     assert!(settled);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);

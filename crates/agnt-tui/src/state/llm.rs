@@ -4,7 +4,7 @@
 
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::{ContentKind, ContentLine, MessageRole};
-use agnt_runtime::protocol::events::{StopCause, Usage};
+use agnt_runtime::protocol::events::{InferenceId, StopCause, Usage};
 
 use super::transcript_store::TranscriptStore;
 use super::{ScrollState, StatusMessageKind, StatusState, UiPhase};
@@ -17,15 +17,16 @@ use super::{ScrollState, StatusMessageKind, StatusState, UiPhase};
 pub struct LlmState;
 
 impl LlmState {
-    /// Fold an `InferenceStarted` event.
+    /// Fold an `InferenceStarted` record: the call whose block chunks fill.
     pub fn started(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
         phase: &mut UiPhase,
         input_locked: &mut bool,
+        inference: InferenceId,
     ) -> bool {
-        self.handle_start(store, status, phase, input_locked)
+        self.handle_start(store, status, phase, input_locked, inference)
     }
 
     /// Fold an `InferenceCompleted` event: record the call's usage.
@@ -41,42 +42,34 @@ impl LlmState {
     }
 
     /// Fold an `InferenceChunk` event: re-render the streamed assistant block
-    /// from the accumulated text the event carries.
+    /// from the accumulated text the event carries, in the block of the call
+    /// the event names.
     pub fn chunk(
         &mut self,
         store: &mut TranscriptStore,
         scroll: &mut ScrollState,
+        inference: InferenceId,
         aggregated: &str,
     ) -> bool {
         log::trace!(
             "reducer: InferenceChunk aggregated_len={}",
             aggregated.len()
         );
-        self.assistant_message(store, scroll, aggregated)
+        self.assistant_message(store, scroll, inference, aggregated)
     }
 
-    /// Fold an `InferenceStopped` event.
+    /// Fold an `InferenceStopped` event: render the stop record.
+    ///
+    /// A `UserCancelled` stop becomes a brief Notice-kind status marker
+    /// carrying the record's reason text: it leaves the transcript, keeps the
+    /// streamed blocks, and leaves the scroll position alone. Any other
+    /// cause's reason is APPENDED as a new transcript entry — never routed
+    /// through the `assistant_message` dedup path, which would truncate the
+    /// streamed block (Fix 2 of the repetition stop UX). The routing reads the
+    /// closed `StopCause`, never the text. The streaming cursor is cleared so
+    /// the streamed block stays intact and any later assistant message starts
+    /// a fresh block.
     pub fn stopped(
-        &mut self,
-        store: &mut TranscriptStore,
-        status: &mut StatusState,
-        scroll: &mut ScrollState,
-        reason: &str,
-        cause: StopCause,
-    ) -> bool {
-        self.stopped_impl(store, status, scroll, reason, cause)
-    }
-
-    /// Render a stop record. A `UserCancelled` stop becomes a brief
-    /// Notice-kind status marker carrying the record's reason text: it leaves
-    /// the transcript, keeps the streamed blocks, and leaves the scroll
-    /// position alone. Any other cause's reason is APPENDED as a new
-    /// transcript entry — never routed through the `assistant_message` dedup
-    /// path, which would truncate the streamed block (Fix 2 of the repetition
-    /// stop UX). The routing reads the closed `StopCause`, never the text. The
-    /// streaming cursor is cleared so the streamed block stays intact and any
-    /// later assistant message starts a fresh block.
-    fn stopped_impl(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
@@ -93,7 +86,7 @@ impl LlmState {
             if let Some(start) = store.assistant_stream_start {
                 store.truncate(start);
             }
-            store.assistant_stream_start = None;
+            store.close_assistant_stream();
             return false;
         }
         if matches!(cause, StopCause::UserCancelled) {
@@ -101,14 +94,14 @@ impl LlmState {
             // transcript: keep the streamed blocks, push nothing, and leave
             // the scroll position alone. The notice carries the record's
             // reason text.
-            store.assistant_stream_start = None;
+            store.close_assistant_stream();
             status.message.set_notice(trimmed);
             return true;
         }
         // Close the in-progress streamed entry: push_entry's unified spacer
         // rule separates it from the notice, and the cursor resets so nothing
         // later truncates it.
-        store.assistant_stream_start = None;
+        store.close_assistant_stream();
         scroll.scroll_transcript_to_bottom();
         store.push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
@@ -126,6 +119,7 @@ impl LlmState {
         status: &mut StatusState,
         phase: &mut UiPhase,
         input_locked: &mut bool,
+        inference: InferenceId,
     ) -> bool {
         if *phase == UiPhase::Idle {
             *phase = UiPhase::Busy;
@@ -137,8 +131,11 @@ impl LlmState {
         if status.message.kind() == StatusMessageKind::Notice {
             status.message.clear();
         }
-        // Reset streaming state at the start of a new LLM response
-        store.assistant_stream_start = None;
+        // The call whose block this start opens. A chunk of the same call that
+        // folded first already opened it — the text lane drains before the event
+        // lane — so a matching key keeps the entry the chunk rendered instead of
+        // orphaning it, and a new call closes the block before it.
+        store.key_assistant_stream(inference);
         true
     }
 
@@ -146,12 +143,19 @@ impl LlmState {
         &mut self,
         store: &mut TranscriptStore,
         scroll: &mut ScrollState,
+        inference: InferenceId,
         text: &str,
     ) -> bool {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return false;
         }
+
+        // A chunk of a call the open block does not belong to closes that block
+        // and names its own: the chunk that closed it may belong to a call whose
+        // records have not folded yet, and the call it names must render into a
+        // block of its own rather than truncate the answer before it.
+        store.key_assistant_stream(inference);
 
         // If this is the first delta, record where the message starts.
         // push_entry's unified spacer rule separates the streamed entry from

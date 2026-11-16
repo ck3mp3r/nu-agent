@@ -17,10 +17,10 @@
 mod compaction;
 mod dispatch;
 mod events;
-mod hook_impl;
 mod in_place;
 mod not_run;
 mod outcome;
+mod wiring;
 
 pub(crate) use compaction::PendingClearance;
 pub use compaction::{CompactionPath, run_compaction};
@@ -129,6 +129,10 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     /// reply. Shared across the turn's attempts, so a retried run keeps the
     /// plan the first attempt made.
     pending_summary: PendingSummary,
+    /// The completion call whose deltas stream now: minted when the call begins,
+    /// read by every delta it publishes. Shared with the turn executor, which
+    /// owes the tail delta of a call that streamed none.
+    inference: crate::hook::CurrentInference,
 }
 
 // endregion: --- Types

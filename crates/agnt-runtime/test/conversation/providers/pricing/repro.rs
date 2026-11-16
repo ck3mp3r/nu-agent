@@ -34,7 +34,7 @@ fn test_providers_build_dyn_model_prices_the_ollama_cloud_repro() -> Result<()> 
         .resolve_model(&role_config)
         .map_err(|e| format!("the repro config must resolve: {e:?}"))?;
     assert_eq!(config.provider, "ollama-cloud");
-    assert_eq!(config.provider_impl.as_deref(), Some("ollama"));
+    assert_eq!(config.provider_kind.as_deref(), Some("ollama"));
 
     let cache = cache_of(&[("ollama-cloud", "deepseek-v4.1-flash", Some((0.15, 0.60)))]);
     let view = PricingView::new(&cache);
@@ -98,7 +98,7 @@ fn test_providers_build_dyn_model_prices_the_ollama_cloud_openai_wire_repro() ->
         .resolve_model(&role_config)
         .map_err(|e| format!("the repro config must resolve: {e:?}"))?;
     assert_eq!(config.provider, "ollama-cloud");
-    assert_eq!(config.provider_impl.as_deref(), Some("openai"));
+    assert_eq!(config.provider_kind.as_deref(), Some("openai"));
     assert_eq!(config.base_url.as_deref(), Some("https://ollama.com/v1"));
 
     let cache = cache_of(&[

@@ -55,3 +55,6 @@ agnt-testkit = { workspace = true }
 oauth2 = "5.0"
 rig = { workspace = true, features = ["test-utils"] }
 serial_test = { workspace = true }
+testing_logger = "0.1.1"
+# `start_paused` drives the quit-window tests without real time.
+tokio = { workspace = true, features = ["test-util"] }

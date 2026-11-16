@@ -66,7 +66,7 @@
 - Ctrl-P `Models` launches the same picker path as `/models`.
 - Model switching uses cached startup `PluginConfig` metadata (no per-switch plugin config re-read).
 - Applying a model switch updates active identity immediately in the footer/status lane.
-- Model switches apply full resolved model config (provider/provider_impl/model/limits/settings) for subsequent turns.
+- Model switches apply full resolved model config (provider/provider_kind/model/limits/settings) for subsequent turns.
 
 # Modal presentation
 

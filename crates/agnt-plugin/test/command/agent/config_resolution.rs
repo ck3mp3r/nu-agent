@@ -23,7 +23,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 fn create_minimal_flag_config() -> Config {
     Config {
         provider: "openai".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "gpt-4".to_string(),
         api_key: None,

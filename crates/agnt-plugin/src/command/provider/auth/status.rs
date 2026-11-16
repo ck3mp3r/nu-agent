@@ -4,6 +4,7 @@ use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 use agnt_runtime::config::copilot_tokens::read_copilot_token_record;
 use agnt_runtime::config::vault::{CredentialType, Vault};
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 pub struct AgentProviderAuthStatus;
@@ -60,56 +61,65 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
-            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
-        let vault = Vault::auto_detect(&application_paths.secrets_path)
-            .map_err(|e| LabeledError::new(e.to_string()))?;
-        let entries = vault
-            .list_providers()
-            .map_err(|e| LabeledError::new(format!("Failed to list credentials: {e}")))?;
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
+                .map_err(|e| {
+                LabeledError::new(format!("Failed to resolve application paths: {e}"))
+            })?;
+            let vault = Vault::auto_detect(&application_paths.secrets_path)
+                .map_err(|e| LabeledError::new(e.to_string()))?;
+            let entries = vault
+                .list_providers()
+                .map_err(|e| LabeledError::new(format!("Failed to list credentials: {e}")))?;
 
-        let mut rows: Vec<Value> = entries
-            .into_iter()
-            .map(|entry| {
-                let (cred_type, expiry) = match entry.credential_type {
-                    CredentialType::ApiKey => ("api_key".to_string(), Value::nothing(call.head)),
-                    CredentialType::OAuth => {
-                        let exp = entry
-                            .expires_at
-                            .map(|t| Value::int(t as i64, call.head))
-                            .unwrap_or(Value::nothing(call.head));
-                        ("oauth".to_string(), exp)
-                    }
-                };
-                Value::record(
+            let mut rows: Vec<Value> = entries
+                .into_iter()
+                .map(|entry| {
+                    let (cred_type, expiry) = match entry.credential_type {
+                        CredentialType::ApiKey => {
+                            ("api_key".to_string(), Value::nothing(call.head))
+                        }
+                        CredentialType::OAuth => {
+                            let exp = entry
+                                .expires_at
+                                .map(|t| Value::int(t as i64, call.head))
+                                .unwrap_or(Value::nothing(call.head));
+                            ("oauth".to_string(), exp)
+                        }
+                    };
+                    Value::record(
+                        nu_protocol::record! {
+                            "provider" => Value::string(entry.name, call.head),
+                            "type" => Value::string(cred_type, call.head),
+                            "expires_at" => expiry,
+                        },
+                        call.head,
+                    )
+                })
+                .collect();
+
+            // github-copilot stores its tokens in files, not the vault.
+            if let Some(record) = read_copilot_token_record(&application_paths.copilot_token_dir)
+                .map_err(LabeledError::new)?
+            {
+                let expiry = record
+                    .expires_at
+                    .map(|t| Value::int(t, call.head))
+                    .unwrap_or(Value::nothing(call.head));
+                rows.push(Value::record(
                     nu_protocol::record! {
-                        "provider" => Value::string(entry.name, call.head),
-                        "type" => Value::string(cred_type, call.head),
+                        "provider" => Value::string("github-copilot", call.head),
+                        "type" => Value::string("oauth", call.head),
                         "expires_at" => expiry,
                     },
                     call.head,
-                )
-            })
-            .collect();
+                ));
+            }
 
-        // github-copilot stores its tokens in files, not the vault.
-        if let Some(record) = read_copilot_token_record(&application_paths.copilot_token_dir)
-            .map_err(LabeledError::new)?
-        {
-            let expiry = record
-                .expires_at
-                .map(|t| Value::int(t, call.head))
-                .unwrap_or(Value::nothing(call.head));
-            rows.push(Value::record(
-                nu_protocol::record! {
-                    "provider" => Value::string("github-copilot", call.head),
-                    "type" => Value::string("oauth", call.head),
-                    "expires_at" => expiry,
-                },
-                call.head,
-            ));
-        }
-
-        Ok(Value::list(rows, call.head))
+            Ok(Value::list(rows, call.head))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

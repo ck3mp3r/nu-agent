@@ -446,7 +446,7 @@ impl<W: Write> StderrUiRenderer<W> {
 impl<W: Write> UiRenderer for StderrUiRenderer<W> {
     fn draw(&mut self, input: RenderInput<'_>) {
         match &input {
-            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started))
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started { .. }))
                 if self.spinner.is_enabled() =>
             {
                 self.active_tool_name = None;

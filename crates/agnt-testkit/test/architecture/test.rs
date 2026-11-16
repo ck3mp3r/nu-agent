@@ -13,6 +13,7 @@ mod construction;
 mod enums;
 mod graph;
 mod identity;
+mod monotonicity;
 mod naming;
 mod purity;
 mod report;

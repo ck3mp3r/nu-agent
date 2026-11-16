@@ -15,6 +15,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// One streamed inference delta, as the narration concern carries it.
 fn chunk(text: &str) -> NarrationEvent {
     NarrationEvent::InferenceChunk {
+        inference: agnt_kernel::InferenceId::mint(),
         delta: text.to_string(),
         aggregated: text.to_string(),
     }

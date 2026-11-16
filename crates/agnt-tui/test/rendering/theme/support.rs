@@ -14,4 +14,5 @@ pub(super) const MOCHA_OVERLAY0: Color = Color::Rgb(108, 112, 134);
 pub(super) const MOCHA_OVERLAY1: Color = Color::Rgb(127, 132, 156);
 pub(super) const MOCHA_OVERLAY2: Color = Color::Rgb(147, 153, 178);
 pub(super) const MOCHA_SKY: Color = Color::Rgb(137, 220, 235);
+pub(super) const MOCHA_SUBTEXT0: Color = Color::Rgb(166, 173, 200);
 pub(super) const MOCHA_TEXT: Color = Color::Rgb(205, 214, 244);

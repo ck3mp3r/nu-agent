@@ -26,6 +26,7 @@ use super::*;
 use crate::conversation::turn::error::TurnContext;
 use crate::conversation::turn::{TurnError, TurnResult};
 use crate::types::Message;
+use agnt_kernel::InferenceId;
 use agnt_kernel::NoticeKind;
 use agnt_kernel::StopCause;
 use agnt_kernel::bus::{LifecycleEvent, NarrationEvent};
@@ -41,11 +42,21 @@ fn completed_result(text: &str) -> TurnResult {
         cancelled: false,
         cancel_reason: None,
         stop_cause: None,
+        last_inference: InferenceId::mint(),
         last_total_tokens: 12,
         last_known_history: Vec::new(),
         pre_turn_message_count: 0,
         tool_records: Vec::new(),
         streamed_tool_calls: Vec::new(),
+    }
+}
+
+/// A `TurnResult` for a completed turn whose text a non-streaming producer
+/// supplied whole: the dispatcher publishes the one tail delta.
+fn completed_result_without_streamed_deltas(text: &str) -> TurnResult {
+    TurnResult {
+        deltas_emitted: false,
+        ..completed_result(text)
     }
 }
 
@@ -66,6 +77,7 @@ fn cancelled_result(
         cancelled: true,
         cancel_reason,
         stop_cause,
+        last_inference: InferenceId::mint(),
         last_total_tokens: 0,
         last_known_history,
         pre_turn_message_count: 0,

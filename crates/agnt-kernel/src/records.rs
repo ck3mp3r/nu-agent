@@ -62,9 +62,14 @@ pub struct PromptStamps {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InferenceRecord {
     /// The completion call started.
-    Started,
+    Started {
+        /// The call this record opens; every chunk of the call carries it.
+        inference: InferenceId,
+    },
     /// One streamed delta. `aggregated` accumulates from the call start.
     Chunk {
+        /// The call this delta belongs to.
+        inference: InferenceId,
         /// The newly received text.
         delta: String,
         /// The accumulated response text so far.
@@ -82,6 +87,23 @@ pub enum InferenceRecord {
         /// The stop's content text, for the surfaces that show it.
         reason: String,
     },
+}
+
+/// Identity of one completion call.
+///
+/// The kernel mints every inference id: one mint point per key space. The value
+/// is the call's ordinal in publication order, so two calls never share one.
+/// A consumer compares ids and never derives one: the block a chunk renders into
+/// is the block of the call the chunk names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InferenceId(u64);
+
+impl InferenceId {
+    /// Mint the next inference id for this process.
+    pub fn mint() -> Self {
+        static NEXT_INFERENCE_ID: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT_INFERENCE_ID.fetch_add(1, Ordering::SeqCst))
+    }
 }
 
 /// Why a completion call stopped early. Producers know the cause and emit the

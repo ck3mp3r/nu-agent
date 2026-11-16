@@ -1,6 +1,7 @@
 //! Narration-contract tests: order-critical with an oldest-droppable tail.
 
 use crate::bus::{Bus, NarrationEvent, ReceiveError};
+use crate::records::InferenceId;
 
 use crate::test_support::Result;
 
@@ -17,6 +18,7 @@ async fn test_narration_lagged_consumer_keeps_receipt_order() -> Result<()> {
     // -- Exec
     for i in 0..FLOOD {
         let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: i.to_string(),
             aggregated: i.to_string(),
         });

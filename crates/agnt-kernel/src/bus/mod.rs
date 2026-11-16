@@ -2,7 +2,7 @@
 //!
 //! | concern | payload | delivery |
 //! |---|---|---|
-//! | [`stream`](Bus::stream) | `SessionRecord` | ordered, lossy under lag |
+//! | [`stream`](Bus::stream) | `SessionRecord` | ordered, lossy under lag — event lane and text lane |
 //! | [`cancel`](Bus::cancel) | `CancelEvent` | subscribe-before-publish, never dropped |
 //! | [`control`](Bus::control) | `ControlCommand` | never dropped, ordered |
 //! | [`lifecycle`](Bus::lifecycle) | `LifecycleEvent` | ordered, complete |
@@ -61,8 +61,8 @@ pub struct Bus {
 }
 
 impl Bus {
-    /// A bus with the standard capacities: stream 1024, cancel 64, narration
-    /// 1024, facts 256; control and lifecycle are uncapped.
+    /// A bus with the standard capacities: stream 1024 on each lane, cancel 64,
+    /// narration 1024, facts 256; control and lifecycle are uncapped.
     pub fn new() -> Self {
         Self {
             stream: Stream::new(),
@@ -74,7 +74,7 @@ impl Bus {
         }
     }
 
-    /// The record stream concern: the ordered session log.
+    /// The record stream concern: the ordered session log, on two lanes.
     pub fn stream(&self) -> &Stream {
         &self.stream
     }

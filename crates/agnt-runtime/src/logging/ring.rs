@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex as StdMutex;
 
-use super::FileLogSink;
+use super::sink::FileLogSink;
 
 /// Number of recent log lines the process ring keeps.
 pub(super) const RING_CAPACITY: usize = 500;

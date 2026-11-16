@@ -67,11 +67,14 @@ fn very_verbose_shows_both_warnings_and_streaming()
 
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "response text".to_string(),
             aggregated: "response text".to_string(),
         },
@@ -109,11 +112,14 @@ fn trace_mode_shows_streaming() -> core::result::Result<(), Box<dyn std::error::
 
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "trace output".to_string(),
             aggregated: "trace output".to_string(),
         },

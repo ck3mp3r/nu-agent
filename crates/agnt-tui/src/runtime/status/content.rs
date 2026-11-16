@@ -25,7 +25,7 @@ pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
         ),
     };
 
-    vec![
+    let mut lines = vec![
         model_line,
         format!(
             "MCP: configured={configured} enabled={enabled} disabled={disabled} failed={failed}"
@@ -35,7 +35,11 @@ pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
             state.status.mcp.llm_visible_mcp_tool_count()
         ),
         failure_line,
-    ]
+    ];
+    if let Some(path) = &state.status.identity.instance_log_path {
+        lines.push(format!("Log: {}", path.display()));
+    }
+    lines
 }
 
 fn token_string_for_state(state: &AppState) -> Option<String> {

@@ -292,15 +292,13 @@ pub(super) fn rig_config(dir: &Path) -> RigStoreConfig {
 /// The config file and the persona dir sit under `dir`, so the manager never
 /// reads the user's real config or persona files.
 pub(super) fn test_paths(dir: &Path) -> agnt_runtime::config::Paths {
-    let logs = dir.join("logs");
     agnt_runtime::config::Paths {
         config_path: dir.join("config.toml"),
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),
         copilot_token_dir: dir.join("github_copilot"),
         store_path: dir.join("sessions.db"),
-        log_dir: logs.clone(),
-        log_path: logs.join("agent.log"),
+        log_dir: dir.join("logs"),
         audit_log_path: dir.join("tool_audit.log"),
         secrets_path: dir.join("secrets.json"),
         models_cache_path: dir.join("models.json"),

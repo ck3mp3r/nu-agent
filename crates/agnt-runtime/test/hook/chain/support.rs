@@ -345,7 +345,10 @@ pub(super) fn identical_text_turn(count: usize) -> Vec<MockStreamEvent> {
 pub(super) fn inference_chunks(rx: &mut crate::bus::NarrationRx) -> Vec<(String, String)> {
     let mut out = Vec::new();
     while let Ok(event) = rx.try_recv() {
-        if let NarrationEvent::InferenceChunk { delta, aggregated } = event {
+        if let NarrationEvent::InferenceChunk {
+            delta, aggregated, ..
+        } = event
+        {
             out.push((delta, aggregated));
         }
     }

@@ -19,7 +19,8 @@
 //! and retire into [`LifecycleEvent`] as its publishers move.
 
 use crate::records::{
-    CompactionSource, NoticeKind, PermissionDecision, PermissionRecord, RequestId, Usage,
+    CompactionSource, InferenceId, NoticeKind, PermissionDecision, PermissionRecord, RequestId,
+    Usage,
 };
 
 // region:    --- Types
@@ -175,7 +176,12 @@ pub enum NarrationEvent {
     /// An inference call started.
     InferenceStarted,
     /// One streamed delta. `aggregated` accumulates from the call start.
-    InferenceChunk { delta: String, aggregated: String },
+    InferenceChunk {
+        /// The call this delta belongs to; the record twin carries the same id.
+        inference: InferenceId,
+        delta: String,
+        aggregated: String,
+    },
     /// The inference call finished; `usage` carries every reported total.
     InferenceCompleted { usage: Usage },
     /// A hook or the user stopped the run.

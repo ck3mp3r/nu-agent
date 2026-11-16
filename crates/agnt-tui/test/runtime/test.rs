@@ -52,8 +52,8 @@ use crate::runtime::status::test::{init_repo_with_branch, run_git};
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
 use crate::test_support::{
     compaction_completed, compaction_started, entry_text, inference_chunk, inference_started,
-    markdown_fixture, open_command_palette_for_test, system_message, tool_completed, tool_started,
-    turn_completed,
+    markdown_fixture, open_command_palette_for_test, spine_turn_completed, system_message,
+    tool_completed, tool_started, turn_completed,
 };
 use crate::{
     interaction::{

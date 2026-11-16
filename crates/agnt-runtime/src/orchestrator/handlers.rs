@@ -18,7 +18,7 @@ use crate::orchestrator::stages::{
     OrchestrationContext, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::turn_outcome::TurnResult;
-use agnt_kernel::bus::LifecycleEvent;
+use agnt_kernel::bus::{LifecycleEvent, LifecycleRx};
 
 /// Reason recorded on a task rejected because the user cancelled.
 pub(crate) const CANCELLED_BY_USER_REASON: &str = "Cancelled by user";
@@ -26,7 +26,8 @@ pub(crate) const CANCELLED_BY_USER_REASON: &str = "Cancelled by user";
 /// Reason recorded on a task rejected or failed because the worker was busy.
 pub(crate) const WORKER_BUSY_REASON: &str = "Worker busy: another turn is already running";
 
-/// How long quit waits for the UI responses already on their way.
+/// How long quit waits for what it asked to end: the UI responses already on
+/// their way, and the terminal row of the sweep it cancelled.
 ///
 /// Quit abandons what it cannot answer, and abandoning a response that is a
 /// moment away would drop the effect the user just asked for. The wait is
@@ -47,28 +48,32 @@ pub(crate) struct PendingRewrites {
     pub(crate) uncompaction: Option<CompactionSource>,
 }
 
-/// Dispatch a compaction command to the worker, or queue it if a compaction is
+/// Dispatch a compaction command to the worker, or queue it if a rewrite is
 /// already in flight or the worker is busy running a turn.
 ///
 /// Manual only: `/compact` is the one source that reaches this path. The
 /// automatic ladder completes its compaction on the turn itself.
+///
+/// `sweep_active` is the loop's own reading of the spine: the pipeline's
+/// `CompactionStarted` row made a sweep active. The dispatch never writes that
+/// state, so a dispatch that reaches no sweep — the model slot yielded — holds
+/// no slot and the next attempt is free to run.
 pub(crate) async fn dispatch_compaction(
     source: CompactionSource,
     ctx: &mut OrchestrationContext<'_>,
     pending: &mut PendingRewrites,
-    compaction_active: &mut bool,
+    sweep_active: bool,
 ) {
-    if *compaction_active || *ctx.worker_active {
-        // A compaction is already in flight or the worker is busy running a
-        // turn — queue one pending compaction. A newer request replaces the
-        // queued one.
+    if sweep_active || *ctx.worker_active {
+        // A rewrite is already in flight or the worker is busy running a turn —
+        // queue one pending compaction. A newer request replaces the queued
+        // one.
         pending.compaction = Some(source);
         return;
     }
-    // Worker is idle and no compaction is in flight — dispatch immediately. The
+    // Worker is idle and no rewrite is in flight — dispatch immediately. The
     // worker runs it synchronously and emits events on the bus; it does not send
     // a `WorkerResult`, so `worker_active` is not set.
-    *compaction_active = true;
     if ctx
         .worker_tx
         .send(WorkerCommand::RunCompaction { source })
@@ -92,16 +97,15 @@ pub(crate) async fn dispatch_uncompact(
     source: CompactionSource,
     ctx: &mut OrchestrationContext<'_>,
     pending: &mut PendingRewrites,
-    compaction_active: &mut bool,
+    sweep_active: bool,
 ) {
-    if *compaction_active || *ctx.worker_active {
+    if sweep_active || *ctx.worker_active {
         // A transcript rewrite is in flight or the worker is busy running a
         // turn — queue one pending uncompaction. A newer request replaces the
         // queued one.
         pending.uncompaction = Some(source);
         return;
     }
-    *compaction_active = true;
     if ctx
         .worker_tx
         .send(WorkerCommand::RunUncompact { source })
@@ -139,6 +143,37 @@ pub(crate) async fn settle_ui_responses<U, S>(
                     ui_request.handle_concurrent_response(response, ctx).await;
                 }
                 else => break,
+            }
+        }
+    })
+    .await;
+}
+
+/// Wait one quit window for the active sweep's own terminal row.
+///
+/// The quit arm asks the engine to cancel the sweep; the engine's cancel arm
+/// answers with `CompactionFailed` (the row a stream that never resolves still
+/// gets), and that terminal row is what clears the slot. This reads the spine
+/// for at most [`QUIT_SETTLE`], so a sweep that cannot answer holds the exit for
+/// one window and no longer.
+///
+/// Rows the loop would otherwise handle are let go: quit is exiting, and the
+/// surface that draws them is exiting with it.
+pub(crate) async fn settle_compaction(
+    lifecycle_rx: &mut LifecycleRx,
+    sweep: &mut Option<CompactionSource>,
+) {
+    let _ = tokio::time::timeout(QUIT_SETTLE, async {
+        while sweep.is_some() {
+            match lifecycle_rx.recv().await {
+                Ok(
+                    LifecycleEvent::CompactionCompleted { .. }
+                    | LifecycleEvent::CompactionFailed { .. }
+                    | LifecycleEvent::Uncompacted { .. }
+                    | LifecycleEvent::UncompactFailed { .. },
+                ) => *sweep = None,
+                Ok(_) => {}
+                Err(_) => break,
             }
         }
     })

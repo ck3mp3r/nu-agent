@@ -56,9 +56,9 @@ impl TurnTestObservation {
     /// An inference chunk's delta and aggregated text, when this observation is one.
     pub(super) fn chunk_text(&self) -> Option<(&str, &str)> {
         match self {
-            Self::Narration(NarrationEvent::InferenceChunk { delta, aggregated }) => {
-                Some((delta, aggregated))
-            }
+            Self::Narration(NarrationEvent::InferenceChunk {
+                delta, aggregated, ..
+            }) => Some((delta, aggregated)),
             _ => None,
         }
     }
@@ -297,7 +297,7 @@ pub(super) fn test_config() -> Config {
     Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "gpt-4o".to_string(),
         api_key: None,

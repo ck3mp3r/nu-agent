@@ -22,14 +22,25 @@ mod test;
 
 // endregion: --- Modules
 
-// region:    --- Types
+// region:    --- Constants
 
-/// How long a mode waits for one running hook subprocess before the process
-/// exits.
+/// How long one drain waits, in total, for the hook runners to deliver the
+/// events already queued when the agent exits.
 ///
-/// Hooks are observe-only, so a slow hook never delays exit past this bound.
-/// The wait is per runner, so a mode with N runners can wait up to N times this
-/// value in the worst case.
-pub const HOOK_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+/// One drain shares one deadline across every runner it waits for, so a process
+/// with N runners never delays exit past this value.
+///
+/// The budget has to cover what the queue already holds. A runner serializes its
+/// invocations, so at exit the final `agent_shutdown` waits behind the one in
+/// flight: one `nu` invocation measures 17-268 ms on a 10-core host under 24
+/// concurrent agents, which puts the serialized pair near 540 ms. A bound below
+/// that abandons the runner inside its first invocation, and the final envelope
+/// is never dispatched at all. This bound covers the pair and still caps exit
+/// when a hook hangs.
+pub const HOOK_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
-// endregion: --- Types
+/// How long a mode pauses, with no handle to await, so a session-class hook
+/// subprocess already running lands its record before the process exits.
+pub const HOOK_EXIT_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
+// endregion: --- Constants

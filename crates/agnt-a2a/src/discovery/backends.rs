@@ -1,0 +1,115 @@
+use tokio::sync::mpsc;
+
+use crate::AgentCard;
+use crate::discovery::PeerEvent;
+use crate::discovery::mdns_discovery::MdnsPeerDiscovery;
+use crate::discovery::static_discovery::StaticPeerDiscovery;
+
+/// Concrete peer discovery implementations.
+///
+/// Enum dispatch — no dynamic dispatch.  Add variants here when adding new
+/// discovery backends (e.g., Kubernetes API, file-based, etc.).
+pub enum PeerDiscovery {
+    /// mDNS-based discovery (advertise + browse).
+    Mdns(Box<MdnsPeerDiscovery>),
+    /// Static list of pre-configured peers.
+    Static(StaticPeerDiscovery),
+    /// No-op — no discovery.
+    Noop,
+}
+
+impl PeerDiscovery {
+    /// Start advertising and browsing.
+    ///
+    /// The mDNS arm owns its browse facts — the transport and the handle of the
+    /// runtime that owns this agent — from construction. The ignorer arms never
+    /// need a hand.
+    pub fn start(&mut self, agent_name: &str, port: u16, card: &AgentCard, mesh_key: &str) {
+        match self {
+            PeerDiscovery::Mdns(m) => m.start(agent_name, port, card, mesh_key),
+            PeerDiscovery::Static(_) => {} // static config doesn't advertise
+            PeerDiscovery::Noop => {}
+        }
+    }
+
+    /// Get the peer discovery channel.
+    pub fn take_peer_rx(&mut self) -> Option<mpsc::Receiver<PeerEvent>> {
+        match self {
+            PeerDiscovery::Mdns(m) => m.take_peer_rx(),
+            PeerDiscovery::Static(s) => s.take_peer_rx(),
+            PeerDiscovery::Noop => None,
+        }
+    }
+
+    /// Stop discovery (send goodbye, etc.).
+    pub fn shutdown(&mut self) {
+        match self {
+            PeerDiscovery::Mdns(m) => m.shutdown(),
+            PeerDiscovery::Static(_) => {}
+            PeerDiscovery::Noop => {}
+        }
+    }
+
+    /// The full mDNS service name, if mDNS is active.
+    pub fn fullname(&self) -> Option<&str> {
+        match self {
+            PeerDiscovery::Mdns(m) => m.fullname(),
+            _ => None,
+        }
+    }
+
+    /// Re-register the mDNS service under a new name.
+    ///
+    /// For non-mDNS variants this is a no-op (logged at debug level).
+    pub fn rename(
+        &mut self,
+        old_fullname: &str,
+        new_name: &str,
+        port: u16,
+        card: &AgentCard,
+        mesh_key: &str,
+    ) {
+        match self {
+            PeerDiscovery::Mdns(m) => m.rename(old_fullname, new_name, port, card, mesh_key),
+            PeerDiscovery::Static(_) => {
+                log::debug!("PeerDiscovery::rename: static discovery, no-op");
+            }
+            PeerDiscovery::Noop => {
+                log::debug!("PeerDiscovery::rename: noop discovery, no-op");
+            }
+        }
+    }
+
+    /// Re-announce the mDNS service with the current name and an updated card.
+    ///
+    /// For non-mDNS variants this is a no-op (logged at debug level).
+    pub fn reregister(&mut self, card: &AgentCard) {
+        match self {
+            PeerDiscovery::Mdns(m) => m.reregister(card),
+            PeerDiscovery::Static(_) => {
+                log::debug!("PeerDiscovery::reregister: static discovery, no-op");
+            }
+            PeerDiscovery::Noop => {
+                log::debug!("PeerDiscovery::reregister: noop discovery, no-op");
+            }
+        }
+    }
+
+    /// Start a fresh mDNS browse, replacing the current one.
+    ///
+    /// Returns the receiver of the new browse, or `None` for non-mDNS variants
+    /// (logged at debug level) and when mDNS is not active.
+    pub fn rediscover(&mut self) -> Option<mpsc::Receiver<PeerEvent>> {
+        match self {
+            PeerDiscovery::Mdns(m) => m.rediscover(),
+            PeerDiscovery::Static(_) => {
+                log::debug!("PeerDiscovery::rediscover: static discovery, no-op");
+                None
+            }
+            PeerDiscovery::Noop => {
+                log::debug!("PeerDiscovery::rediscover: noop discovery, no-op");
+                None
+            }
+        }
+    }
+}

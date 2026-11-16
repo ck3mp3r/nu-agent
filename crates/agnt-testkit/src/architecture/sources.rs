@@ -81,6 +81,23 @@ impl Workspace {
         &self.sources
     }
 
+    /// Every Rust path under `crates/`, labelled as [`sources`] labels a file and
+    /// ordered by label.
+    ///
+    /// The path set, not the parsed set: `sources()` holds the files the census
+    /// parses, and this holds every `.rs` file the crate tree carries — a crate's
+    /// `test/` tree, `build.rs`, `benches/` — so a check whose subject is a file
+    /// name measures all of them. Nothing here is parsed.
+    ///
+    /// [`sources`]: Self::sources
+    pub fn rust_paths(&self) -> io::Result<Vec<String>> {
+        let crates = self.root.join(CRATES_DIR);
+        let mut paths = Vec::new();
+        collect_rust_paths(&crates, &crates, &mut paths)?;
+        paths.sort();
+        Ok(paths)
+    }
+
     /// The parsed file at `path`, or `None` when the workspace holds no such
     /// source.
     ///
@@ -249,6 +266,26 @@ const BUILD_DEPENDENCIES: &str = "build-dependencies";
 /// The workspace root of the crate this code is compiled into.
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(WORKSPACE_ROOT)
+}
+
+/// Every Rust path under `dir`, labelled relative to `base`.
+///
+/// A path walk, nothing more: the file is labelled and never read, so this is what
+/// a check whose subject is a file name measures.
+fn collect_rust_paths(base: &Path, dir: &Path, out: &mut Vec<String>) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_rust_paths(base, &path, out)?;
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == RUST_SOURCE)
+        {
+            let label = path.strip_prefix(base).map_err(io::Error::other)?;
+            out.push(label.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
 }
 
 /// Every Rust source under `dir`, labelled relative to `base`.

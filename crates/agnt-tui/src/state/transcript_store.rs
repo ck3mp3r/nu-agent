@@ -20,6 +20,7 @@ use agnt_render::backend::RowRect;
 use agnt_render::planner::{EntryFamily, FramePlan, LayoutPlanner, PlannedEntry};
 use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::transcript::ir::Display;
+use agnt_runtime::protocol::events::InferenceId;
 
 use crate::widgets::RatatuiBackend;
 
@@ -168,6 +169,9 @@ pub struct TranscriptStore {
     pub(crate) height_index: HeightIndex,
     pub(crate) height_index_width: Option<usize>,
     pub(crate) assistant_stream_start: Option<usize>,
+    /// The completion call the open streamed block belongs to. Set whenever a
+    /// chunk or a start record names a call, and cleared when the block closes.
+    pub(crate) assistant_stream_inference: Option<InferenceId>,
     pub(crate) summary_stream_start: Option<usize>,
     /// Lifetime count of entries dropped by the transcript cap. The reducer
     /// takes the delta across one event to shift the domain `block_index`
@@ -186,6 +190,27 @@ impl TranscriptStore {
         self.entries.push(entry);
         self.cache_pushed_entry();
         self.enforce_transcript_cap()
+    }
+
+    /// Key the streamed assistant block on `inference`.
+    ///
+    /// A key that differs from the open block's closes that block and names the
+    /// new call: the text already rendered belongs to the previous call, and a
+    /// later chunk of this call must not truncate it. A matching key keeps the
+    /// block, so a chunk that folded ahead of its own `Started` keeps the entry
+    /// it opened.
+    pub(crate) fn key_assistant_stream(&mut self, inference: InferenceId) {
+        if self.assistant_stream_inference != Some(inference) {
+            self.assistant_stream_start = None;
+            self.assistant_stream_inference = Some(inference);
+        }
+    }
+
+    /// Close the streamed assistant block: the caller owns the entry it left,
+    /// and the next chunk opens a new one.
+    pub(crate) fn close_assistant_stream(&mut self) {
+        self.assistant_stream_start = None;
+        self.assistant_stream_inference = None;
     }
 
     /// Set the preview on the tool entry at `index` in place. The entry keeps
@@ -370,7 +395,7 @@ impl TranscriptStore {
         self.height_index = HeightIndex::default();
         self.height_index_width = None;
         self.evicted_total = 0;
-        self.assistant_stream_start = None;
+        self.close_assistant_stream();
         self.summary_stream_start = None;
     }
 

@@ -951,7 +951,7 @@ The switch events share the session channel with the session lifecycle events, s
 A hook failure never affects the agent run.
 
 - A handler that exits non-zero, fails to spawn, or exceeds `timeout_ms` produces one warning log line: `hook '<name>' failed on <event>: <error>`.
-- The warning goes to the agent log file (`{state base}/nu-agent/logs/agent.log`, see [Log file](#log-file)). The agent never writes log output to the terminal.
+- The warning goes to the agent log file in `{state base}/nu-agent/logs/` (see [Log file](#log-file)). The agent never writes log output to the terminal.
 - A timeout kills the subprocess.
 - The agent never retries a failed hook.
 - The agent never publishes a hook result.
@@ -959,7 +959,7 @@ A hook failure never affects the agent run.
 
 At exit the agent gives a running handler limited grace:
 
-- Agent-class runners: up to 250 ms each.
+- Agent-class runners: one 2 s budget shared by every runner, so a hook that hangs never holds exit past it.
 - Session-class runner in stderr mode: one 250 ms pause in total, after the turn.
 - Session-class runner in TUI and ACP: no exit wait. A handler still running when the process exits is abandoned.
 
@@ -1121,7 +1121,7 @@ edit = "deny"
 - `--mesh-key <string>` — mesh isolation key; agents only discover peers with the same key (default: SHA-256 of cwd)
 - `--verbose` / `-v` — increase UX detail; repeat (`-v`, `-vv`, `-vvv`)
 - `--quiet` / `-q` — suppress non-essential UX progress output
-- `--log-level <string>` — file log level (`error|warn|info|debug|trace`); writes to `{state base}/nu-agent/logs/agent.log` (see [Log file](#log-file))
+- `--log-level <string>` — file log level (`error|warn|info|debug|trace`); writes to this instance's file in `{state base}/nu-agent/logs/` (see [Log file](#log-file))
 - `--agent <name>` — load an agent persona from `.agents/<name>.md`
 - `--name <string>` — agent instance identity for multi-agent messaging
 - `--parent-name <string>` — parent agent name for sub-agent reporting (internal)
@@ -1131,14 +1131,18 @@ edit = "deny"
 
 The agent logs to a file only; it never writes log output to the terminal.
 
-- The target is `{state base}/nu-agent/logs/agent.log` — `$XDG_STATE_HOME/nu-agent/logs/agent.log` by default, and `nu-agent-dev` instead of `nu-agent` in a debug build. See [Paths](configuration.md#paths) for the full ladder.
-- `NU_AGENT_STATE_HOME` applies from process start: the environment is readable before `config.toml` loads, so the log target is correct from the first line, with no re-initialization.
-- A `[paths].state_home` value in `config.toml` applies only after the config file is loaded: the sink swaps to `{value}/nu-agent/logs/agent.log` at that point.
+- The target is this instance's own file in `{state base}/nu-agent/logs/` — `$XDG_STATE_HOME/nu-agent/logs/` by default, and `nu-agent-dev` instead of `nu-agent` in a debug build. See [Paths](configuration.md#paths) for the full ladder.
+- The file name names the instance: `agent-{name}-{pid}.log`, and `agent-{pid}.log` without a name. `{name}` is the `--name` value. The pid is always part of the name, so two same-named instances never interleave into one file. A name becomes a file name part, so characters outside `A-Z a-z 0-9 . _ -` become `-`.
+- The role is recorded in the file's header lines, never in its file name: `tui` for the default route (TUI, TTY, and single-prompt runs), `a2a` for the A2A server, `acp` for the ACP server, and `run` for the one-shot subcommands and the plugin's pipeline runs. The header also carries the name when the run has one, the pid, and the RFC 3339 start time.
+- The TUI shows the full path of its own instance file in the Status panel (`/status`), as a `Log:` row. That path is the file the run writes, so no directory listing is needed to find it.
+- `NU_AGENT_STATE_HOME` applies from process start: the environment is readable before `config.toml` loads, so the log directory is correct from the first line, with no re-initialization.
+- A `[paths].state_home` value in `config.toml` applies only after the config file is loaded: the sink swaps to `{value}/nu-agent/logs/` at that point and keeps the instance's own file name.
 - In the pre-load window — the first few startup lines — the log goes to the derived default, i.e. `$XDG_STATE_HOME`'s tree or `~/.local/state`.
 - Logging is always on: no flag is required, and the file is the only target.
 - `RUST_LOG` and `--log-level` set the filter; the default is `info`. `warn` and above always reaches the file, whatever the filter asks for.
-- Each start keeps its own run: `agent.log` holds the current one and `agent.log.1` … `agent.log.3` the three previous ones.
-- When the state ladder does not resolve or the log file cannot open, the log goes to `{temp dir}/nu-agent-log-{pid}.log` with the reason as its first line, and the run continues.
+- Each instance keeps its own file, appended run after run. A second instance starting never rotates, truncates, or collects the file another instance is writing.
+- At open the store keeps the newest 20 instance files. Three files are never collected: the opening instance's own file, a file modified within the last hour, and a file the platform refuses to remove. A writer that froze still leaves a recent trail, so that trail survives.
+- When the state ladder does not resolve or the instance's file cannot open, the log goes to `{temp dir}/nu-agent-log-{pid}.log` with the reason as its first line, and the run continues.
 - On quit and on a panic, the last 500 lines are appended to the file as a `ring dump` block.
 
 ## Subcommands

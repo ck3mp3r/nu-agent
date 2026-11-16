@@ -12,9 +12,9 @@ use crate::bus::{Bus, ControlRx, LifecycleRx};
 use crate::catalog::PickerCatalog;
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::SourceChannels;
+pub(crate) use crate::orchestrator::engine::WORKER_CMD_CAPACITY;
 use crate::orchestrator::events::{OrchestratorEvent, UiRequest, UiRequestResponse, WorkerCommand};
 use crate::orchestrator::external::{ExternalCompletion, ExternalTask, ExternalTaskStore};
-pub(crate) use crate::orchestrator::loop_impl::WORKER_CMD_CAPACITY;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };

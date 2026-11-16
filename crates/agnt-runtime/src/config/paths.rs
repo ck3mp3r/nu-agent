@@ -49,8 +49,6 @@ const AGENTS_DIR: &str = "agents";
 pub const STORE_FILE: &str = "sessions.db";
 /// Log directory name inside the application state directory.
 const LOG_DIR: &str = "logs";
-/// Log file name inside the log directory.
-const LOG_FILE: &str = "agent.log";
 /// Tool audit log file name inside the application data directory.
 const AUDIT_LOG_FILE: &str = "tool_audit.log";
 /// Secrets file name inside the application data directory.
@@ -118,8 +116,6 @@ pub struct Paths {
     pub store_path: PathBuf,
     /// Final path of the log directory.
     pub log_dir: PathBuf,
-    /// Final path of the log file.
-    pub log_path: PathBuf,
     /// Final path of the tool audit log file.
     pub audit_log_path: PathBuf,
     /// Final path of the secrets file.
@@ -305,16 +301,14 @@ impl Paths {
         let store_path = cache_base.join(APP_DIR_NAME).join(STORE_FILE);
         let grammar_cache_dir = cache_base.join(TREE_SITTER_DIR);
 
-        let log_path = app_base(
+        let state_app_dir = app_base(
             ENV_STATE_HOME,
             "[paths].state_home",
             config.state_home.as_deref(),
             env,
             xdg::state_dir_with,
-        )?
-        .join(LOG_DIR)
-        .join(LOG_FILE);
-        let log_dir = parent_dir(&log_path);
+        )?;
+        let log_dir = state_app_dir.join(LOG_DIR);
 
         Ok(Self {
             config_path,
@@ -323,7 +317,6 @@ impl Paths {
             copilot_token_dir: config_app_dir.join(copilot_dir_name()),
             store_path,
             log_dir,
-            log_path,
             audit_log_path: data_app_dir.join(AUDIT_LOG_FILE),
             secrets_path: data_app_dir.join(SECRETS_FILE),
             models_cache_path: data_app_dir.join(MODELS_FILE),

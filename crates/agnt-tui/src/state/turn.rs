@@ -30,7 +30,7 @@ impl TurnState {
             status.message.clear();
         }
         // Reset streaming state when the LLM response is complete
-        store.assistant_stream_start = None;
+        store.close_assistant_stream();
         true
     }
 }

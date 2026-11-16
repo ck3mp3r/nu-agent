@@ -10,7 +10,7 @@ use crate::TEST_BLOCKING_TIMEOUT;
 // Import discovery module items — some are pub(crate) and not re-exported
 // via the pub glob in lib.rs.
 use crate::discovery::mdns_discovery::MdnsPeerDiscovery;
-use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent};
+use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerDiscovery, PeerEvent};
 use crate::{A2aServer, AgentCard, Peer, PeerCache};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -285,7 +285,7 @@ async fn test_cross_daemon_mesh_scoping() -> Result<()> {
 async fn test_rediscover_closes_superseded_receivers() -> Result<()> {
     // -- Setup & Fixtures
     let card = test_card("rediscover-agent", 52097);
-    let mut discovery = PeerDiscoveryImpl::Mdns(Box::new(test_mdns()));
+    let mut discovery = PeerDiscovery::Mdns(Box::new(test_mdns()));
     discovery.start("rediscover-agent-52097", 52097, &card, "rediscover-mesh");
     let mut rx1 = discovery
         .take_peer_rx()
@@ -443,14 +443,14 @@ async fn test_mdns_peer_discovery_fullname_after_start() -> Result<()> {
 
 #[tokio::test]
 async fn reregister_mdns_when_not_started_is_noop() {
-    let mut discovery = PeerDiscoveryImpl::Mdns(Box::new(test_mdns()));
+    let mut discovery = PeerDiscovery::Mdns(Box::new(test_mdns()));
     discovery.reregister(&test_card("test", 0));
 }
 
 #[tokio::test]
 async fn rediscover_mdns_when_not_started_returns_none() {
     // -- Setup & Fixtures
-    let mut discovery = PeerDiscoveryImpl::Mdns(Box::new(test_mdns()));
+    let mut discovery = PeerDiscovery::Mdns(Box::new(test_mdns()));
 
     // -- Exec
     let rx = discovery.rediscover();

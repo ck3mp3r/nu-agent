@@ -18,14 +18,21 @@
 //! - The ratchet is exact set equality, both directions, through
 //!   [`assert_matches_baseline`]. A new violation fails the build, and so does a
 //!   fixed violation whose baseline entry was not removed.
+//! - One sanctioned git reader. [`ledger_growth`] compares the recorded ledgers to
+//!   the branch point (`git merge-base main HEAD`) and fails on growth, so the
+//!   baseline's shrink-only direction is checked rather than reviewed. The check
+//!   takes injected inputs and runs no process; the only code that runs `git` is
+//!   its driver in `test/architecture/monotonicity/`.
 
 // region:    --- Modules
 
 mod assertions;
+mod monotonicity;
 mod report;
 mod sources;
 
 pub use assertions::*;
+pub use monotonicity::*;
 pub use report::*;
 pub use sources::*;
 
@@ -34,7 +41,7 @@ pub use sources::*;
 // region:    --- Review checks
 
 /// The assertions this suite does not check mechanically, and the reason each
-/// one is not mechanical yet.
+/// one is not mechanical yet — with the review side of every pinned check.
 ///
 /// An entry stays listed until its check exists. Dropping an entry hides a
 /// property the workspace is still accepted against, so the list is the record
@@ -98,10 +105,12 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        reports on that the record does not name. A fresh unconsumed item or\n",
     "        member fails in the crate file that owes it.\n",
     "        Status is a RECORD-THEN-DRAIN BACKLOG, not compliance. The basis is the\n",
-    "        measured record: 716 declared items and 557 impl members — 1273 sites —\n",
+    "        measured record: 716 declared items and 496 impl members — 1212 sites —\n",
     "        are surface awaiting a drain ruling. The checker bites on NEW surface only,\n",
     "        and the baseline only ever shrinks: a drained item's row leaves in the\n",
-    "        same commit as its declaration. The judgement half — \"documented entry\n",
+    "        same commit as its declaration, and the direction is pinned — the\n",
+    "        `ledger_growth` driver fails the build when a ledger row appears that the\n",
+    "        branch point did not record. The judgement half — \"documented entry\n",
     "        point with a named caller\" — stays review and returns with the drain\n",
     "        ruling.\n",
     "        Two limits, bound for bound:\n",
@@ -110,16 +119,21 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        `pub` item in a private submodule file is recorded too. The member walk\n",
     "        resolves an `impl` crate-wide by self-type name, so the type's\n",
     "        declaration file is not consulted.\n",
-    "        (2) consumer evidence is a path segment or a method name:\n",
-    "        a consumer's module segment that equals an item's name suppresses\n",
-    "        that item's row, whether or not the path reaches the item, and a\n",
-    "        receiver call `<expr>.<name>(...)` in ANOTHER crate suppresses `<name>`\n",
-    "        with no receiver-type attribution. The declaring crate's own calls are\n",
-    "        not evidence: a crate calling its own method is the same crate the row\n",
-    "        is about. Name-level matching over-counts consumers across the crates it\n",
-    "        does not own; that direction is deliberate, and it retired 340 of the\n",
-    "        1613 rows recorded before the method evidence landed (impl members 869\n",
-    "        → 557).\n",
+    "        (2) consumer evidence is a path segment, a method name, or an\n",
+    "        imported-path call: a consumer's module segment that equals an item's\n",
+    "        name suppresses that item's row, whether or not the path reaches the\n",
+    "        item; a receiver call `<expr>.<name>(...)` in ANOTHER crate suppresses\n",
+    "        `<name>` with no receiver-type attribution; and a call whose callee path\n",
+    "        starts with a name the consumer imported from another crate\n",
+    "        (`use agnt_kernel::InferenceId;` then `InferenceId::mint()`) suppresses\n",
+    "        the path's remaining names in the crate the import names, with no check\n",
+    "        that the import binds the item's own type. The declaring crate's own\n",
+    "        calls are not evidence: a crate calling its own method is the same crate\n",
+    "        the row is about. Name-level matching over-counts consumers across the\n",
+    "        crates it does not own; that direction is deliberate, and it retired 340\n",
+    "        of the 1613 rows recorded before the method evidence landed (impl\n",
+    "        members 869 → 557), and 62 of the 558 members recorded before the\n",
+    "        imported-path half landed (496).\n",
     "        A RE-MEASURE of the census's own surface is the one exception to \"only\n",
     "        ever shrinks\": when the walk's definition changes — this entry's landing\n",
     "        added the impl-member half — the re-recorded rows may grow, and the commit\n",
@@ -145,7 +159,9 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        `runtime_build.rs:60`, `executor/core.rs:108`, the acp session's field,\n",
     "        and the owned getter on the contract at `conversation/contracts.rs:27`.\n",
     "        Exempt: `conversation/runtime.rs:138` and\n",
-    "        `conversation/runtime_parts.rs:28` — where the bus is assembled.\n",
+    "        `conversation/runtime_parts.rs:28` — where the bus is assembled. The row's\n",
+    "        direction is pinned by the same `ledger_growth` driver: a site the branch\n",
+    "        point did not record fails the build.\n",
     "ARCH-9  Only the composition root constructs infrastructure: HTTP clients, database\n",
     "        handles, TLS providers, subsystem tasks.\n",
     "        Measured (construction half, ARCH-9.b): `Client::builder`/`Client::new`,\n",
@@ -182,6 +198,30 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        `docs/design-choices.md` §2 — a consumer that finds may store, one that shows\n",
     "        may not — which is a judgement about how a field is used, not a property of\n",
     "        its syntax. The identity half is checked mechanically.\n",
+    "NAMES   No Rust source file name encodes implementation status. Pinned: a\n",
+    "        maintained marker list — `*_impl.rs` and `impl_*.rs`, matched against the\n",
+    "        file name of every `.rs` path under `crates/` — fails with the path and no\n",
+    "        line. A file name is a path, not Rust source, so this is the one check\n",
+    "        whose subject is a label rather than a parsed span.\n",
+    "        Zero tolerance, deliberately: names are cheap to fix, and a filename\n",
+    "        ledger would reintroduce the self-service growth hole the baseline\n",
+    "        direction closes, so the tree is clean from landing and a violation has\n",
+    "        no recording path. A marker joins the list by ruling, against a clean\n",
+    "        tree. Coverage: the walk is a path walk over the whole crate tree — a\n",
+    "        crate's `test/` tree, `build.rs` and `benches/` included, none of which the\n",
+    "        census parses — so it measures names without parsing, and the parsed\n",
+    "        source set the census reads is unchanged.\n",
+    "TYPES   No Rust type name encodes implementation status. Pinned: a maintained\n",
+    "        segment list — the word `Impl` as a CamelCase segment of a parsed type\n",
+    "        name — fails at the declaration site with the segment it carries. The rule\n",
+    "        is the segment, never the letters: `PeerDiscoveryImpl` matches and\n",
+    "        `Simple` does not. Scope: every type declaration the census parses — a\n",
+    "        struct, an enum, a trait, a type alias — so the site is a span line and the\n",
+    "        suite's syn contract applies. Zero tolerance, deliberately: a type name is\n",
+    "        cheap to fix, and a type-name ledger would reintroduce the self-service\n",
+    "        growth hole the baseline direction closes, so the tree is clean from\n",
+    "        landing and a violation has no recording path. A segment joins the list by\n",
+    "        ruling, against a clean tree.\n",
 );
 
 // endregion: --- Review checks

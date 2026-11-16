@@ -16,7 +16,7 @@ use nu_protocol::{Span, Value};
 use crate::error::{Error, Result};
 
 use super::{
-    A2aContext, AgentLifecycle, HOOK_DRAIN_TIMEOUT, TaskTerminal, apply_turn_terminal,
+    A2aContext, AgentLifecycle, HOOK_EXIT_PAUSE, TaskTerminal, apply_turn_terminal,
     attach_a2a_context_session, run_with_agent_lifecycle, spawn_configured_hooks_with_nu,
 };
 
@@ -31,7 +31,7 @@ use super::{
 /// this returns, so an in-flight hook subprocess gets a bounded moment to
 /// finish.
 pub async fn run_stderr_mode<R>(
-    runtime_impl: &mut R,
+    runtime: &mut R,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
@@ -41,13 +41,13 @@ pub async fn run_stderr_mode<R>(
 where
     R: CoreRuntime + RuntimeAccess + SessionPersistence,
 {
-    let config = runtime_impl.startup_plugin_config();
-    let cwd = runtime_impl
+    let config = runtime.startup_plugin_config();
+    let cwd = runtime
         .mcp_caller_cwd()
         .unwrap_or(std::path::Path::new("."));
 
     // Zero hooks spawns nothing.
-    let hook_bus = runtime_impl.bus_handle();
+    let hook_bus = runtime.bus_handle();
     let hook_handles = spawn_configured_hooks_with_nu(
         config,
         agnt_runtime::hooks::HookSources {
@@ -55,20 +55,20 @@ where
             lifecycle: hook_bus.lifecycle(),
         },
         cwd,
-        runtime_impl.paths().config_dir(),
-        runtime_impl.hook_context(),
+        runtime.paths().config_dir(),
+        runtime.hook_context(),
     );
     let agent_lifecycle = AgentLifecycle::start_configured(
         "stderr",
         config,
         cwd,
-        runtime_impl.paths().config_dir(),
-        runtime_impl.hook_context(),
+        runtime.paths().config_dir(),
+        runtime.hook_context(),
     )
     .await;
 
     let result = run_with_agent_lifecycle(agent_lifecycle, "completed", || {
-        run_stderr_mode_inner(runtime_impl, prompt, context, ui_policy, stderr_is_tty, a2a)
+        run_stderr_mode_inner(runtime, prompt, context, ui_policy, stderr_is_tty, a2a)
     })
     .await;
 
@@ -76,7 +76,7 @@ where
     // short pause lets a running hook subprocess complete before the process
     // exits. Gated on the handles so the zero-hook path pays nothing.
     if !hook_handles.is_empty() {
-        tokio::time::sleep(HOOK_DRAIN_TIMEOUT).await;
+        tokio::time::sleep(HOOK_EXIT_PAUSE).await;
     }
 
     result
@@ -84,7 +84,7 @@ where
 
 /// The stderr-mode body, without the hook runner setup and drain.
 async fn run_stderr_mode_inner<R>(
-    runtime_impl: &mut R,
+    runtime: &mut R,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
@@ -113,7 +113,7 @@ where
         && let Ok(completion) = rx.try_recv()
     {
         return run_stderr_turn(
-            runtime_impl,
+            runtime,
             stderr_renderer,
             &cancel_flag,
             None,
@@ -128,9 +128,9 @@ where
     if let Some(rx) = &mut a2a.external_task_rx
         && let Ok(task) = rx.try_recv()
     {
-        attach_a2a_context_session(runtime_impl, &task.context_id).await;
+        attach_a2a_context_session(runtime, &task.context_id).await;
         let result = run_stderr_turn(
-            runtime_impl,
+            runtime,
             stderr_renderer,
             &cancel_flag,
             // The turn runs for this peer task, so its spine bracket carries
@@ -148,7 +148,7 @@ where
         if let Some(store) = &a2a.task_store {
             apply_turn_terminal(
                 store,
-                runtime_impl.bus_handle().lifecycle(),
+                runtime.bus_handle().lifecycle(),
                 &task.task_id,
                 TaskTerminal::from_result(&result),
             );
@@ -163,7 +163,7 @@ where
         ));
     };
     run_stderr_turn(
-        runtime_impl,
+        runtime,
         stderr_renderer,
         &cancel_flag,
         None,
@@ -189,7 +189,7 @@ async fn run_stderr_turn<
     RU: CoreRuntime + RuntimeAccess,
     R: agnt_tty::renderer::UiRenderer + Send + 'static,
 >(
-    runtime_impl: &mut RU,
+    runtime: &mut RU,
     renderer: R,
     cancel_flag: &Arc<AtomicBool>,
     task_id: Option<String>,
@@ -198,7 +198,7 @@ async fn run_stderr_turn<
 ) -> Result<Value> {
     use std::sync::atomic::Ordering as AtomicOrdering;
 
-    let bus = runtime_impl.bus_handle();
+    let bus = runtime.bus_handle();
     // The renderer is shared between the drain task and the final flush.
     let shared = Arc::new(std::sync::Mutex::new(renderer));
     let stop = Arc::new(AtomicBool::new(false));
@@ -207,7 +207,7 @@ async fn run_stderr_turn<
     // channel while the turn runs.
     let signal_flag = Arc::clone(cancel_flag);
     let cancel_bus = bus.clone();
-    runtime_impl.spawn(async move {
+    runtime.spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             if signal_flag.swap(false, AtomicOrdering::SeqCst) {
@@ -223,7 +223,7 @@ async fn run_stderr_turn<
     let drain_shared = Arc::clone(&shared);
     let drain_stop = Arc::clone(&stop);
     let drain_bus = bus.clone();
-    runtime_impl.spawn(async move {
+    runtime.spawn(async move {
         let mut stream_rx = drain_bus.stream().subscribe();
         let mut narration_rx = drain_bus.narration().subscribe();
         let mut lifecycle_rx = drain_bus.lifecycle().subscribe();
@@ -261,7 +261,7 @@ async fn run_stderr_turn<
 
     // Drive the turn. Core publishes events on the bus; the drain task forwards
     // them to the renderer as they arrive.
-    let result = run_single_turn(runtime_impl, task_id, prompt, context, Span::unknown())
+    let result = run_single_turn(runtime, task_id, prompt, context, Span::unknown())
         .await
         .map_err(Error::from);
 

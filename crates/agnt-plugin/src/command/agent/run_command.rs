@@ -10,6 +10,7 @@ use super::{
     resolve_config,
 };
 
+use crate::command::logging;
 use crate::plugin::AgentPlugin;
 use agnt_runtime::config::defaults;
 use agnt_runtime::conversation::{
@@ -41,9 +42,18 @@ pub(super) fn run_command(
             .with_label(format!("{e}"), call.head)
     })?);
 
-    // Initialize file logging: an explicit --log-level wins, otherwise
+    // Initialize the process log: an explicit --log-level wins, otherwise
     // --verbose raises the level and --quiet lowers it.
-    init_logging(call)?;
+    let level = match resolve_log_level_str(call)? {
+        Some(level) => level.to_lowercase().parse::<log::LevelFilter>().map_err(|_| {
+            LabeledError::new(format!(
+                "Invalid log level '{level}'. Valid values: off, error, warn, info, debug, trace"
+            ))
+        })?,
+        None => logging::environment_level(),
+    };
+    let name = call.get_flag::<String>("name").ok().flatten();
+    logging::install_logging(name, level, call.head)?;
 
     // Validate session flags
     let session_id = extract_and_validate_session_flags(call)?;
@@ -71,7 +81,7 @@ pub(super) fn run_command(
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::logging::LogStore::retarget_process(&paths.log_dir);
     agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
@@ -248,7 +258,7 @@ pub(super) fn run_command(
             super::runtime_build::build_preamble_cache(&cwd, &paths.agents_dir);
 
         // ── Runtime construction ──────────────────────────────────────────────
-        let mut runtime_impl = build_runtime(RuntimeBuildParams {
+        let mut runtime = build_runtime(RuntimeBuildParams {
             runtime: handle.clone(),
             config,
             plugin_config: Some(plugin_config.clone()),
@@ -286,15 +296,15 @@ pub(super) fn run_command(
         .await?;
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
-            runtime_impl.persona_body_len(),
-            runtime_impl.agent_identity(),
-            runtime_impl.agent_description()
+            runtime.persona_body_len(),
+            runtime.agent_identity(),
+            runtime.agent_description()
         );
 
         // ── Pipeline turn ──────────────────────────────────────────────────────
         let (prompt, context) = super::input::extract_prompt_and_context(input)?;
         agnt_runtime::orchestrator::run_single_turn(
-            &mut runtime_impl,
+            &mut runtime,
             // The one-shot pipeline runs the user's own prompt: it belongs to
             // no external task, so the turn is unattributed.
             None,
@@ -306,58 +316,11 @@ pub(super) fn run_command(
     });
     // The command is over: append the ring to the log file so the lines a
     // failure cut short are still on disk.
-    agnt_runtime::logging::flush_ring_to_file();
+    agnt_runtime::logging::LogStore::flush_process_ring();
     result
 }
 
 // region:    --- Support
-
-/// Initialize file logging for this command.
-///
-/// An explicit `--log-level` wins; otherwise `--verbose` raises the level and
-/// `--quiet` lowers it, and `RUST_LOG` sets the filter when neither is given.
-/// The level never sits below warn, so warnings always reach the file. The sink
-/// is always a file: the state ladder resolves it at process start, and a run
-/// never aborts because the log file cannot open.
-fn init_logging(call: &EvaluatedCall) -> Result<(), LabeledError> {
-    let level = match resolve_log_level_str(call)? {
-        Some(level) => level.to_lowercase().parse::<log::LevelFilter>().map_err(|_| {
-            LabeledError::new(format!(
-                "Invalid log level '{level}'. Valid values: off, error, warn, info, debug, trace"
-            ))
-        })?,
-        None => environment_level(),
-    };
-    // `off` is a sink mode: the logger stays at warn so the ring still gathers
-    // warn and above, and the file target is silenced instead.
-    let (level, silenced) = agnt_runtime::logging::resolved_level(level);
-
-    // Resolve the log target from the state ladder at process start; a
-    // `[paths].state_home` value retargets the sink after config load.
-    let paths = agnt_runtime::config::Paths::resolve_for_process(None).ok();
-    let writer = agnt_runtime::logging::start_session_log(
-        paths.as_ref().map(|paths| paths.log_path.as_path()),
-    );
-    agnt_runtime::logging::set_process_sink_silenced(silenced);
-
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .filter_level(level)
-        .target(env_logger::Target::Pipe(Box::new(writer)))
-        .format_timestamp_millis()
-        .try_init();
-    // Always force the global max level — try_init() is a no-op when a logger is
-    // already registered (e.g. by nu-plugin internals), silently discarding our
-    // filter_level. set_max_level() always wins.
-    log::set_max_level(level);
-    Ok(())
-}
-
-/// The global level `RUST_LOG` selects, defaulting to `info`.
-fn environment_level() -> log::LevelFilter {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .build()
-        .filter()
-}
 
 /// Resolve the log level string from `--log-level`, `--verbose`, and `--quiet`.
 ///

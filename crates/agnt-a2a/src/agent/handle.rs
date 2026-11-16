@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::discovery::PeerDiscoveryImpl;
+use crate::discovery::PeerDiscovery;
 use crate::*;
 
 /// Top-level handle for a running A2A-compatible agent.
@@ -17,7 +17,7 @@ pub struct AgentHandle {
     pub completion_tx: Option<mpsc::Sender<A2aCompletionEvent>>,
     pub(super) completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
     pub(super) task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
-    pub(super) discovery: Arc<Mutex<PeerDiscoveryImpl>>,
+    pub(super) discovery: Arc<Mutex<PeerDiscovery>>,
     // Private — held for A2aToolContext construction.
     pub(super) client: A2aClient,
     pub(super) card: AgentCard,
@@ -52,7 +52,7 @@ impl AgentHandle {
     }
 
     /// Access the discovery handle for runtime re-registration.
-    pub fn discovery_handle(&self) -> Arc<Mutex<PeerDiscoveryImpl>> {
+    pub fn discovery_handle(&self) -> Arc<Mutex<PeerDiscovery>> {
         self.discovery.clone()
     }
 
@@ -134,6 +134,6 @@ impl AgentHandle {
 }
 
 /// The discovery backend, recovered if a caller panicked mid-restart.
-fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscovery>>) -> MutexGuard<'_, PeerDiscovery> {
     discovery.lock().unwrap_or_else(|e| e.into_inner())
 }

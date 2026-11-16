@@ -12,6 +12,16 @@ mod envelope;
 #[path = "runner.rs"]
 mod runner;
 
+#[path = "runner_session/delivery_contract.rs"]
+mod runner_session_delivery_contract;
+
+#[path = "runner_session/lag_telemetry.rs"]
+mod runner_session_lag_telemetry;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "runner_session/lag_telemetry_gated.rs"]
+mod runner_session_lag_telemetry_gated;
+
 #[path = "runner_agent.rs"]
 mod runner_agent;
 
@@ -54,8 +64,11 @@ mod runner_session_stamping;
 // endregion: --- Modules
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::sync::Notify;
 
 use crate::bus::{AgentEvent, AgentTx, Bus};
 use crate::config::{HookEvent, ResolvedHook};
@@ -157,6 +170,77 @@ impl HookProcess for MockProcess {
 
 // endregion: --- MockProcess
 
+// region:    --- WedgedProcess
+
+/// Records every invocation, and wedges the FIRST one until the test releases
+/// it.
+///
+/// The wedge is what makes a stalled reader observable: the hook's own
+/// subscriber loop is inside `run`, so nothing drains its ring while the test
+/// publishes. Every later invocation returns at once.
+#[derive(Clone, Default)]
+pub(super) struct WedgedProcess {
+    calls: Arc<Mutex<Vec<Call>>>,
+    /// Signalled once the wedged invocation has been recorded.
+    entered: Arc<Notify>,
+    /// Signalled by the test to let the wedged invocation return.
+    release: Arc<Notify>,
+    /// Set by the first invocation, so only that one wedges.
+    wedged: Arc<AtomicBool>,
+}
+
+impl WedgedProcess {
+    /// Await entry into the wedged invocation.
+    pub(super) async fn entered(&self) {
+        self.entered.notified().await;
+    }
+
+    /// Let the wedged invocation return.
+    pub(super) fn release(&self) {
+        self.release.notify_one();
+    }
+
+    pub(super) fn calls(&self) -> Vec<Call> {
+        self.calls
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default()
+    }
+
+    /// The invocation events, in entry order.
+    pub(super) fn events(&self) -> Vec<String> {
+        self.calls().into_iter().map(|call| call.event).collect()
+    }
+}
+
+impl HookProcess for WedgedProcess {
+    async fn run(
+        &self,
+        script: &Path,
+        event: &str,
+        envelope: &str,
+        cwd: &Path,
+        timeout: Duration,
+    ) -> core::result::Result<(), HookProcessError> {
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push(Call {
+                script: script.to_path_buf(),
+                event: event.to_string(),
+                envelope: envelope.to_string(),
+                cwd: cwd.to_path_buf(),
+                timeout,
+            });
+        }
+        if !self.wedged.swap(true, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        Ok(())
+    }
+}
+
+// endregion: --- WedgedProcess
+
 // region:    --- Test Support
 
 /// The session cwd every runner test passes.
@@ -213,6 +297,19 @@ pub(super) fn spawn(
     hooks: &[ResolvedHook],
     process: &MockProcess,
 ) -> Vec<tokio::task::JoinHandle<()>> {
+    spawn_with(bus, hooks, process.clone())
+}
+
+/// Spawn the session-class runner with any process, so a test can drive the
+/// reader's progress through the process itself.
+pub(super) fn spawn_with<P>(
+    bus: &Bus,
+    hooks: &[ResolvedHook],
+    process: P,
+) -> Vec<tokio::task::JoinHandle<()>>
+where
+    P: HookProcess + Send + Sync + 'static + Clone,
+{
     spawn_hook_runner(
         HookSources {
             stream: bus.stream(),
@@ -221,8 +318,28 @@ pub(super) fn spawn(
         hooks,
         &session_cwd(),
         &agent_context(),
-        process.clone(),
+        process,
     )
+}
+
+/// Publish the `index`-th tool call's start on the event lane.
+pub(super) fn publish_tool_started(bus: &Bus, index: usize) {
+    let _ = bus
+        .stream()
+        .publish(SessionRecord::Tool(ToolRecord::Started {
+            call: ToolCall::new("read", ToolSource::Builtin, format!("{{\"n\":{index}}}")),
+        }));
+}
+
+/// Publish the `index`-th streamed delta the way a streaming producer does.
+pub(super) fn publish_inference_chunk(bus: &Bus, index: usize) {
+    let _ = bus
+        .stream()
+        .publish_text(SessionRecord::Inference(InferenceRecord::Chunk {
+            inference: agnt_kernel::InferenceId::mint(),
+            delta: format!("d{index}"),
+            aggregated: format!("delta-{index}"),
+        }));
 }
 
 /// Publish one completed turn on `bus`: `tool_calls` dispatched calls, one

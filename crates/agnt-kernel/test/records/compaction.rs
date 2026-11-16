@@ -13,6 +13,7 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
+    let mut text_rx = bus.stream().subscribe_text();
 
     // -- Exec
     bus.stream()
@@ -26,14 +27,14 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
     bus.stream()
-        .publish(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
+        .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
     bus.stream()
-        .publish(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
+        .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
@@ -52,10 +53,9 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
         .map_err(|e| format!("publish turn: {e:?}"))?;
     drop(bus);
 
-    // -- Check
+    // -- Check: the event lane brackets the sweep, in order, with no deltas
     let mut tags: Vec<&str> = Vec::new();
     let mut sources: Vec<CompactionSource> = Vec::new();
-    let mut aggregates: Vec<String> = Vec::new();
     let mut summary: Option<String> = None;
     loop {
         match rx.recv().await {
@@ -69,12 +69,11 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
                         tags.push("compaction_started");
                         sources.push(*source);
                     }
-                    CompactionRecord::SummaryChunk {
-                        source, aggregated, ..
-                    } => {
-                        tags.push("compaction_chunk");
-                        sources.push(*source);
-                        aggregates.push(aggregated.clone());
+                    CompactionRecord::SummaryChunk { .. } => {
+                        return Err(format!(
+                            "a per-delta summary chunk must ride the text lane, not the event lane: {record:?}"
+                        )
+                        .into());
                     }
                     CompactionRecord::Completed { summary: text, .. } => {
                         tags.push("compaction_completed");
@@ -105,8 +104,6 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
         [
             "compaction_requested",
             "compaction_started",
-            "compaction_chunk",
-            "compaction_chunk",
             "compaction_completed",
             "turn"
         ],
@@ -118,12 +115,41 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
             .all(|source| *source == CompactionSource::Auto),
         "the compaction source is an enumerated producer fact"
     );
+
+    // -- Check: the summary deltas ride the text lane, aggregating monotonically
+    let mut aggregates: Vec<String> = Vec::new();
+    loop {
+        match text_rx.recv().await {
+            Ok(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
+                source,
+                aggregated,
+                ..
+            })) => {
+                assert_eq!(source, CompactionSource::Auto);
+                aggregates.push(aggregated);
+            }
+            Ok(other) => {
+                return Err(
+                    format!("the text lane carries summary chunks alone, not {other:?}").into(),
+                );
+            }
+            Err(crate::bus::ReceiveError::Closed) => break,
+            Err(crate::bus::ReceiveError::Lagged(_)) => {
+                panic!("under capacity, lag is a contract violation")
+            }
+        }
+    }
     for window in aggregates.windows(2) {
         assert!(
             window[1].len() >= window[0].len(),
             "aggregated must accumulate monotonically"
         );
     }
+    assert_eq!(
+        aggregates.last().map(String::as_str),
+        Some("ab"),
+        "the final aggregate must be the whole summary"
+    );
     assert_eq!(
         summary.as_deref(),
         Some("ab"),

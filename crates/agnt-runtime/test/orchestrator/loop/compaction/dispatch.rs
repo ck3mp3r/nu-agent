@@ -4,6 +4,13 @@ use super::*;
 
 use crate::conversation::turn::TurnEnd;
 
+// region:    --- Modules
+
+#[path = "dispatch/slot.rs"]
+mod slot;
+
+// endregion: --- Modules
+
 // ---------------------------------------------------------------------------
 // Compaction dispatch
 // ---------------------------------------------------------------------------
@@ -250,6 +257,12 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
         WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
+    // The pipeline's own start row is what makes the sweep active.
+    bus_driver
+        .lifecycle()
+        .publish(crate::bus::LifecycleEvent::CompactionStarted {
+            source: CompactionSource::Auto,
+        })?;
 
     // A second request is parked while the compaction is active, and a third
     // replaces it in the slot.
@@ -372,6 +385,12 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
         WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
+    // The pipeline's own start row is what makes the sweep active.
+    bus_driver
+        .lifecycle()
+        .publish(crate::bus::LifecycleEvent::CompactionStarted {
+            source: CompactionSource::Auto,
+        })?;
 
     // Second request arrives while the compaction is active: it is parked in the
     // pending-compaction slot, not dispatched.

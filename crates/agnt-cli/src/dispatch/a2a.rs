@@ -86,7 +86,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::logging::LogStore::retarget_process(&paths.log_dir);
     agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let theme_path = paths.theme_path.clone();
     let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
@@ -306,7 +306,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let (cached_agents_chain, cached_available_skills) =
         build_preamble_cache(&cwd, &paths.agents_dir);
 
-    let mut runtime_impl = build_runtime(RuntimeBuildParams {
+    let mut runtime = build_runtime(RuntimeBuildParams {
         runtime: tokio::runtime::Handle::current(),
         config,
         plugin_config: Some(plugin_config.clone()),
@@ -371,7 +371,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
             let theme_name =
                 resolve_theme_from_clap(a2a.ui.theme.as_deref(), &plugin_config, &theme_path)?;
             run_tui_mode(
-                runtime_impl,
+                runtime,
                 None,
                 None,
                 ui_policy,
@@ -391,7 +391,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         CliMode::Stderr => {
             let stderr_is_tty = std::io::stderr().is_terminal();
             run_stderr_mode(
-                &mut runtime_impl,
+                &mut runtime,
                 None,
                 None,
                 ui_policy,

@@ -152,18 +152,14 @@ async fn uncompact_requested_while_active_is_queued() -> Result<()> {
         .await
     });
 
-    // -- Exec: the first one dispatches and makes the slot active.
+    // -- Exec: a sweep is active on the spine, so the slot is taken.
     bus_driver
-        .control()
-        .publish(crate::bus::ControlCommand::UncompactRequested {
-            source: CompactionSource::Manual,
+        .lifecycle()
+        .publish(crate::bus::LifecycleEvent::CompactionStarted {
+            source: CompactionSource::Auto,
         })?;
-    match recv_worker_command(&mut worker_rx, "first RunUncompact").await? {
-        WorkerCommand::RunUncompact { source } => assert_eq!(source, CompactionSource::Manual),
-        _ => panic!("expected RunUncompact"),
-    }
 
-    // -- Check: a second one is parked while the slot is active.
+    // -- Check: an uncompaction parks behind the rewrite in flight.
     bus_driver
         .control()
         .publish(crate::bus::ControlCommand::UncompactRequested {
@@ -172,14 +168,15 @@ async fn uncompact_requested_while_active_is_queued() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         recv_command(&mut worker_rx).is_none(),
-        "an uncompaction that arrives while one is active must be queued"
+        "an uncompaction that arrives while a rewrite is active must be queued"
     );
 
     // -- Exec & Check: the terminal row dispatches the parked one.
     bus_driver
         .lifecycle()
-        .publish(crate::bus::LifecycleEvent::Uncompacted {
-            source: CompactionSource::Manual,
+        .publish(crate::bus::LifecycleEvent::CompactionCompleted {
+            source: CompactionSource::Auto,
+            summary: String::new(),
         })?;
     match recv_worker_command(&mut worker_rx, "queued RunUncompact").await? {
         WorkerCommand::RunUncompact { source } => assert_eq!(source, CompactionSource::Manual),

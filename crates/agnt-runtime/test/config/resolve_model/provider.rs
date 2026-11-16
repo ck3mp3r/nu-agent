@@ -98,7 +98,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
         config.base_url,
         Some("https://api.githubcopilot.com".to_string())
     );
-    assert_eq!(config.provider_impl, Some("openai".to_string()));
+    assert_eq!(config.provider_kind, Some("openai".to_string()));
 
     let config = limits
         .resolve_model(&ModelRoleConfig {

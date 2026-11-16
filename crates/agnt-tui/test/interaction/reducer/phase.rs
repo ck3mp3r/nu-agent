@@ -90,7 +90,7 @@ fn abort_flow_table() {
     reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::AbortPending);
 
-    reduce_ui(&mut state, turn_completed(0));
+    fold_turn_completed(&mut state);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
 
@@ -109,7 +109,7 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
     assert!(state.permission.has_prompt());
 
     // -- Exec: the turn completes.
-    reduce_ui(&mut state, turn_completed(0));
+    fold_turn_completed(&mut state);
 
     // -- Check
     assert!(
@@ -246,8 +246,7 @@ fn completion_finalize_table() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
 
-    let finalize = turn_completed(0);
-    reduce_ui(&mut state, finalize);
+    fold_turn_completed(&mut state);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
@@ -262,7 +261,7 @@ fn completion_finalize_table() {
     let _ = state.activate_next_prompt();
     reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
 
-    reduce_ui(&mut state, turn_completed(0));
+    fold_turn_completed(&mut state);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
@@ -278,7 +277,7 @@ fn completion_finalize_table() {
     let _ = state.activate_next_prompt();
     reduce(&mut state, UiInput::KeyPressed { key: Key::Esc }, None);
 
-    reduce_ui(&mut state, turn_completed(0));
+    fold_turn_completed(&mut state);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);

@@ -91,7 +91,7 @@ fn custom_named_startup_config() -> Config {
     Config {
         provider: "ollama-cloud".to_string(),
         model: "llama3".to_string(),
-        provider_impl: Some("ollama".to_string()),
+        provider_kind: Some("ollama".to_string()),
         base_url: Some("http://localhost:11434".to_string()),
         ..Config::default()
     }

@@ -3,6 +3,7 @@ use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value
 
 use agnt_runtime::config::vault::Vault;
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 pub struct AgentProviderAuthLogin;
@@ -77,67 +78,72 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
         call: &EvaluatedCall,
         input: &Value,
     ) -> Result<Value, LabeledError> {
-        let name: String = call.req(0)?;
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let name: String = call.req(0)?;
 
-        // github-copilot uses the OAuth device-code flow.
-        if name == "github-copilot" || name == "copilot" {
-            crate::block_on!(plugin, async {
-                use agnt_runtime::config::copilot_tokens::verify_copilot_login_persistence;
-                use agnt_runtime::conversation::providers::copilot_device_login;
-                use agnt_runtime::types::DeviceCodeHandler;
+            // github-copilot uses the OAuth device-code flow.
+            if name == "github-copilot" || name == "copilot" {
+                crate::block_on!(plugin, async {
+                    use agnt_runtime::config::copilot_tokens::verify_copilot_login_persistence;
+                    use agnt_runtime::conversation::providers::copilot_device_login;
+                    use agnt_runtime::types::DeviceCodeHandler;
 
-                let handler = DeviceCodeHandler::new(|prompt| {
-                    eprintln!(
-                        "Sign in with GitHub Copilot:\n  1) Visit: {}\n  2) Enter code: {}",
-                        prompt.verification_uri, prompt.user_code
-                    );
-                });
+                    let handler = DeviceCodeHandler::new(|prompt| {
+                        eprintln!(
+                            "Sign in with GitHub Copilot:\n  1) Visit: {}\n  2) Enter code: {}",
+                            prompt.verification_uri, prompt.user_code
+                        );
+                    });
 
-                let paths =
+                    let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
+                        .map_err(|e| {
+                            LabeledError::new(format!("Failed to resolve application paths: {e}"))
+                        })?;
+                    let token_dir = copilot_device_login(handler, paths.copilot_token_dir).await?;
+                    verify_copilot_login_persistence(&token_dir).map_err(LabeledError::new)?;
+
+                    Ok(Value::string(
+                        format!(
+                            "Successfully authenticated with GitHub Copilot\n  credentials: {}",
+                            token_dir.display()
+                        ),
+                        call.head,
+                    ))
+                })
+            } else {
+                // API key from --api-key flag, or piped via stdin
+                let key = if let Some(k) = call
+                    .get_flag::<String>("api-key")
+                    .map_err(|e| LabeledError::new(format!("Failed to get --api-key flag: {e}")))?
+                {
+                    k
+                } else if let Ok(k) = input.as_str() {
+                    k.to_string()
+                } else {
+                    return Err(LabeledError::new("API key required").with_label(
+                        "Use --api-key <key> or pipe the key: echo \"sk-...\" | agent provider auth login <name>",
+                        call.head,
+                    ));
+                };
+
+                let application_paths =
                     agnt_runtime::config::Paths::resolve_from_config_or_default().map_err(|e| {
                         LabeledError::new(format!("Failed to resolve application paths: {e}"))
                     })?;
-                let token_dir = copilot_device_login(handler, paths.copilot_token_dir).await?;
-                verify_copilot_login_persistence(&token_dir).map_err(LabeledError::new)?;
+                let vault = Vault::auto_detect(&application_paths.secrets_path)
+                    .map_err(|e| LabeledError::new(e.to_string()))?;
+                vault
+                    .store_api_key(&name, &key)
+                    .map_err(|e| LabeledError::new(format!("Failed to store API key: {e}")))?;
 
                 Ok(Value::string(
-                    format!(
-                        "Successfully authenticated with GitHub Copilot\n  credentials: {}",
-                        token_dir.display()
-                    ),
+                    format!("Stored API key for '{name}'"),
                     call.head,
                 ))
-            })
-        } else {
-            // API key from --api-key flag, or piped via stdin
-            let key = if let Some(k) = call
-                .get_flag::<String>("api-key")
-                .map_err(|e| LabeledError::new(format!("Failed to get --api-key flag: {e}")))?
-            {
-                k
-            } else if let Ok(k) = input.as_str() {
-                k.to_string()
-            } else {
-                return Err(LabeledError::new("API key required").with_label(
-                    "Use --api-key <key> or pipe the key: echo \"sk-...\" | agent provider auth login <name>",
-                    call.head,
-                ));
-            };
-
-            let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
-                .map_err(|e| {
-                LabeledError::new(format!("Failed to resolve application paths: {e}"))
-            })?;
-            let vault = Vault::auto_detect(&application_paths.secrets_path)
-                .map_err(|e| LabeledError::new(e.to_string()))?;
-            vault
-                .store_api_key(&name, &key)
-                .map_err(|e| LabeledError::new(format!("Failed to store API key: {e}")))?;
-
-            Ok(Value::string(
-                format!("Stored API key for '{name}'"),
-                call.head,
-            ))
-        }
+            }
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

@@ -18,11 +18,14 @@ fn stopped_with_empty_reason_prints_no_notice()
 
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "provisional".to_string(),
             aggregated: "provisional".to_string(),
         },
@@ -56,11 +59,14 @@ fn stopped_with_empty_reason_resets_streaming_for_retry()
 
     draw(
         &mut renderer,
-        SessionRecord::Inference(InferenceRecord::Started),
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
     );
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "provisional".to_string(),
             aggregated: "provisional".to_string(),
         },
@@ -91,6 +97,7 @@ fn stopped_with_empty_reason_resets_streaming_for_retry()
     narrate(
         &mut renderer,
         NarrationEvent::InferenceChunk {
+            inference: InferenceId::mint(),
             delta: "retry".to_string(),
             aggregated: "retry".to_string(),
         },

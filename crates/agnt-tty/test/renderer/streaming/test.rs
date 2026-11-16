@@ -25,8 +25,8 @@ mod verbosity;
 use crate::renderer::{RenderInput, UiRenderer};
 use agnt_kernel::bus::NarrationEvent;
 use agnt_kernel::{
-    CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, SessionRecord, ToolCall,
-    ToolOutcome, ToolRecord, TurnRecord, Usage,
+    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind, SessionRecord,
+    ToolCall, ToolOutcome, ToolRecord, TurnRecord, Usage,
 };
 
 use super::StderrUiRenderer;

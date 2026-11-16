@@ -6,7 +6,18 @@
 
 use super::*;
 
+use agnt_render::transcript::ir::MessageRole;
 use agnt_runtime::bus::{ControlCommand, SharedUiAction};
+use agnt_runtime::protocol::events::{InferenceId, InferenceRecord};
+
+// region:    --- Modules
+
+// The lane fold order lives in its own file: four 16-round pins would push this
+// file past the test-file size limit.
+#[path = "tests/ordering.rs"]
+mod ordering;
+
+// endregion: --- Modules
 
 #[tokio::test]
 async fn render_loop_driver_test_backend_buffer_observes_sentinel_after_event() -> Result<()> {
@@ -151,6 +162,7 @@ async fn render_loop_driver_routes_narration_through_bus_narration_arm() -> Resu
     driver
         .advance(&[DriveEvent::Narration(Box::new(
             NarrationEvent::InferenceChunk {
+                inference: crate::test_support::inference(),
                 delta: "SENTINEL".to_string(),
                 aggregated: "SENTINEL".to_string(),
             },
@@ -166,6 +178,126 @@ async fn render_loop_driver_routes_narration_through_bus_narration_arm() -> Resu
             )
         }),
         "narration must reach the coordinator through the real bus arm"
+    );
+    Ok(())
+}
+
+/// WHEN a key event and a text-lane record are both ready at one wake, THE
+/// render loop SHALL fold the key before the record fold of that pass: the
+/// transcript keeps the fold order, so the submitted row lands ahead of the
+/// block the record streams into.
+#[tokio::test]
+async fn test_render_loop_prioritizes_input_over_text_burst() -> Result<()> {
+    // -- Setup & Fixtures
+    const ROUNDS: usize = 16;
+    const PROMPT: &str = "priority";
+
+    // -- Exec & Check: one round pins nothing — which arm the loop wakes on is
+    // the loop's own business when the select is unbiased. Each round publishes
+    // its whole script before yielding once, so the key and the text lane are
+    // both ready at the wake that follows.
+    for round in 0..ROUNDS {
+        // -- Setup & Fixtures: a fresh transcript per round, so the two ranks
+        // below are the round's own fold order.
+        let mut driver = RenderLoopDriver::new(160, 40);
+        let streamed = format!("burst-{round:02}");
+        let mut script: Vec<DriveEvent> = PROMPT
+            .chars()
+            .map(|c| {
+                DriveEvent::Key(TerminalEvent::Key(
+                    crate::interaction::input::TerminalKey::Char(c),
+                ))
+            })
+            .collect();
+        script.push(DriveEvent::Key(TerminalEvent::Key(
+            crate::interaction::input::TerminalKey::Enter,
+        )));
+        script.push(DriveEvent::TextRecord(Box::new(streamed_chunk(
+            crate::test_support::inference(),
+            &streamed,
+        ))));
+
+        // -- Exec
+        driver.advance_burst(&script).await?;
+
+        // -- Check: the key's submit appends the user row, the text record
+        // appends the assistant block, and the transcript keeps them in the
+        // order the loop folded them.
+        let entries = driver.state().transcript.entries();
+        let key_rank = entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, TranscriptEntry::Message(message)
+                    if message.role == MessageRole::User && message.markdown.contains(PROMPT))
+            })
+            .ok_or("the key fold must append the submitted user row")?;
+        let record_rank = entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, TranscriptEntry::Message(message)
+                    if message.markdown.contains(&streamed))
+            })
+            .ok_or("the text record must append the streamed block")?;
+        assert!(
+            key_rank < record_rank,
+            "round {round}: the key fold must precede the record fold, \
+             got the key at {key_rank} and the record at {record_rank}"
+        );
+    }
+    Ok(())
+}
+
+/// WHEN more terminal events than one pass may fold are ready at one wake, THE
+/// render loop SHALL fold every one of them across passes and still reach the
+/// bus lanes: the drain bound defers the tail, it never drops it.
+#[tokio::test]
+async fn test_render_loop_folds_an_input_burst_past_the_drain_bound() -> Result<()> {
+    // -- Setup & Fixtures: more typed keys than one pass folds, plus a text
+    // record that can only fold once the input queue has given way. The typed
+    // unit never repeats a letter, so no insert-mode chord fires.
+    const UNIT: &str = "abcdefghik";
+    let typed = UNIT.repeat(crate::interactive::INPUT_BURST_DRAIN_MAX / UNIT.len() + 1);
+    let mut driver = RenderLoopDriver::new(160, 40);
+    let mut script: Vec<DriveEvent> = typed
+        .chars()
+        .map(|c| {
+            DriveEvent::Key(TerminalEvent::Key(
+                crate::interaction::input::TerminalKey::Char(c),
+            ))
+        })
+        .collect();
+    script.push(DriveEvent::Key(TerminalEvent::Key(
+        crate::interaction::input::TerminalKey::Enter,
+    )));
+    script.push(DriveEvent::TextRecord(Box::new(streamed_chunk(
+        crate::test_support::inference(),
+        "past-bound",
+    ))));
+
+    // -- Exec
+    driver.advance_burst(&script).await?;
+
+    // -- Check: every queued key folded, in order, before the submit.
+    let entries = driver.state().transcript.entries();
+    let submitted = entries.iter().find_map(|entry| match entry {
+        TranscriptEntry::Message(message) if message.role == MessageRole::User => {
+            Some(message.markdown.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(
+        submitted.as_deref(),
+        Some(typed.as_str()),
+        "the bound defers the queued keys to the next pass, it never drops them"
+    );
+
+    // -- Check: the bus lane still folded, so the input drain never starves it.
+    assert!(
+        entries.iter().any(|entry| matches!(
+            entry,
+            TranscriptEntry::Message(message) if message.markdown.contains("past-bound")
+        )),
+        "a text record pending behind an input burst must still fold"
     );
     Ok(())
 }
@@ -201,4 +333,16 @@ async fn control_intake_fold_paints_the_frame_without_another_event() -> Result<
         "a control fold must repaint without another event, got:\n{after}"
     );
     Ok(())
+}
+
+// -- Test Support
+
+/// The text-lane record a streaming producer emits: one delta carrying the whole
+/// text so far, under the call it belongs to.
+fn streamed_chunk(inference: InferenceId, aggregated: &str) -> SessionRecord {
+    SessionRecord::Inference(InferenceRecord::Chunk {
+        inference,
+        delta: aggregated.to_string(),
+        aggregated: aggregated.to_string(),
+    })
 }

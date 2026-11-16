@@ -6,6 +6,7 @@ use agnt_runtime::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_S
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, SignalAction, Signature, SyntaxShape, Value};
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 /// Validate that a server config is suitable for login (OAuth with a URL).
@@ -89,11 +90,16 @@ impl SimplePluginCommand for AgentAuthMcpLogin {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let server_name: String = call.req(0)?;
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let server_name: String = call.req(0)?;
 
-        crate::block_on!(plugin, async {
-            run_inner(engine, call, &server_name).await
-        })
+            crate::block_on!(plugin, async {
+                run_inner(engine, call, &server_name).await
+            })
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }
 

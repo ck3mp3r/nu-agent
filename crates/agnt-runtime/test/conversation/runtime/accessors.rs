@@ -12,7 +12,7 @@ fn accessor_provider_returns_provider_string() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
@@ -55,7 +55,7 @@ fn accessor_model_returns_model_string() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "claude-sonnet-4".to_string(),
         api_key: Some("test-key".to_string()),
@@ -96,7 +96,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: None,
@@ -140,7 +140,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: None,
@@ -184,7 +184,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "test-model".to_string(),
         api_key: None,

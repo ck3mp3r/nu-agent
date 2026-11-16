@@ -9,6 +9,7 @@ use super::*;
 #[tokio::test]
 async fn abandon_unanswered_releases_the_concurrent_slots() -> Result<()> {
     // -- Setup & Fixtures
+    testing_logger::setup();
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(
@@ -50,6 +51,7 @@ async fn abandon_unanswered_releases_the_concurrent_slots() -> Result<()> {
 #[tokio::test]
 async fn abandon_unanswered_frees_the_queued_switch() -> Result<()> {
     // -- Setup & Fixtures
+    testing_logger::setup();
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(
@@ -124,40 +126,31 @@ fn abandonment(kind: &str) -> String {
 /// lose the response, it simply outran it.
 const ABANDONED_LOG: &str = "its response had not arrived when quit settled";
 
-/// Every record this process logged: its level and its message.
-static CAPTURED: std::sync::Mutex<Vec<(log::Level, String)>> = std::sync::Mutex::new(Vec::new());
+// ---------------------------------------------------------------------------
+// Test support
+// ---------------------------------------------------------------------------
 
-/// Keeps the level of every record, so the log wording and its level are both
-/// assertions rather than hopes.
-struct LevelLogger;
-
-impl log::Log for LevelLogger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, record: &log::Record) {
-        if let Ok(mut captured) = CAPTURED.lock() {
-            captured.push((record.level(), record.args().to_string()));
-        }
-    }
-
-    fn flush(&self) {}
+/// Every record captured on this thread since the test set up, cleared as it is
+/// read.
+///
+/// `testing_logger` captures into a thread-local buffer, so two tests never see
+/// each other's records: under `cargo test`, which runs the whole suite in one
+/// process on a shared thread pool, and under nextest's process-per-test alike.
+fn captured() -> Vec<(log::Level, String)> {
+    let found = std::cell::RefCell::new(Vec::new());
+    testing_logger::validate(|logs| {
+        *found.borrow_mut() = logs
+            .iter()
+            .map(|log| (log.level, log.body.clone()))
+            .collect();
+    });
+    found.into_inner()
 }
 
-/// Capture every level from here on.
-fn capture_levels() {
-    let _ = log::set_boxed_logger(Box::new(LevelLogger));
-    log::set_max_level(log::LevelFilter::Trace);
-}
-
-/// The records whose message contains `fragment`.
-fn captured_matching(fragment: &str) -> Vec<(log::Level, String)> {
-    CAPTURED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .filter(|(_, message)| message.contains(fragment))
+/// The records of `logs` whose message contains `fragment`.
+fn matching(logs: &[(log::Level, String)], fragment: &str) -> Vec<(log::Level, String)> {
+    logs.iter()
+        .filter(|(_, body)| body.contains(fragment))
         .cloned()
         .collect()
 }
@@ -167,6 +160,7 @@ fn captured_matching(fragment: &str) -> Vec<(log::Level, String)> {
 #[tokio::test]
 async fn abandon_answers_a_blocking_request_on_its_own_lane() -> Result<()> {
     // -- Setup & Fixtures
+    testing_logger::setup();
     let rows = [
         (
             "model switch",
@@ -190,7 +184,6 @@ async fn abandon_answers_a_blocking_request_on_its_own_lane() -> Result<()> {
 
     for (kind, request) in rows {
         let mut h = Harness::new();
-        capture_levels();
         let p = h.parts();
         let mut ctx = make_ctx(
             p.worker_tx,
@@ -236,7 +229,11 @@ async fn abandon_answers_a_blocking_request_on_its_own_lane() -> Result<()> {
         };
         assert_eq!(text, abandonment(kind), "the notice wording is frozen");
         assert!(!p.stage.has_pending(), "an answered request is not pending");
-        let logged = captured_matching(&format!("unanswered {kind} on quit: {ABANDONED_LOG}"));
+        let logs = captured();
+        let logged = matching(
+            &logs,
+            &format!("unanswered {kind} on quit: {ABANDONED_LOG}"),
+        );
         assert_eq!(
             logged.len(),
             1,
@@ -257,6 +254,7 @@ async fn abandon_answers_a_blocking_request_on_its_own_lane() -> Result<()> {
 #[tokio::test]
 async fn abandon_answers_a_toggle_with_the_last_known_facts() -> Result<()> {
     // -- Setup & Fixtures
+    testing_logger::setup();
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(

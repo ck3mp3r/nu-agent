@@ -65,7 +65,12 @@ fn test_renderer_lane_theme_conversion_maps_every_surface() -> Result<()> {
         color_of(tui.surface0),
         "the code surface"
     );
-    assert_eq!(theme.notice, fg_of(tui.role_system), "notice text");
+    assert_eq!(theme.notice, fg_of(tui.role_notice), "notice text");
+    assert_ne!(
+        theme.notice,
+        fg_of(tui.role_system),
+        "notice text is no longer the system yellow"
+    );
     assert_eq!(theme.banner, fg_of(tui.role_system), "banner text");
     assert_eq!(
         theme.diff_add_bg,

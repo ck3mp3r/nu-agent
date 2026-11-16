@@ -227,7 +227,7 @@ impl TaskStoreBackend for InMemoryTaskStore {
     ) -> Result<Task, Box<(Task, mpsc::Sender<TaskEvent>)>> {
         let (tx, _rx) = mpsc::channel(64);
 
-        match InMemoryTaskStore::create_task_with_idempotency_impl(
+        match InMemoryTaskStore::create_task_or_existing(
             self,
             key,
             context_id,
@@ -257,7 +257,7 @@ impl TaskStoreBackend for InMemoryTaskStore {
 // so the trait impl can add subscription wrapping without re-entrancy.
 // -----------------------------------------------------------------------
 impl InMemoryTaskStore {
-    fn create_task_with_idempotency_impl(
+    fn create_task_or_existing(
         &self,
         key: &str,
         context_id: Option<String>,

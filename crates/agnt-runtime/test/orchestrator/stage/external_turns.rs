@@ -46,18 +46,18 @@ async fn external_turn_error_publishes_task_failed() -> Result<()> {
 
     // -- Check
     let events = take_task_events(lifecycle_rx);
+    let rows: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            LifecycleEvent::TaskFailed { task_id, error } => Some((task_id.clone(), error.clone())),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        events.len(),
-        1,
-        "exactly one turn event should be published, got {events:?}"
+        rows,
+        vec![("task-1".to_string(), "provider exploded".to_string())],
+        "exactly one task row should be published, got {events:?}"
     );
-    match &events[0] {
-        LifecycleEvent::TaskFailed { task_id, error } => {
-            assert_eq!(task_id, "task-1");
-            assert_eq!(error, "provider exploded");
-        }
-        other => return Err(format!("expected TaskFailed, got {other:?}").into()),
-    }
     Ok(())
 }
 
@@ -185,10 +185,12 @@ async fn non_external_turn_error_publishes_no_task_failed() -> Result<()> {
         )
         .await;
 
-    // -- Check
+    // -- Check: a user turn carries no external task, so no task row is owed.
     let events = take_task_events(lifecycle_rx);
     assert!(
-        events.is_empty(),
+        !events
+            .iter()
+            .any(|event| matches!(event, LifecycleEvent::TaskFailed { .. })),
         "a user turn failure must not publish a task event, got {events:?}"
     );
     Ok(())

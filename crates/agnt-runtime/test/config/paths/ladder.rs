@@ -49,7 +49,6 @@ fn test_paths_resolve_env_homes_win_over_config_homes() -> Result<()> {
         PathBuf::from("/env/cache").join("tree-sitter")
     );
     assert_eq!(paths.log_dir, log_app_dir);
-    assert_eq!(paths.log_path, log_app_dir.join("agent.log"));
     assert_eq!(paths.secrets_path, data_app_dir.join("secrets.json"));
     assert_eq!(paths.models_cache_path, data_app_dir.join("models.json"));
     assert_eq!(paths.theme_path, data_app_dir.join("theme.json"));
@@ -99,10 +98,6 @@ fn test_paths_resolve_config_homes_used_when_env_unset() -> Result<()> {
         paths.grammar_cache_dir,
         PathBuf::from("/from/config/cache").join("tree-sitter")
     );
-    assert_eq!(
-        paths.log_path,
-        app_dir("/from/config/state").join("logs").join("agent.log")
-    );
     assert_eq!(paths.log_dir, app_dir("/from/config/state").join("logs"));
     Ok(())
 }
@@ -137,7 +132,6 @@ fn test_paths_resolve_falls_back_to_xdg_tree() -> Result<()> {
     );
     assert_eq!(paths.store_path, cache_app_dir.join("sessions.db"));
     assert_eq!(paths.log_dir, log_app_dir);
-    assert_eq!(paths.log_path, log_app_dir.join("agent.log"));
     assert_eq!(paths.secrets_path, data_app_dir.join("secrets.json"));
     assert_eq!(paths.models_cache_path, data_app_dir.join("models.json"));
     assert_eq!(paths.theme_path, data_app_dir.join("theme.json"));
@@ -180,10 +174,7 @@ fn test_paths_resolve_expands_leading_tilde() -> Result<()> {
         paths.secrets_path,
         app_dir("/home/tester/data").join("secrets.json")
     );
-    assert_eq!(
-        paths.log_path,
-        app_dir("/xdg/state").join("logs").join("agent.log")
-    );
+    assert_eq!(paths.log_dir, app_dir("/xdg/state").join("logs"));
     Ok(())
 }
 
@@ -215,10 +206,7 @@ fn test_paths_resolve_empty_values_count_as_absent() -> Result<()> {
         app_dir("/xdg/data").join("secrets.json")
     );
     assert_eq!(paths.store_path, app_dir("/xdg/cache").join("sessions.db"));
-    assert_eq!(
-        paths.log_path,
-        app_dir("/xdg/state").join("logs").join("agent.log")
-    );
+    assert_eq!(paths.log_dir, app_dir("/xdg/state").join("logs"));
     Ok(())
 }
 

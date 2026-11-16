@@ -39,7 +39,8 @@ fn test_renderer_lane_styling_banner_text_paints_the_banner_color() -> Result<()
     Ok(())
 }
 
-/// WHEN a system notice renders, THE text SHALL paint the notice color.
+/// WHEN a system notice renders, THE text SHALL paint the notice color — the
+/// notice role's own tone, not the system yellow the banner keeps.
 #[test]
 fn test_renderer_lane_styling_system_notice_paints_the_notice_color() -> Result<()> {
     // -- Setup & Fixtures

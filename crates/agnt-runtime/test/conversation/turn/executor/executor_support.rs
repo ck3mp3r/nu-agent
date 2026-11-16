@@ -174,30 +174,19 @@ pub(super) fn feedback_message_count(messages: &[crate::types::Message]) -> usiz
         .count()
 }
 
-/// A no-op `log::Log` used to enable error logging in tests so the
-/// `log::error!` macros in `TurnExecutor` actually evaluate their arguments —
-/// including the preview slices under test.
-pub(super) struct ErrorNoopLogger;
-
-impl log::Log for ErrorNoopLogger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, _record: &log::Record) {}
-
-    fn flush(&self) {}
-}
-
 static ERROR_LOGGER_INSTALL: std::sync::Once = std::sync::Once::new();
 
-/// Install the no-op error logger exactly once per test binary. Without a
-/// logger, `log::max_level()` is Off and `log::error!` skips its argument
-/// evaluation, so the preview construction is never executed.
+/// Open the log gate to `Trace` exactly once per test binary, and install no
+/// logger.
+///
+/// Without an open max level, `log::max_level()` is Off and `log::error!` skips
+/// its argument evaluation, so the preview construction this fixture serves is
+/// never executed. The gate is all it needs: records flow to whatever logger the
+/// process holds (under the plain suite, none — a noop by another name), and
+/// installing here would contend for the process's one logger slot.
 pub(super) fn install_error_logger() {
     ERROR_LOGGER_INSTALL.call_once(|| {
-        log::set_boxed_logger(Box::new(ErrorNoopLogger)).ok();
-        log::set_max_level(log::LevelFilter::Error);
+        log::set_max_level(log::LevelFilter::Trace);
     });
 }
 

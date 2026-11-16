@@ -404,7 +404,7 @@ async fn test_mdns_name_uses_exact_name_when_explicit() -> Result<()> {
 async fn reregister_token_is_set_after_build() -> Result<()> {
     let handle = AgentBuilder::new("test-rereg-token")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(0)
         .mesh_key("test".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
@@ -420,7 +420,7 @@ async fn reregister_token_is_set_after_build() -> Result<()> {
 async fn reregister_task_does_not_block_startup() -> Result<()> {
     let handle = AgentBuilder::new("test-rereg-noblock")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(0)
         .mesh_key("test".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
@@ -438,7 +438,7 @@ async fn reregister_task_does_not_block_startup() -> Result<()> {
 async fn shutdown_cancels_reregister_without_panic() -> Result<()> {
     let handle = AgentBuilder::new("test-rereg-cancel")
         .with_transport(crate::test_support::test_transport())
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(0)
         .mesh_key("test".into())
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)

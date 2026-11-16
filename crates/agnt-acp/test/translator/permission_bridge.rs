@@ -129,6 +129,7 @@ async fn test_translator_drain_denies_pending_permission_when_sink_fails() -> Re
     let decision_rx = register_pending(&pending, "perm-never-answered");
     bus.narration()
         .publish(agnt_runtime::bus::NarrationEvent::InferenceChunk {
+            inference: agnt_kernel::InferenceId::mint(),
             delta: "dropped".to_string(),
             aggregated: "dropped".to_string(),
         })

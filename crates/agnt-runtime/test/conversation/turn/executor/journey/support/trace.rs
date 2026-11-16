@@ -5,29 +5,18 @@ use crate::conversation::turn::executor::*;
 // Trace-logging fixture
 // ---------------------------------------------------------------------------
 
-/// A no-op `log::Log` used to enable trace logging in tests so the
-/// `log_enabled!` gate in `HookChain::on_outcome` actually runs the
-/// preview construction (the code under test).
-struct TraceNoopLogger;
-
-impl log::Log for TraceNoopLogger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, _record: &log::Record) {}
-
-    fn flush(&self) {}
-}
-
 static TRACE_LOGGER_INSTALL: std::sync::Once = std::sync::Once::new();
 
-/// Install the no-op trace logger exactly once per test binary. Without a
-/// logger, `log::max_level()` is Off and `log_enabled!` skips the preview
-/// construction in `on_outcome`, so the byte-slice defect is latent.
+/// Open the log gate to `Trace` exactly once per test binary, and install no
+/// logger.
+///
+/// Without an open max level, `log::max_level()` is Off and `log_enabled!` skips
+/// the preview construction in `on_outcome`, so the byte-slice defect stays
+/// latent. The gate is all this fixture needs: records flow to whatever logger
+/// the process holds (under the plain suite, none — a noop by another name), and
+/// installing here would contend for the process's one logger slot.
 pub(crate) fn install_trace_logger() {
     TRACE_LOGGER_INSTALL.call_once(|| {
-        log::set_boxed_logger(Box::new(TraceNoopLogger)).ok();
         log::set_max_level(log::LevelFilter::Trace);
     });
 }

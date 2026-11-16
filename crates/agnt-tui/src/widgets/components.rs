@@ -24,7 +24,9 @@ pub(crate) fn lane_marker_style(kind: LaneKind, theme: &Theme) -> Style {
         LaneKind::User => fg(theme.user_accent),
         LaneKind::Tool => fg(theme.accent),
         LaneKind::Compaction | LaneKind::Assistant => fg(theme.muted),
-        LaneKind::System | LaneKind::Banner => fg(theme.notice),
+        LaneKind::System => fg(theme.notice),
+        // The banner keeps the system accent its content already paints.
+        LaneKind::Banner => fg(theme.banner),
     };
     style.add_modifier(Modifier::DIM)
 }

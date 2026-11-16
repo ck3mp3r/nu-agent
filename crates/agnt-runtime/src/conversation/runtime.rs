@@ -11,7 +11,7 @@ use crate::session::SessionInfo;
 use crate::tools::closure::EngineInterfaceLike;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_kernel::bus::{LifecycleEvent, OneshotTx};
-use agnt_kernel::{SessionId, SessionLifecycle, SessionRecord};
+use agnt_kernel::{CompactionRecord, SessionId, SessionLifecycle, SessionRecord};
 
 use super::managers::{MultiAgentManager, PersonaManager, ProviderManager, ToolManager};
 use super::turn::TurnEnd;
@@ -752,16 +752,25 @@ where
             return Ok(());
         };
 
-        // A compaction reads the model, so it is a use: a switch before it is
-        // paid here, and the compactor's wire and planning spec follow.
-        self.ensure_active_model()
-            .await
-            .map_err(|e| e.to_string())?;
+        // A compaction reads the model, and it is the second consumer of the
+        // shared slot: the turn executor owns the build. So the sweep takes the
+        // yielding form and never waits on a build. A slot a switch left stale,
+        // or one another consumer is building, yields: the request is published
+        // as the row it is — asked for, not started — no sweep begins, and the
+        // loop's compaction slot stays free for the next attempt.
+        let Some(model) = self.dyn_model.try_built() else {
+            let _ =
+                self.bus
+                    .stream()
+                    .publish(SessionRecord::Compaction(CompactionRecord::Requested {
+                        source,
+                    }));
+            return Ok(());
+        };
 
         // Run compaction against the rig-memory store of the session: the splice
         // `compact()` makes IS what the next run loads. `run_compaction` emits
         // `Started`/`SummaryChunk`/`Completed`/`Failed` (via `compact()`).
-        let model = self.dyn_model.model();
         let path = crate::hook::chain::CompactionPath::new(
             self.session.inner_memory(),
             &self.compaction,

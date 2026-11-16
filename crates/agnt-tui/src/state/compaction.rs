@@ -32,7 +32,34 @@ impl CompactionState {
         source: &str,
         aggregated: &str,
     ) -> bool {
-        self.summary_chunk_impl(store, scroll, source, aggregated)
+        let trimmed = aggregated.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        // Ensure compaction block is started (idempotent)
+        self.start_block(store, source);
+
+        // Track streaming start position
+        if store.summary_stream_start.is_none() {
+            store.summary_stream_start = Some(store.len());
+        }
+
+        // Remove previous rendering of this streaming message
+        if let Some(start) = store.summary_stream_start {
+            store.truncate(start);
+        }
+
+        // Store raw markdown — projected at render time with canvas width
+        scroll.scroll_transcript_to_bottom();
+        store.push_entry(TranscriptEntry::Message(MessageEntry {
+            role: agnt_render::transcript::ir::MessageRole::Assistant,
+            markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
+        }));
+        true
     }
 
     /// Fold a `CompactionCompleted` event: finalize the summary block.
@@ -43,7 +70,34 @@ impl CompactionState {
         source: &str,
         summary_body: &str,
     ) -> bool {
-        self.completed_impl(store, status, source, summary_body)
+        self.ensure_block(source);
+        self.ensure_task(store, source, ItemStatus::Done);
+        self.finish_block(store, source, CompactionStatus::Done);
+        let body = if summary_body.trim().is_empty() {
+            "(empty summary)".to_string()
+        } else {
+            summary_body.to_string()
+        };
+
+        // Clear streaming state before final render pass
+        if let Some(start) = store.summary_stream_start {
+            store.truncate(start);
+        }
+
+        if !body.trim().is_empty() {
+            store.push_entry(TranscriptEntry::Message(MessageEntry {
+                role: agnt_render::transcript::ir::MessageRole::Assistant,
+                markdown: crate::markdown::unwrap_single_fenced_block(&body),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
+            }));
+        }
+        store.summary_stream_start = None;
+        status.message.clear();
+        // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
+        status.tokens.latest_total_tokens = None;
+        true
     }
 
     /// Fold a `CompactionFailed` event: close the block and report the failure.
@@ -54,7 +108,14 @@ impl CompactionState {
         source: &str,
         message: &str,
     ) -> bool {
-        self.failed_impl(store, status, source, message)
+        self.start_block(store, source);
+        self.finish_block(store, source, CompactionStatus::Failed);
+        store.push_entry(TranscriptEntry::Notice(NoticeEntry {
+            kind: NoticeKind::System,
+            text: format!("Compaction failed deterministically: {message}"),
+        }));
+        status.message.clear();
+        true
     }
 
     /// Fold an `Uncompacted` record: close the block and say the newest
@@ -160,97 +221,6 @@ impl CompactionState {
         self.blocks
             .iter()
             .any(|item| item.status == CompactionStatus::InProgress)
-    }
-
-    fn summary_chunk_impl(
-        &mut self,
-        store: &mut TranscriptStore,
-        scroll: &mut ScrollState,
-        source: &str,
-        text: &str,
-    ) -> bool {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return false;
-        }
-
-        // Ensure compaction block is started (idempotent)
-        self.start_block(store, source);
-
-        // Track streaming start position
-        if store.summary_stream_start.is_none() {
-            store.summary_stream_start = Some(store.len());
-        }
-
-        // Remove previous rendering of this streaming message
-        if let Some(start) = store.summary_stream_start {
-            store.truncate(start);
-        }
-
-        // Store raw markdown — projected at render time with canvas width
-        scroll.scroll_transcript_to_bottom();
-        store.push_entry(TranscriptEntry::Message(MessageEntry {
-            role: agnt_render::transcript::ir::MessageRole::Assistant,
-            markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
-            timestamp_millis: None,
-            model: None,
-            agent: None,
-        }));
-        true
-    }
-
-    fn completed_impl(
-        &mut self,
-        store: &mut TranscriptStore,
-        status: &mut StatusState,
-        source: &str,
-        summary_body: &str,
-    ) -> bool {
-        self.ensure_block(source);
-        self.ensure_task(store, source, ItemStatus::Done);
-        self.finish_block(store, source, CompactionStatus::Done);
-        let body = if summary_body.trim().is_empty() {
-            "(empty summary)".to_string()
-        } else {
-            summary_body.to_string()
-        };
-
-        // Clear streaming state before final render pass
-        if let Some(start) = store.summary_stream_start {
-            store.truncate(start);
-        }
-
-        if !body.trim().is_empty() {
-            store.push_entry(TranscriptEntry::Message(MessageEntry {
-                role: agnt_render::transcript::ir::MessageRole::Assistant,
-                markdown: crate::markdown::unwrap_single_fenced_block(&body),
-                timestamp_millis: None,
-                model: None,
-                agent: None,
-            }));
-        }
-        store.summary_stream_start = None;
-        status.message.clear();
-        // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
-        status.tokens.latest_total_tokens = None;
-        true
-    }
-
-    fn failed_impl(
-        &mut self,
-        store: &mut TranscriptStore,
-        status: &mut StatusState,
-        source: &str,
-        message: &str,
-    ) -> bool {
-        self.start_block(store, source);
-        self.finish_block(store, source, CompactionStatus::Failed);
-        store.push_entry(TranscriptEntry::Notice(NoticeEntry {
-            kind: NoticeKind::System,
-            text: format!("Compaction failed deterministically: {message}"),
-        }));
-        status.message.clear();
-        true
     }
 }
 

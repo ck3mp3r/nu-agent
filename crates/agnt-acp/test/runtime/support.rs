@@ -64,15 +64,13 @@ pub(super) fn make_params(
 /// The application paths of a runtime test rooted at `config_path`'s dir.
 pub(super) fn test_paths(config_path: &Path) -> agnt_runtime::config::Paths {
     let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-    let logs = dir.join("logs");
     agnt_runtime::config::Paths {
         config_path: config_path.to_path_buf(),
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),
         copilot_token_dir: dir.join("github_copilot"),
         store_path: dir.join("sessions.db"),
-        log_dir: logs.clone(),
-        log_path: logs.join("agent.log"),
+        log_dir: dir.join("logs"),
         audit_log_path: dir.join("tool_audit.log"),
         secrets_path: dir.join("secrets.json"),
         models_cache_path: dir.join("models.json"),

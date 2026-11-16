@@ -8,6 +8,7 @@ use crate::state::{AppState, PickerRenderKind, TranscriptRole};
 use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
 use agnt_render::transcript::ir::{MessageRole, NoticeKind, ToolName};
 use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::bus::LifecycleEvent;
 use agnt_runtime::protocol::events::{
     InferenceRecord, NarrationEvent, SessionRecord, ToolCall, Usage,
 };
@@ -125,6 +126,11 @@ impl RuntimeCoordinator {
     /// Fold one narration event, exactly as the render loop does.
     pub(crate) fn fold_narration(&mut self, event: &NarrationEvent) -> bool {
         self.reduce_render_input(RenderInput::Narration(event))
+    }
+
+    /// Fold one step of the turn spine, exactly as the render loop does.
+    pub(crate) fn fold_lifecycle(&mut self, event: &LifecycleEvent) -> bool {
+        self.reduce_render_input(RenderInput::Lifecycle(event))
     }
 }
 

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
 use agnt_a2a::{
-    AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
+    AgentCard, Peer, PeerCache, PeerDiscovery, mdns_name_for_switch, rebuild_card_for_switch,
     skill_from_persona,
 };
 use agnt_runtime::bus::OneshotTx;
@@ -43,7 +43,7 @@ struct TuiAgentSwitchHook {
     card_handle: Option<Arc<RwLock<AgentCard>>>,
     cache: Option<Arc<PeerCache>>,
     self_port: Option<u16>,
-    discovery: Option<Arc<Mutex<PeerDiscoveryImpl>>>,
+    discovery: Option<Arc<Mutex<PeerDiscovery>>>,
     mesh_key: Option<String>,
 }
 
@@ -91,7 +91,7 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
 ///
 /// The interactive loop reads prompts from the TUI input pane.
 pub async fn run_tui_mode<T>(
-    runtime_impl: T,
+    runtime: T,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
@@ -114,24 +114,24 @@ where
     // runs and spawn the agent-class hook runner once for this process.
     let agent_lifecycle = AgentLifecycle::start_configured(
         "tui",
-        runtime_impl.startup_plugin_config(),
-        runtime_impl
+        runtime.startup_plugin_config(),
+        runtime
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
-        runtime_impl.paths().config_dir(),
-        runtime_impl.hook_context(),
+        runtime.paths().config_dir(),
+        runtime.hook_context(),
     )
     .await;
 
     run_with_agent_lifecycle(agent_lifecycle, "completed", || {
-        run_tui_mode_inner(runtime_impl, prompt, context, ui_policy, hydration, options)
+        run_tui_mode_inner(runtime, prompt, context, ui_policy, hydration, options)
     })
     .await
 }
 
 /// The TUI body, without the process-wide agent lifecycle.
 async fn run_tui_mode_inner<T>(
-    mut runtime_impl: T,
+    mut runtime: T,
     _prompt: Option<String>,
     _context: Option<String>,
     _ui_policy: UiPolicy,
@@ -155,7 +155,7 @@ where
     // and the main thread (via the orchestrator's permission poll loop).
     let pending: Arc<Mutex<HashMap<String, OneshotTx<PermissionDecision>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    runtime_impl = runtime_impl.with_decision_source(Some(Arc::clone(&pending)));
+    runtime = runtime.with_decision_source(Some(Arc::clone(&pending)));
 
     let mut terminal_lifecycle =
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
@@ -171,7 +171,7 @@ where
     // selections over this channel; the receiving task saves them fire-and-forget.
     let (theme_persist_tx, mut theme_persist_rx) = tokio::sync::mpsc::channel::<String>(8);
     tui_ui.set_theme_persist_tx(theme_persist_tx);
-    let theme_path = runtime_impl.paths().theme_path.clone();
+    let theme_path = runtime.paths().theme_path.clone();
     tokio::spawn(async move {
         while let Some(name) = theme_persist_rx.recv().await {
             // Normalize to the canonical kebab-case form so the preference file
@@ -189,21 +189,22 @@ where
         }
     });
     let active_model_identity =
-        format_active_model_identity(runtime_impl.provider_name(), runtime_impl.model());
+        format_active_model_identity(runtime.provider_name(), runtime.model());
     tui_ui.set_active_model_identity(active_model_identity.clone());
+    tui_ui.set_instance_log_path(agnt_runtime::logging::LogStore::instance_path());
     let model_picker_catalog = model_picker_catalog_from_cached_startup_plugin_config(
-        runtime_impl.startup_plugin_config(),
+        runtime.startup_plugin_config(),
         active_model_identity.as_str(),
     );
     tui_ui.set_picker_options(ActivePicker::Model, model_picker_catalog);
-    let agent_picker_catalog = build_agent_picker_catalog(runtime_impl.available_agent_summaries());
+    let agent_picker_catalog = build_agent_picker_catalog(runtime.available_agent_summaries());
     tui_ui.set_picker_options(ActivePicker::Agent, agent_picker_catalog);
     // Populate session picker from session store
     {
-        let cwd = runtime_impl
+        let cwd = runtime
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new("."));
-        let sessions = runtime_impl.list_sessions(cwd).await;
+        let sessions = runtime.list_sessions(cwd).await;
         match sessions {
             Ok(sessions) => {
                 let options: Vec<agnt_tui::state::PickerOption> = sessions
@@ -217,17 +218,17 @@ where
             }
         }
     }
-    let cycle_names: Vec<String> = runtime_impl
+    let cycle_names: Vec<String> = runtime
         .available_agent_summaries()
         .iter()
         .map(|s| s.name.clone())
         .collect();
     tui_ui.set_agent_cycle_names(cycle_names);
-    if let Some(identity) = runtime_impl.agent_identity() {
+    if let Some(identity) = runtime.agent_identity() {
         tui_ui.set_active_agent_identity(identity);
     }
-    tui_ui.set_active_persona_icon(RuntimeAccess::agent_icon(&runtime_impl).map(|s| s.to_string()));
-    let caller_cwd = runtime_impl.mcp_caller_cwd().map(|p| p.to_path_buf());
+    tui_ui.set_active_persona_icon(RuntimeAccess::agent_icon(&runtime).map(|s| s.to_string()));
+    let caller_cwd = runtime.mcp_caller_cwd().map(|p| p.to_path_buf());
     tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
     match caller_cwd {
         Some(cwd) => {
@@ -236,17 +237,17 @@ where
         }
         None => tui_ui.mark_skills_discovery_failed(),
     }
-    tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection().to_vec());
-    tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
+    tui_ui.set_mcp_lifecycle_projection(runtime.mcp_lifecycle_projection().to_vec());
+    tui_ui.set_llm_visible_mcp_tool_count(runtime.llm_visible_mcp_tool_count());
     // The per-server count and name events are published before the render loop
     // subscribes to the UI-state channel, so they are dropped. Push them here
     // instead, after the projection: `set_mcp_servers` retains counts and names
     // only for servers the projection lists.
-    for (server_name, names) in runtime_impl.llm_visible_mcp_tool_names_by_server() {
+    for (server_name, names) in runtime.llm_visible_mcp_tool_names_by_server() {
         tui_ui.set_mcp_visible_tool_count_by_server_name(&server_name, names.len());
         tui_ui.set_mcp_visible_tool_names_by_server_name(&server_name, names);
     }
-    tui_ui.set_context_window_max_tokens(runtime_impl.max_context_tokens());
+    tui_ui.set_context_window_max_tokens(runtime.max_context_tokens());
 
     tui_ui.push_startup_logo();
 
@@ -265,7 +266,7 @@ where
     // carrying the task ID. A background task reads these and transitions the task.
     if let Some(store) = &options.a2a.task_store {
         let store = Arc::clone(store);
-        let bus = runtime_impl.bus_handle();
+        let bus = runtime.bus_handle();
         tokio::spawn(async move {
             let mut turn_rx = bus.lifecycle().subscribe();
             loop {
@@ -291,18 +292,18 @@ where
 
     // Start the user hook runner before the loop so the first prompt's events
     // are observed. Zero hooks spawns nothing.
-    let hook_bus = runtime_impl.bus_handle();
+    let hook_bus = runtime.bus_handle();
     let _hook_handles = spawn_configured_hooks_with_nu(
-        runtime_impl.startup_plugin_config(),
+        runtime.startup_plugin_config(),
         agnt_runtime::hooks::HookSources {
             stream: hook_bus.stream(),
             lifecycle: hook_bus.lifecycle(),
         },
-        runtime_impl
+        runtime
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
-        runtime_impl.paths().config_dir(),
-        runtime_impl.hook_context(),
+        runtime.paths().config_dir(),
+        runtime.hook_context(),
     );
 
     terminal_lifecycle
@@ -319,27 +320,27 @@ where
             hydration.last_total_tokens,
         );
         let config = LoopConfig::default()
-            .with_bus(runtime_impl.bus_handle())
+            .with_bus(runtime.bus_handle())
             .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_external_task_rx(external_task_rx)
             .with_external_completion_rx(external_completion_rx)
             .with_external_task_store(external_task_store.clone())
-            .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
+            .with_event_sink(tui_ui.make_render_loop_spawner(runtime.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
-        run(runtime_impl, config).await.map_err(Error::from)
+        run(runtime, config).await.map_err(Error::from)
     } else {
         let config = LoopConfig::default()
-            .with_bus(runtime_impl.bus_handle())
+            .with_bus(runtime.bus_handle())
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_external_task_rx(external_task_rx)
             .with_external_completion_rx(external_completion_rx)
             .with_external_task_store(external_task_store.clone())
-            .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
+            .with_event_sink(tui_ui.make_render_loop_spawner(runtime.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
-        run(runtime_impl, config).await.map_err(Error::from)
+        run(runtime, config).await.map_err(Error::from)
     };
 
     let _ = terminal_lifecycle.restore();
@@ -354,7 +355,7 @@ fn lock_card(card_handle: &Arc<RwLock<AgentCard>>) -> RwLockWriteGuard<'_, Agent
 }
 
 /// The discovery backend, recovered if a caller panicked mid-restart.
-fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscovery>>) -> MutexGuard<'_, PeerDiscovery> {
     discovery.lock().unwrap_or_else(|e| e.into_inner())
 }
 

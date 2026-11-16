@@ -15,6 +15,9 @@ mod cancel;
 #[path = "reducer/event_matrix.rs"]
 mod event_matrix;
 
+#[path = "reducer/input_matrix.rs"]
+mod input_matrix;
+
 #[path = "reducer/mode.rs"]
 mod mode;
 
@@ -23,6 +26,9 @@ mod phase;
 
 #[path = "reducer/scroll.rs"]
 mod scroll;
+
+#[path = "reducer/spine_release.rs"]
+mod spine_release;
 
 #[path = "reducer/support.rs"]
 mod support;
@@ -39,8 +45,8 @@ use support::*;
 
 use crate::interaction::input::{Key, UiInput};
 use crate::test_support::{
-    entry_text, inference_chunk, inference_completed, inference_started, system_message,
-    tool_completed, tool_started, turn_completed,
+    entry_text, fold_turn_completed, inference_chunk, inference_completed, inference_started,
+    system_message, tool_completed, tool_started, turn_completed,
 };
 use crate::{
     interaction::reducer::{

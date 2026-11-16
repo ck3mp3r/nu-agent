@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentHandle;
-use crate::discovery::PeerDiscoveryImpl;
+use crate::discovery::PeerDiscovery;
 use crate::discovery::mdns_discovery::MdnsPeerDiscovery;
 use crate::*;
 
@@ -33,7 +33,7 @@ pub struct AgentBuilder {
     port: u16,
     mesh_key: String,
     card: Option<AgentCard>,
-    discovery_impl: Option<PeerDiscoveryImpl>,
+    discovery: Option<PeerDiscovery>,
     blocking_timeout: Duration,
     transport: Option<reqwest::Client>,
 }
@@ -49,7 +49,7 @@ impl AgentBuilder {
             port: 0,
             mesh_key: String::new(),
             card: None,
-            discovery_impl: None,
+            discovery: None,
             blocking_timeout: DEFAULT_BLOCKING_TIMEOUT,
             transport: None,
         }
@@ -112,12 +112,12 @@ impl AgentBuilder {
         self
     }
 
-    /// Inject a custom `PeerDiscoveryImpl`. Defaults to `Mdns` when not set.
+    /// Inject a custom `PeerDiscovery`. Defaults to `Mdns` when not set.
     ///
-    /// Use `PeerDiscoveryImpl::Noop` to run without mDNS (e.g. behind a load
+    /// Use `PeerDiscovery::Noop` to run without mDNS (e.g. behind a load
     /// balancer, in CI, or in tests).
-    pub fn discovery(mut self, impl_: PeerDiscoveryImpl) -> Self {
-        self.discovery_impl = Some(impl_);
+    pub fn discovery(mut self, discovery: PeerDiscovery) -> Self {
+        self.discovery = Some(discovery);
         self
     }
 
@@ -205,8 +205,8 @@ impl AgentBuilder {
         let client = A2aClient::new(transport.clone());
         let runtime_handle = tokio::runtime::Handle::current();
 
-        let mut discovery = self.discovery_impl.take().unwrap_or_else(|| {
-            PeerDiscoveryImpl::Mdns(Box::new(MdnsPeerDiscovery::new(
+        let mut discovery = self.discovery.take().unwrap_or_else(|| {
+            PeerDiscovery::Mdns(Box::new(MdnsPeerDiscovery::new(
                 client.clone(),
                 runtime_handle,
             )))
@@ -358,7 +358,7 @@ fn read_card(handle: &Arc<RwLock<AgentCard>>) -> RwLockReadGuard<'_, AgentCard> 
 }
 
 /// The discovery backend, recovered if a caller panicked mid-restart.
-fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscovery>>) -> MutexGuard<'_, PeerDiscovery> {
     discovery.lock().unwrap_or_else(|e| e.into_inner())
 }
 

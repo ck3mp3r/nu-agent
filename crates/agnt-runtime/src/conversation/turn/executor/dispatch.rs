@@ -327,11 +327,15 @@ where
         // Emit the tail delta on the narration and record concerns
         if !turn_result.deltas_emitted {
             let full_text = turn_result.text.clone();
+            // The tail delta belongs to the call that produced this text — the
+            // call the hook streamed last — so both lanes name that call.
+            let inference = turn_result.last_inference;
             let _ = self
                 .tool_infra
                 .bus
                 .narration()
                 .publish(NarrationEvent::InferenceChunk {
+                    inference,
                     delta: full_text.clone(),
                     aggregated: full_text.clone(),
                 });
@@ -339,7 +343,8 @@ where
                 .tool_infra
                 .bus
                 .stream()
-                .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+                .publish_text(SessionRecord::Inference(InferenceRecord::Chunk {
+                    inference,
                     delta: full_text.clone(),
                     aggregated: full_text,
                 }));

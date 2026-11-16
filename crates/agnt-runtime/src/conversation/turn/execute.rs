@@ -9,7 +9,7 @@ use futures::StreamExt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use agnt_kernel::StopCause;
+use agnt_kernel::{InferenceId, StopCause};
 
 use crate::bus::Bus;
 use crate::config::defaults;
@@ -60,6 +60,9 @@ pub struct TurnResult {
     /// (e.g. doom-loop stop). `None` for bus-cancel and normal completion.
     pub cancel_reason: Option<String>,
     pub stop_cause: Option<StopCause>,
+    /// The completion call the hook streamed last, minted when that call began.
+    /// The tail delta a call that streamed none owes is published under it.
+    pub last_inference: InferenceId,
     /// Last sub-call's total_tokens from the hook.
     /// This is the per-sub-call value representing actual context window usage,
     /// NOT the aggregated total across all sub-calls in this turn.
@@ -245,6 +248,9 @@ where
     // Clone the Arc BEFORE hook moves into config so we can read history after a
     // ProviderError (when rig does not provide chat_history in TurnError::messages).
     let last_known_history_arc = hook.last_known_history();
+    // The cell naming the call now streaming, read after the turn so the tail
+    // delta a call that streamed none owes carries that call's id.
+    let inference_cell = hook.current_inference();
     // Clone the tool-log Arc for the same reason: the hook moves into the agent
     // builder, and a stop drops the in-flight batch from rig's history, so the
     // records are the only trace of those calls after the turn.
@@ -371,6 +377,7 @@ where
         cancelled: response.cancelled,
         cancel_reason: response.cancel_reason,
         stop_cause: response.stop_cause,
+        last_inference: inference_cell.streaming(),
         last_total_tokens: response.last_total_tokens,
         last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
         pre_turn_message_count: response.pre_turn_message_count,

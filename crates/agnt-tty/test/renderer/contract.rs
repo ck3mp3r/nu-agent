@@ -3,7 +3,7 @@
 //! The trait-substitutability test lives here. The stderr renderer's behavior
 //! tests live in the `stderr` sub-file and its subfiles.
 
-#[path = "contract/stderr.rs"]
+#[path = "contract/stderr/mod.rs"]
 mod stderr;
 
 use std::sync::{Arc, Mutex};
@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use crate::renderer::{RenderInput, UiRenderer};
 use agnt_kernel::bus::NarrationEvent;
 use agnt_kernel::{
-    InferenceRecord, NoticeKind, PermissionRecord, SessionRecord, ToolCall, ToolOutcome,
-    ToolRecord, ToolStatus, TurnRecord, Usage,
+    InferenceId, InferenceRecord, NoticeKind, PermissionRecord, SessionRecord, ToolCall,
+    ToolOutcome, ToolRecord, ToolStatus, TurnRecord, Usage,
 };
 
 use crate::policy::UiPolicy;
@@ -40,7 +40,9 @@ impl FakeRenderer {
 impl UiRenderer for FakeRenderer {
     fn draw(&mut self, input: RenderInput<'_>) {
         let label = match input {
-            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started)) => "llm_start",
+            RenderInput::Record(SessionRecord::Inference(InferenceRecord::Started { .. })) => {
+                "llm_start"
+            }
             RenderInput::Record(SessionRecord::Inference(InferenceRecord::Completed {
                 ..
             })) => "llm_end",
@@ -113,7 +115,12 @@ fn narrate<R: UiRenderer>(renderer: &mut R, event: NarrationEvent) {
 }
 
 fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
-    draw(renderer, SessionRecord::Inference(InferenceRecord::Started));
+    draw(
+        renderer,
+        SessionRecord::Inference(InferenceRecord::Started {
+            inference: InferenceId::mint(),
+        }),
+    );
     draw(
         renderer,
         SessionRecord::Inference(InferenceRecord::Completed {

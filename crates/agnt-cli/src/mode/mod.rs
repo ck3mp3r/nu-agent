@@ -21,12 +21,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agnt_a2a::{
-    A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache, PeerDiscoveryImpl,
+    A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache, PeerDiscovery,
 };
 use agnt_runtime::bus::{AgentEvent, AgentTx};
 use agnt_runtime::config::{PluginConfig, ResolvedHook};
 use agnt_runtime::hooks::{
-    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
+    HOOK_DRAIN_TIMEOUT, HOOK_EXIT_PAUSE, HookAgentContext, HookProcess, HookSources, NuProcess,
     spawn_agent_hook_runner, spawn_hook_runner,
 };
 use agnt_runtime::orchestrator::external::{ExternalCompletion, ExternalTask, ExternalTaskStore};
@@ -82,7 +82,7 @@ pub struct A2aContext {
     /// The port the A2A server is listening on.
     pub self_port: Option<u16>,
     /// Handle to the discovery implementation, for re-registering mDNS on agent switch.
-    pub discovery: Option<Arc<std::sync::Mutex<PeerDiscoveryImpl>>>,
+    pub discovery: Option<Arc<std::sync::Mutex<PeerDiscovery>>>,
     /// The mesh key for mDNS discovery isolation.
     pub mesh_key: Option<String>,
 }
@@ -204,14 +204,11 @@ pub fn spawn_configured_hooks_with_nu(
 /// id. Attaches that session, creating it when it does not exist yet. Logs a
 /// warning when the attach fails; the turn still runs against the current
 /// session.
-pub async fn attach_a2a_context_session<R: SessionPersistence>(
-    runtime_impl: &mut R,
-    context_id: &str,
-) {
-    let prefix = agnt_runtime::session::prefix::dir_prefix(runtime_impl.cwd());
+pub async fn attach_a2a_context_session<R: SessionPersistence>(runtime: &mut R, context_id: &str) {
+    let prefix = agnt_runtime::session::prefix::dir_prefix(runtime.cwd());
     let key = agnt_runtime::orchestrator::external::external_session_key(&prefix, context_id);
     log::info!("A2A context {context_id} -> session {key}");
-    if let Err(e) = runtime_impl.attach_session(&key).await {
+    if let Err(e) = runtime.attach_session(&key).await {
         log::warn!("Failed to attach A2A context session '{key}': {e}");
     }
 }
@@ -367,14 +364,15 @@ impl AgentLifecycle {
     /// Close the agent channel and wait for the spawned runners to finish.
     ///
     /// Returns the number of spawned runners, not the number that completed:
-    /// a runner still busy when its wait expires is abandoned. The wait is
-    /// [`HOOK_DRAIN_TIMEOUT`] per runner, applied sequentially, so N runners
-    /// can delay exit by up to N times that value.
+    /// a runner still busy when its wait expires is abandoned. The wait is one
+    /// deadline shared by every runner, so N runners never delay exit past
+    /// [`HOOK_DRAIN_TIMEOUT`].
     pub async fn drain(self) -> usize {
         let drained = self.handles.len();
         drop(self.tx);
+        let deadline = tokio::time::Instant::now() + HOOK_DRAIN_TIMEOUT;
         for handle in self.handles {
-            let _ = tokio::time::timeout(HOOK_DRAIN_TIMEOUT, handle).await;
+            let _ = tokio::time::timeout_at(deadline, handle).await;
         }
         drained
     }

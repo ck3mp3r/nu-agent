@@ -118,7 +118,9 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     assert!(driver.state().status.message.status_line().is_empty());
 
     // -- Exec
-    driver.coordinator_mut().fold_record(&turn_completed(0));
+    driver
+        .coordinator_mut()
+        .fold_lifecycle(&spine_turn_completed());
 
     // -- Check
     assert!(driver.state().status.message.status_line().is_empty());
@@ -137,7 +139,8 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     assert!(status_lines.join("\n").contains("(busy)"));
 
     // -- Exec
-    busy.coordinator_mut().fold_record(&turn_completed(0));
+    busy.coordinator_mut()
+        .fold_lifecycle(&spine_turn_completed());
 
     // -- Check: the status area reports idle; the input line is not polluted.
     let status_lines =

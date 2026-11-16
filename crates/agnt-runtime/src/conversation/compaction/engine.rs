@@ -86,7 +86,11 @@ pub(super) async fn stream_text(
                         }) => {
                             aggregated.push_str(&text);
                             if chunks == Chunks::Publish {
-                                let _ = wires.stream.publish(SessionRecord::Compaction(
+                                // The summary's deltas ride the text lane: they
+                                // are per-delta text, not a discrete event, and a
+                                // long summary must never displace an event
+                                // record from the event ring.
+                                let _ = wires.stream.publish_text(SessionRecord::Compaction(
                                     CompactionRecord::SummaryChunk {
                                         source,
                                         delta: text.clone(),

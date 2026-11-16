@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use agnt_runtime::bus::{Bus, ControlCommand};
+use agnt_runtime::bus::{Bus, ControlCommand, LifecycleEvent};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::events::{NarrationEvent, SessionRecord};
 use ratatui::Terminal;
@@ -51,8 +51,14 @@ pub(crate) enum DriveEvent {
     /// Boxed because a record is much larger than `TerminalEvent`; clippy's
     /// `large_enum_variant` requires the indirection.
     Record(Box<SessionRecord>),
+    /// Published on the bus stream's text lane, like a streaming producer does.
+    ///
+    /// Boxed for the same reason as `Record`.
+    TextRecord(Box<SessionRecord>),
     /// Published on the bus narration channel, like a production stage does.
     Narration(Box<NarrationEvent>),
+    /// Published on the bus turn spine, like the turn executor does.
+    Lifecycle(Box<LifecycleEvent>),
     /// Published on the bus control channel, like a production stage does.
     ///
     /// Boxed for the same reason as `Record`: the enum stays small.
@@ -89,6 +95,10 @@ impl RenderLoopDriver {
     /// guarantee its tick fires and the frame is flushed before the terminal
     /// channel closes.
     const FRAME_BUDGET: Duration = Duration::from_millis(500);
+
+    /// Yields a burst gets to fold every lane that holds a record. Each wake
+    /// folds at least one record, so a handful covers a burst of a few.
+    const BURST_SETTLE_YIELDS: usize = 16;
 
     // region: Constructors
 
@@ -229,20 +239,30 @@ impl RenderLoopDriver {
     /// the loop by closing the terminal channel. Coordinator state and the
     /// `TestBackend` buffer are observable afterwards.
     pub(crate) async fn advance(&mut self, events: &[DriveEvent]) -> Result<()> {
-        self.run_loop_once(events, None).await
+        self.run_loop_once(events, None, false).await
     }
 
     /// Like [`advance`](Self::advance), but awaits the loop's render-timer tick
     /// with a bounded budget so a frame lands in the `TestBackend` buffer
     /// before the loop exits.
     pub(crate) async fn advance_with_frame(&mut self, events: &[DriveEvent]) -> Result<()> {
-        self.run_loop_once(events, Some(Self::FRAME_BUDGET)).await
+        self.run_loop_once(events, Some(Self::FRAME_BUDGET), false)
+            .await
+    }
+
+    /// Publishes the whole script before yielding once, then lets the loop
+    /// settle: it wakes with several lanes ready at once, so the loop's own
+    /// fold order — never the driver's send order — decides how the records
+    /// fold.
+    pub(crate) async fn advance_burst(&mut self, events: &[DriveEvent]) -> Result<()> {
+        self.run_loop_once(events, None, true).await
     }
 
     async fn run_loop_once(
         &mut self,
         events: &[DriveEvent],
         settle: Option<Duration>,
+        burst: bool,
     ) -> Result<()> {
         let (event_tx, mut event_rx) = mpsc::channel::<OrchestratorEvent>(256);
         let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalEvent>(events.len().max(1));
@@ -286,8 +306,14 @@ impl RenderLoopDriver {
             let delivered = match event {
                 DriveEvent::Key(key) => terminal_tx.send(key.clone()).await.is_ok(),
                 DriveEvent::Record(record) => self.bus.stream().publish((**record).clone()).is_ok(),
+                DriveEvent::TextRecord(record) => {
+                    self.bus.stream().publish_text((**record).clone()).is_ok()
+                }
                 DriveEvent::Narration(event) => {
                     self.bus.narration().publish((**event).clone()).is_ok()
+                }
+                DriveEvent::Lifecycle(event) => {
+                    self.bus.lifecycle().publish((**event).clone()).is_ok()
                 }
                 DriveEvent::Control(command) => {
                     self.bus.control().publish((**command).clone()).is_ok()
@@ -299,8 +325,19 @@ impl RenderLoopDriver {
                 break;
             }
             // Yield so the loop processes this event before the next scripted
-            // send (deterministic on the current-thread test runtime).
-            tokio::task::yield_now().await;
+            // send (deterministic on the current-thread test runtime). A burst
+            // publishes the whole script first, so this yield goes away.
+            if !burst {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        if burst {
+            // Every scripted event is already published, so the loop wakes with
+            // several lanes ready at once and folds them over the yields below.
+            for _ in 0..Self::BURST_SETTLE_YIELDS {
+                tokio::task::yield_now().await;
+            }
         }
 
         if let Some(budget) = settle {

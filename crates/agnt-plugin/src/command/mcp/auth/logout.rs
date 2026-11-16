@@ -3,6 +3,7 @@ use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value
 
 use agnt_runtime::config::vault::Vault;
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 /// Perform the logout logic: clear credentials for `server_name` from `vault`.
@@ -76,15 +77,22 @@ impl SimplePluginCommand for AgentAuthMcpLogout {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let server_name: String = call.req(0)?;
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let server_name: String = call.req(0)?;
 
-        let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
-            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
-        let vault = Vault::auto_detect(&application_paths.secrets_path)
-            .map_err(|e| LabeledError::new(e.to_string()))?;
+            let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
+                .map_err(|e| {
+                LabeledError::new(format!("Failed to resolve application paths: {e}"))
+            })?;
+            let vault = Vault::auto_detect(&application_paths.secrets_path)
+                .map_err(|e| LabeledError::new(e.to_string()))?;
 
-        let msg = perform_logout(&vault, &server_name);
+            let msg = perform_logout(&vault, &server_name);
 
-        Ok(Value::string(msg, call.head))
+            Ok(Value::string(msg, call.head))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

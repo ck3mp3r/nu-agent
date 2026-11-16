@@ -202,7 +202,7 @@ CLI flags override front matter values. Front matter overrides plugin config."
             .named(
                 "log-level",
                 nu_protocol::SyntaxShape::String,
-                "Log level for file-based logging (error|warn|info|debug|trace|off). Writes to $XDG_STATE_HOME/nu-agent/logs/agent.log; `off` keeps the ring, so a quit dump still lands.",
+                "Log level for file-based logging (error|warn|info|debug|trace|off). Writes each instance's own file in $XDG_STATE_HOME/nu-agent/logs/; `off` keeps the ring, so a quit dump still lands.",
                 None,
             )
             .named(

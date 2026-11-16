@@ -6,7 +6,7 @@
 //! every other turn figure folds from the records the stream already carried.
 
 use super::*;
-use agnt_kernel::{SessionRecord, TurnRecord};
+use agnt_kernel::{InferenceRecord, SessionRecord, TurnRecord};
 
 /// The first turn-completed row in `events`, as its fields.
 fn completed_fields(events: &[TurnTestObservation]) -> Option<(Option<String>, u64)> {
@@ -235,6 +235,67 @@ async fn dispatch_cancelled_turn_narrates_one_turn_record() -> Result<()> {
         1,
         "a stopped turn still completes, so it narrates one turn record"
     );
+    Ok(())
+}
+
+/// WHEN a completed turn's text was never streamed delta by delta, THEN the
+/// dispatcher SHALL publish that text as one tail delta on the text lane, and
+/// no chunk SHALL ride the event lane.
+#[tokio::test]
+async fn dispatch_unstreamed_text_publishes_the_tail_delta_on_the_text_lane() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir()?;
+    let mut memory_state = make_memory_state(&temp_dir);
+    let bus = crate::bus::Bus::default();
+    let mut records = bus.stream().subscribe();
+    let mut text = bus.stream().subscribe_text();
+    let mut executor = make_executor(
+        &config,
+        &mut memory_state,
+        super::test_utils::shared_mock_model(),
+        default_tool_infra(bus),
+    );
+
+    // -- Exec
+    executor
+        .dispatch_result(
+            Ok(completed_result_without_streamed_deltas("final answer")),
+            "the prompt".to_string(),
+            nu_protocol::Span::test_data(),
+            Some("test-turn-tail-delta"),
+            std::time::Instant::now(),
+            None,
+        )
+        .await
+        .map_err(|e| format!("a completed turn must not be an error: {e}"))?;
+
+    // -- Check: the whole text rides the text lane as one delta pair
+    let mut published = Vec::new();
+    while let Ok(record) = text.try_recv() {
+        if let SessionRecord::Inference(InferenceRecord::Chunk {
+            delta, aggregated, ..
+        }) = record
+        {
+            published.push((delta, aggregated));
+        }
+    }
+    assert_eq!(
+        published,
+        vec![("final answer".to_string(), "final answer".to_string())],
+        "an unstreamed turn publishes its whole text as one tail delta"
+    );
+
+    // -- Check: the event lane carries no chunk of it
+    while let Ok(record) = records.try_recv() {
+        assert!(
+            !matches!(
+                record,
+                SessionRecord::Inference(InferenceRecord::Chunk { .. })
+            ),
+            "a chunk never rides the event lane"
+        );
+    }
     Ok(())
 }
 

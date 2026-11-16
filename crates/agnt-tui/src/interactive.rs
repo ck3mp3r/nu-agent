@@ -1,16 +1,15 @@
-use std::time::Instant;
-
 use agnt_runtime::bus::{Control, Facts, Lifecycle, Narration, Stream};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
-use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
-use crate::interaction::cancel::CancelController;
 use crate::interaction::input::TerminalEvent;
 use crate::runtime::map_crossterm_event;
-use crate::runtime::render::current_time_millis;
 use crate::runtime::{RuntimeCoordinator, TuiRuntimeRenderer};
 use crate::state::{ActivePicker, PickerOption};
+
+mod render_loop;
+
+pub(crate) use render_loop::run_render_loop;
 
 #[cfg(test)]
 #[path = "../test/interactive.rs"]
@@ -44,6 +43,11 @@ pub(crate) struct RenderLoopChannels<'a> {
 /// unchanged frame emits zero bytes.
 pub(crate) const RENDER_TICK: std::time::Duration =
     std::time::Duration::from_millis(crate::runtime::SPINNER_CADENCE_MS as u64);
+
+/// Most terminal events one pass of the render loop folds. Type-ahead past the
+/// bound waits for the next pass, so the bus lanes always get an arm and never
+/// starve behind a burst of keys.
+pub(crate) const INPUT_BURST_DRAIN_MAX: usize = 32;
 
 impl TuiInteractiveUi {
     pub fn new(renderer: TuiRuntimeRenderer) -> Self {
@@ -81,6 +85,17 @@ impl TuiInteractiveUi {
             .status
             .identity
             .active_persona_icon = icon;
+    }
+
+    /// Show the instance log file this process writes in the Status popup. The
+    /// path is data from the runtime; the popup row composes here.
+    pub fn set_instance_log_path(&mut self, path: Option<std::path::PathBuf>) {
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .set_instance_log_path(path);
     }
 
     pub fn set_mcp_lifecycle_projection(
@@ -275,183 +290,4 @@ pub fn spawn_terminal_input(
             }
         })
         .map_err(|err| format!("failed to spawn terminal input thread: {err}"))
-}
-
-/// Forward any pending picker theme selections to the command layer for
-/// persistence. The TUI never writes the preference file itself.
-async fn drain_theme_persist(
-    coordinator: &mut RuntimeCoordinator,
-    theme_persist_tx: &Option<mpsc::Sender<String>>,
-) {
-    let Some(tx) = theme_persist_tx else {
-        return;
-    };
-    while let Some(name) = coordinator.state.take_next_theme_persist_request() {
-        if tx.send(name).await.is_err() {
-            return;
-        }
-    }
-}
-
-/// Render loop driving `RuntimeCoordinator` from terminal events, bus
-/// channels, and a periodic tick. Owns `&mut RuntimeCoordinator` and calls
-/// `AppState` methods directly.
-pub(crate) async fn run_render_loop<
-    B: ratatui::backend::Backend + crate::runtime::backend::FrameSync,
->(
-    coordinator: &mut RuntimeCoordinator,
-    cancel_controller: &CancelController,
-    event_tx: mpsc::Sender<OrchestratorEvent>,
-    mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
-    live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
-    mut channels: RenderLoopChannels<'_>,
-) {
-    let mut stream_rx = channels.stream.subscribe();
-    let mut narration_rx = channels.narration.subscribe();
-    let mut control_rx = channels.control.subscribe();
-    let mut lifecycle_rx = channels.lifecycle.subscribe();
-    let mut facts_rx = channels.facts.subscribe();
-    let mut render_timer = tokio::time::interval(RENDER_TICK);
-
-    loop {
-        tokio::select! {
-            maybe = terminal_event_rx.recv() => {
-                let Some(event) = maybe else { return; };
-                coordinator.handle_terminal_event(event);
-                if flush_pending(coordinator, &event_tx, cancel_controller, &channels).await {
-                    return;
-                }
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-            record = stream_rx.recv() => {
-                // A lag re-syncs the subscription at the tail: the dropped
-                // records are counted and gone, and nothing needs repair.
-                if let Ok(record) = record {
-                    // Coalesce the burst that queued behind the awaited record:
-                    // one chunk fold per wake instead of one per chunk. A lag
-                    // ends the drain — the buffered records arrive on later
-                    // iterations, and a chunk carries `aggregated`, so a dropped
-                    // older chunk loses no content.
-                    let mut batch = vec![record];
-                    while let Ok(next) = stream_rx.try_recv() {
-                        batch.push(next);
-                    }
-                    // A turn completion (or failure) clears the active prompt.
-                    // Drain any prompts stacked during the turn into
-                    // PromptSubmitted events now, without waiting for the next
-                    // terminal input.
-                    if coordinator.reduce_record_batch(batch)
-                        && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
-                    {
-                        return;
-                    }
-                }
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-            event = narration_rx.recv() => {
-                // Narration is the oldest-droppable tail: the surviving events
-                // keep their receipt order, and a lagged subscription resumes at
-                // the tail.
-                if let Ok(event) = event {
-                    let mut batch = vec![event];
-                    while let Ok(next) = narration_rx.try_recv() {
-                        batch.push(next);
-                    }
-                    if coordinator.reduce_narration_batch(batch)
-                        && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
-                    {
-                        return;
-                    }
-                }
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-            command = control_rx.recv() => {
-                // Control carries commands addressed to whichever owner names
-                // them: the surface folds the ones it owns, and the loop's own
-                // intake never reaches the fold.
-                if let Ok(command) = command
-                    && coordinator.reduce_control(&command)
-                    && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
-                {
-                    return;
-                }
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-            event = lifecycle_rx.recv() => {
-                // The turn spine is the surface's clock over a replay batch: the
-                // first live turn that starts after a switch ends the batch, and
-                // the gate becomes the only card source again. A lag skips whole
-                // spine steps; a skipped step is never guessed at.
-                if let Ok(event) = event
-                    && coordinator.reduce_lifecycle(&event)
-                    && flush_pending(coordinator, &event_tx, cancel_controller, &channels).await
-                {
-                    return;
-                }
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-            fact = facts_rx.recv() => {
-                // A lag skips snapshots, never a state: the subscription
-                // resumes at the tail carrying each field's latest value, so a
-                // lagged receive needs no repair of its own.
-                if let Ok(fact) = fact
-                    && coordinator.reduce_fact_record(fact)
-                {
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
-                }
-            }
-            _ = channels.branch_rx.recv() => {
-                coordinator.refresh_repo_branch();
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-            _ = render_timer.tick() => {
-                // The picker catalogs arrive on the surface's own reply hands,
-                // outside the bus, so the tick is what drains them.
-                coordinator.poll_picker_replies();
-                if coordinator.has_pending_status_message()
-                    && coordinator.expire_status_message_if_due(Instant::now())
-                {
-                    coordinator.mark_render_needed();
-                }
-                if coordinator.spinner_cadence_advanced(current_time_millis()) {
-                    coordinator.mark_render_needed();
-                }
-                let _ = coordinator.render_if_needed(live_terminal);
-            }
-        }
-    }
-}
-
-/// Drain the state's outbound effects: the prompts and commands the loop owns,
-/// the theme preference the command layer persists, and the two hands that end
-/// the loop (quit and fatal error).
-///
-/// Returns whether the render loop must stop.
-async fn flush_pending(
-    coordinator: &mut RuntimeCoordinator,
-    event_tx: &mpsc::Sender<OrchestratorEvent>,
-    cancel_controller: &CancelController,
-    channels: &RenderLoopChannels<'_>,
-) -> bool {
-    let pending = coordinator.state.take_pending_events(cancel_controller);
-    for ev in pending {
-        if event_tx.send(ev).await.is_err() {
-            return true;
-        }
-    }
-    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
-    if coordinator.state.quit_requested {
-        let _ = event_tx.send(OrchestratorEvent::Quit).await;
-        return true;
-    }
-    if let Some(msg) = coordinator.fatal_error() {
-        let _ = event_tx
-            .send(OrchestratorEvent::FatalError(LabeledError::new(
-                msg.to_string(),
-            )))
-            .await;
-        return true;
-    }
-    false
 }

@@ -43,9 +43,9 @@ async fn cancel_paths() -> Result<()> {
     assert!(queued.coordinator().take_cancel_requested());
     assert_eq!(queued.state().pending_prompt_count(), 1);
 
-    // -- Exec: the cancelled turn completes.
+    // -- Exec: the cancelled turn's spine step completes.
     queued
-        .advance(&[DriveEvent::Record(Box::new(turn_completed(0)))])
+        .advance(&[DriveEvent::Lifecycle(Box::new(spine_turn_completed()))])
         .await?;
 
     // -- Check: the queued prompt is submitted through the drain path.

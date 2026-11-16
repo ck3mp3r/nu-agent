@@ -25,7 +25,7 @@ async fn test_build_without_transport_fails_before_starting_a_listener()
 
     // -- Exec
     let (error, server) = AgentBuilder::new("no-transport")
-        .discovery(PeerDiscoveryImpl::Noop)
+        .discovery(PeerDiscovery::Noop)
         .port(port)
         .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()

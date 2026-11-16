@@ -315,7 +315,7 @@ fn main() {
         args,
     } = Cli::parse();
 
-    init_logging(&args);
+    init_logging(&args, &command);
 
     let result = match command {
         // Utility subcommands stay on the main thread. Their sync I/O builds a
@@ -338,7 +338,7 @@ fn main() {
 
     // The run is over: append the ring to the log file so the lines a crash or
     // a quit cut short are still on disk.
-    agnt_runtime::logging::flush_ring_to_file();
+    agnt_runtime::logging::LogStore::flush_process_ring();
 
     if let Err(err) = result {
         eprintln!("agent: {err}");
@@ -389,7 +389,28 @@ fn resolve_prompt(positional: Option<String>) -> Option<String> {
     }
 }
 
-fn init_logging(args: &AgentArgs) {
+/// The role this invocation records in its log's header lines.
+///
+/// The default route — TUI, TTY, and single-prompt runs — is `Tui`. The ACP and
+/// A2A servers have their own, and the subcommands that run once and exit are
+/// `Run`.
+fn log_role_for(command: &Option<Command>) -> agnt_runtime::logging::LogRole {
+    use agnt_runtime::logging::LogRole;
+    match command {
+        Some(Command::Acp(_)) => LogRole::Acp,
+        Some(Command::A2a(_)) => LogRole::A2a,
+        Some(
+            Command::Config(_)
+            | Command::Models(_)
+            | Command::Provider(_)
+            | Command::Mcp(_)
+            | Command::Session(_),
+        ) => LogRole::Run,
+        None => LogRole::Tui,
+    }
+}
+
+fn init_logging(args: &AgentArgs, command: &Option<Command>) {
     // The level `--log-level` or `RUST_LOG` selects, floored at warn: the file
     // and the ring always receive warn and above. Per-module `RUST_LOG`
     // directives stay in effect.
@@ -399,13 +420,19 @@ fn init_logging(args: &AgentArgs) {
     };
 
     // The state tree is readable from the environment at process start, so the
-    // log target resolves here once. The grammar cache is installed after
-    // config load instead: its ladder has a `[paths]` level the environment
-    // cannot see.
-    let paths = agnt_runtime::config::Paths::resolve_for_process(None).ok();
-    let writer = agnt_runtime::logging::start_session_log(
-        paths.as_ref().map(|paths| paths.log_path.as_path()),
-    );
+    // instance's log directory resolves here once. The grammar cache is
+    // installed after config load instead: its ladder has a `[paths]` level the
+    // environment cannot see.
+    let store = match agnt_runtime::config::Paths::resolve_for_process(None) {
+        Ok(paths) => agnt_runtime::logging::LogStore::open(paths.log_dir),
+        Err(_) => agnt_runtime::logging::LogStore::fallback(),
+    };
+    // The instance's own file: `agent-{name}-{pid}.log` when the run has a name,
+    // and `agent-{pid}.log` otherwise. The role travels in the file's header
+    // lines, never in its name.
+    let identity =
+        agnt_runtime::logging::LogIdentity::new(log_role_for(command)).with_name(args.name.clone());
+    let writer = store.start(&identity);
 
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
@@ -421,7 +448,7 @@ fn init_logging(args: &AgentArgs) {
     builder.target(env_logger::Target::Pipe(Box::new(writer)));
     builder.format_timestamp_millis();
     builder.init();
-    agnt_runtime::logging::set_process_sink_silenced(silenced);
+    agnt_runtime::logging::LogStore::set_process_silenced(silenced);
 }
 
 /// The global level `RUST_LOG` selects, defaulting to `info`.

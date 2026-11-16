@@ -20,6 +20,9 @@ mod session_picker;
 #[path = "stage/session_switch.rs"]
 mod session_switch;
 
+#[path = "stage/spine_release.rs"]
+mod spine_release;
+
 #[path = "stage/support.rs"]
 mod support;
 

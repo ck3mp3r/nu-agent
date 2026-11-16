@@ -19,6 +19,7 @@ pub mod agent_hook;
 pub mod anchor_meter;
 pub mod chain;
 pub mod circuit_breaker_guard;
+pub(crate) mod current_inference;
 pub mod doom_loop;
 pub mod history_snapshot;
 pub mod output_repetition;
@@ -32,6 +33,7 @@ pub use adapter::{ClosureToolAdapter, adapt_closures};
 pub use agent_hook::{DoomLoopState, HookState, StopLedger, StoreLatch};
 pub use anchor_meter::AnchorMeter;
 pub use chain::HookChain;
+pub(crate) use current_inference::CurrentInference;
 pub use permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,
     PolicyPermissionResolver,

@@ -249,20 +249,20 @@ fn coordinator_handle_terminal_event_esc_normal_mode_leaves_render_clean() -> Re
     Ok(())
 }
 
-/// A no-op wheel in insert mode still marks the frame dirty: the insert→normal
-/// transition changes the mode indicator and pane focus.
+/// A no-op wheel in insert mode leaves the frame clean: the notch reports the
+/// scroll change alone, so the composer keeps its mode and its focus.
 #[test]
-fn coordinator_handle_terminal_event_noop_wheel_insert_mode_marks_render() -> Result<()> {
+fn coordinator_handle_terminal_event_noop_wheel_insert_mode_leaves_render_clean() -> Result<()> {
     // -- Setup & Fixtures
     let mut coordinator = wheel_noop_coordinator(InputMode::Insert);
 
     // -- Exec
     coordinator.handle_terminal_event(wheel_up());
 
-    // -- Check: the scroll did not move, the mode did.
-    assert_eq!(coordinator.state.input.mode, InputMode::Normal);
+    // -- Check: neither the scroll nor the mode moved.
+    assert!(!coordinator.render_needed());
+    assert_eq!(coordinator.state.input.mode, InputMode::Insert);
     assert_eq!(coordinator.state.scroll.cursor_visual_row, 0);
-    assert!(coordinator.render_needed());
     Ok(())
 }
 

@@ -95,7 +95,7 @@ mod compaction_test;
 mod turn_test;
 
 #[cfg(test)]
-#[path = "../../test/state/hydration.rs"]
+#[path = "../../test/state/hydration/mod.rs"]
 mod hydration_test;
 
 #[cfg(test)]

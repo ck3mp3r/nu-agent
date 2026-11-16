@@ -10,7 +10,9 @@ use rig::agent::{
 use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 
-use agnt_kernel::{CompactionRecord, InferenceRecord, NoticeKind, SessionRecord, StopCause};
+use agnt_kernel::{
+    CompactionRecord, InferenceId, InferenceRecord, NoticeKind, SessionRecord, StopCause,
+};
 
 use crate::hook::output_repetition::{
     OUTPUT_REPETITION_NOTICE, OutputRepetitionDetector, RepetitionDetection,
@@ -71,6 +73,11 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         let spec = self.model.spec().cloned();
         let pending = self.pending_summary.clone();
         let model = self.model.clone();
+        // The call's identity, minted before the request goes out: every delta
+        // of this call publishes it, on both lanes, and the surfaces key the
+        // streamed block on it.
+        let inference = InferenceId::mint();
+        self.inference.stamp(inference);
 
         async move {
             if cancelled {
@@ -86,7 +93,9 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             // (nobody is listening), which is not a turn error.
             let _ = bus
                 .stream()
-                .publish(SessionRecord::Inference(InferenceRecord::Started));
+                .publish(SessionRecord::Inference(InferenceRecord::Started {
+                    inference,
+                }));
 
             // Compaction decision: patch this request in place when the session's
             // current conversation is over the threshold, and clear or summarize
@@ -120,6 +129,9 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
         let stop = self.stop.clone();
+        // Every delta of one call names that call: the id the call stamped when
+        // it began, read here before the delta's future runs.
+        let inference = self.inference.streaming();
         // The summary this turn asked for streams from the patched call itself:
         // its deltas are the compaction's, not an inference the transcript shows.
         let summary_source = self.pending_summary.awaiting_reply();
@@ -169,7 +181,10 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             // block instead of an inference. Every other call streams its own.
             match summary_source {
                 Some(source) => {
-                    let _ = bus.stream().publish(SessionRecord::Compaction(
+                    // The summary's deltas are per-delta text like an
+                    // inference's: they ride the text lane, so a long summary
+                    // never displaces an event record.
+                    let _ = bus.stream().publish_text(SessionRecord::Compaction(
                         CompactionRecord::SummaryChunk {
                             source,
                             delta: delta.clone(),
@@ -186,17 +201,20 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 }
                 None => {
                     let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
+                        inference,
                         delta: delta.clone(),
                         aggregated: aggregated.clone(),
                     });
                     // Same deltas on the record stream: the hub event dies when
-                    // the surfaces fold records instead.
-                    let _ =
-                        bus.stream()
-                            .publish(SessionRecord::Inference(InferenceRecord::Chunk {
-                                delta,
-                                aggregated,
-                            }));
+                    // the surfaces fold records instead. They ride the text lane,
+                    // so a long response never displaces a tool event.
+                    let _ = bus.stream().publish_text(SessionRecord::Inference(
+                        InferenceRecord::Chunk {
+                            inference,
+                            delta,
+                            aggregated,
+                        },
+                    ));
                 }
             }
             ObservationAction::continue_run()

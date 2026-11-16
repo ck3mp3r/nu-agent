@@ -129,7 +129,7 @@ Integration test modules:
 - `agnt-a2a` — `test/server/`, `test/agent/`, `test/client/a2a_client.rs`, `test/client/functions.rs`, `test/client/shared.rs`, `test/client/transport_headers.rs`, `test/discovery/test.rs`, `test/tools/test.rs`
 - `agnt-acp` — `test/runtime/`
 - `agnt-cli` — `test/integration/`, plus the `acp_e2e` `[[test]]` target (`test/acp_e2e.rs`) gated by `required-features = ["integration"]` — the workspace's first true test target
-- `agnt-runtime` — `test/conversation/turn/test.rs`, `test/conversation/turn/executor/`, `test/conversation/providers_integration.rs`, `test/conversation/providers_credentials.rs`, `test/conversation/runtime_build_integration/test.rs`, `test/config/cmd_refs_process.rs`, `test/config/loader_integration.rs`, `test/session/rig_blobs.rs`, `test/tools/handler/nu_cancel.rs`, `test/tools/mcp/oauth_callback.rs`
+- `agnt-runtime` — `test/conversation/turn/test.rs`, `test/conversation/turn/executor/`, `test/conversation/providers_integration.rs`, `test/conversation/providers_credentials.rs`, `test/conversation/runtime_build_integration/test.rs`, `test/config/cmd_refs_process.rs`, `test/config/loader_integration.rs`, `test/hooks/runner_session/lag_telemetry_gated.rs`, `test/session/rig_blobs.rs`, `test/tools/handler/nu_cancel.rs`, `test/tools/mcp/oauth_callback.rs`
 - `agnt-plugin` — `test/command/session/clear.rs`, `test/command/session/inspect.rs`, `test/command/session/list.rs`
 
 All other test modules are unit tests. `agnt-tui` and `agnt-tty` have no integration test modules.
@@ -194,6 +194,14 @@ If the task says "write tests", write tests. If the task says "manual verificati
 verify manually. Do not invent additional work, scripts, or tooling that is not
 in the task's INCLUDED scope. If you discover work that needs doing but is not
 in the scope, flag it for the orchestrator — do not do it inline.
+
+A task spec never grants edits to the baseline ledgers
+(`crates/agnt-testkit/test/architecture/`) or to the architecture checkers and
+the walk they measure (`crates/agnt-testkit/src/architecture/`), unless the spec
+names the task as a sanctioned drain or a re-measure. "Make the suite green" is
+not such a grant: recording a new baseline row to silence a checker is the
+growth the review gate exists to catch. If a task needs a baseline change and
+the spec does not grant it, stop and report it.
 
 ### Dependency Injection for Testability
 
@@ -545,7 +553,7 @@ The `PluginConfig` struct holds top-level blocks: `models`, `providers`, `compac
 
 Every `Option` field on the runtime `Config` struct must have at least one real input path (env var, config.toml key, or CLI flag). **Hardcoding `None` in a parsing function is a bug.** This applies to `ModelRoleConfig` fields too — every optional field must be settable via the role config record, a model-level override, an env var, or a CLI flag. Intentional exceptions — fields resolved separately at runtime and not user-configurable:
 - `preamble` — resolved via `resolve_preamble()` from provider/model preamble config
-- `provider_impl` — resolved from the `provider` key inside the provider config block
+- `provider_kind` — resolved from the `provider` key inside the provider config block
 
 ### Adding a new config field
 
@@ -598,6 +606,7 @@ A review is the judgement the author cannot supply about their own work. It is n
 - ✅ **Diff against the spec**, including every change the report does not mention — the unreported change is the highest-yield finding.
 - ✅ **Load-bearing claims checked by inspection**: a lockfile delta, a moved import, a count that must be exact. Use a targeted command only where reading cannot answer — `git diff -- <path>`, `cargo metadata --no-deps`, `cargo tree -p <crate> --edges normal`.
 - ✅ **The laws**: no `#[allow(...)]`, no `unwrap()`/`expect()`, no new dependency edge, no test-only code in production, symbol truth from the AST tools.
+- ✅ **The baseline ledgers only shrink**: diff `crates/agnt-testkit/test/architecture/baselines_arch6/` and the `BASELINES` table in `crates/agnt-testkit/test/architecture/support.rs` against the branch point, keyed by row with its line number stripped — lines drift, rows do not. A row the branch point did not record is growth, and growth needs a recorded ruling: a re-measure commit that touches the walk under `crates/agnt-testkit/src/architecture/`, or an explicit decision in the task. The monotonicity gate catches net growth only, so a row swapped in where the same source file drained another is the reviewer's to catch.
 - ✅ **Test adequacy**: does a test fail *without* this change? If the behaviour is unpinned, say so — that is a finding.
 - ❌ Re-running the full suite the developer already ran on the same tree. It answers a question the diff already answers, and it makes the reviewer certify behaviour, which a green suite cannot do.
 - ❌ Restating the developer's report as the verdict. A review that agrees with the report has verified nothing.

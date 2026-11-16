@@ -37,7 +37,7 @@ pub mod token_estimate;
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "../../../test/conversation/turn/unit.rs"]
+#[path = "../../../test/conversation/turn/unit/mod.rs"]
 mod unit_test;
 
 #[cfg(all(test, feature = "integration"))]

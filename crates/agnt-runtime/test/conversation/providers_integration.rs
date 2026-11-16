@@ -27,7 +27,7 @@ async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "gpt-4".to_string(),
         api_key: None,
@@ -81,7 +81,7 @@ async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> 
     let config = Config {
         a2a_port: None,
         provider: "copilot".to_string(),
-        provider_impl: None,
+        provider_kind: None,
         catalog: None,
         model: "gpt-4".to_string(),
         api_key: None,

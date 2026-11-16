@@ -39,6 +39,7 @@ fn test_translator_assistant_message_produces_agent_message_chunk() -> Result<()
     // -- Setup & Fixtures: the two fields differ, so the assertion pins which
     // one ACP forwards — the raw delta, not the accumulated text.
     let event = NarrationEvent::InferenceChunk {
+        inference: agnt_kernel::InferenceId::mint(),
         delta: "hello".to_string(),
         aggregated: "hello world".to_string(),
     };
@@ -322,7 +323,9 @@ fn test_translator_warning_empty_message_produces_agent_message_chunk() -> Resul
 #[test]
 fn test_translator_inference_started_produces_none() -> Result<()> {
     // -- Setup & Fixtures
-    let event = SessionRecord::Inference(InferenceRecord::Started);
+    let event = SessionRecord::Inference(InferenceRecord::Started {
+        inference: agnt_kernel::InferenceId::mint(),
+    });
 
     // -- Exec & Check
     assert!(

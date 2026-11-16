@@ -12,7 +12,8 @@ Everything here lives in `agnt-kernel/src/bus/`. The kernel holds the channels a
 
 | Channel | Payload | Mechanism | Capacity | Drop policy | Ordering | Late subscriber |
 |---|---|---|---|---|---|---|
-| `stream` | `SessionRecord` | bounded broadcast | 1024 | loses the oldest under lag | publication order while the consumer keeps up; re-syncs at the tail | sees nothing already published |
+| `stream` — event lane | `SessionRecord` (discrete) | bounded broadcast | 1024 | loses the oldest under lag | publication order while the consumer keeps up; re-syncs at the tail | sees nothing already published |
+| `stream` — text lane | `SessionRecord` (per-delta) | bounded broadcast | 1024 | loses the oldest under lag | publication order while the consumer keeps up; re-syncs at the tail | sees nothing already published |
 | `cancel` | `CancelEvent` | bounded broadcast | 64 | never dropped | the single request | must subscribe **before** the request |
 | `control` | `ControlCommand` | unbounded fan-out | uncapped | **never dropped** | publication order | must subscribe **before** the publish; control is consumed, not replayed |
 | `lifecycle` | `LifecycleEvent` | unbounded fan-out | uncapped | **never dropped** | publication order | must subscribe **before** the publish |
@@ -25,11 +26,15 @@ Capacities are declared beside their concerns (`stream.rs`, `cancel.rs`, `narrat
 
 ## `stream` — the session record log
 
-`SessionRecord`: inference, tool, permission, compaction, notice, session, turn. The ordered log of what happened in a session.
+`SessionRecord`: inference, tool, permission, compaction, notice, session, turn. The ordered log of what happened in a session, on two lanes.
 
-- **Drop policy:** bounded and lossy. A consumer that stalls past 1024 records receives `Lagged` and re-syncs at the tail.
+- **Event lane** (`publish` / `subscribe`): the discrete records — tool calls, permission steps, notices, compaction, prompts, session and turn boundaries, and an inference's `Started`, `Completed`, and `Stopped`. One of these can never be re-derived, so the lane exists to keep them.
+- **Text lane** (`publish_text` / `subscribe_text`): the per-delta text of an implementation or a compaction summary — `InferenceRecord::Chunk` and `CompactionRecord::SummaryChunk`. One record per streamed token, so a long response is thousands of records in seconds.
+- **Why two lanes:** the drop policy is the same on both, but the cost of a drop is not. A dropped delta costs no content, because every chunk carries `aggregated`: the next chunk carries the whole text so far. A dropped event costs an invocation that never ran. One shared ring let a streaming response displace the tool events behind it; split, a burst of deltas leaves the event ring as free as it was.
 - **Why bounded:** the stream is a delivery surface, not a log. Durable history belongs to the session store.
-- **Consumers** fold whichever record families they need; a record is never a render instruction.
+- **Cross-lane order is the consumer's rule.** Two subscriptions mean one wake can hold an event record and a chunk at once. A consumer that draws the streamed text folds the text lane before any record that can close the block — a chunk folded after a turn completion would push the whole answer as a second entry. The render loop enforces this per wake; inside one turn, fold order is publication order.
+- **The streamed block is keyed on the call, not on arrival order.** Draining the text lane first also folds a chunk ahead of its own inference's `Started`: a render pass can span the started-to-first-chunk window. `InferenceRecord::Started`, `InferenceRecord::Chunk`, and `NarrationEvent::InferenceChunk` therefore carry the same `InferenceId`, and the consumer opens the block on the id the chunk names. A chunk whose id differs from the open block's closes that block and opens its own, so a later call's text never truncates an earlier call's answer; a `Started` whose id matches keeps the block its chunk already opened.
+- **Consumers** fold whichever record families they need; a record is never a render instruction. A consumer that draws the streamed text subscribes to both lanes.
 
 ## `cancel` — the steering signal
 
@@ -64,10 +69,10 @@ A consumer subscribes to the concerns it folds, and nothing else. `control` is s
 
 | consumer | stream | cancel | control | lifecycle | narration | facts |
 |---|---|---|---|---|---|---|
-| TUI (`agnt-tui/src/interactive.rs`) | yes | no — the `CancelController` `AtomicBool` latch; the CLI publishes `CancelEvent` | yes (`SharedUiAction`) | no — `RenderInput::Lifecycle` is an ignore arm; only the TTY loop feeds it | yes | yes |
+| TUI (`agnt-tui/src/interactive.rs`) | both lanes | no — the `CancelController` `AtomicBool` latch; the CLI publishes `CancelEvent` | yes (`SharedUiAction`) | no — `RenderInput::Lifecycle` is an ignore arm; only the TTY loop feeds it | yes | yes |
 | TTY (`agnt-cli/src/mode/stderr.rs`) | yes | publishes — `CancelEvent::Requested` | no | yes | yes | no |
-| ACP (`agnt-acp/src/session.rs`) | yes | publishes — `request_cancel`, behind the session's `AtomicBool` latch | yes (`CompactionRequested`) | publishes — `ModelSwitched` | yes | no |
-| hooks runner (`agnt-runtime/src/hooks/runner.rs`) | yes | no | no | yes | no | no |
+| ACP (`agnt-acp/src/session/prompt.rs`) | yes | publishes — `request_cancel`, behind the session's `AtomicBool` latch | yes (`CompactionRequested`) | publishes — `ModelSwitched` | yes | no |
+| hooks runner (`agnt-runtime/src/hooks/runner.rs`) | event lane only — the text lane is what keeps a chunk burst off it | no | no | yes | no | no |
 
 The TUI's four hands are the render loop's channels: `stream`, `narration`, `control`, `facts`. Cancellation never reaches it as a record — a keypress sets the `CancelController` latch and pushes `OrchestratorEvent::CancelRequested`, and the CLI publishes `CancelEvent::Requested` on `cancel` itself. The fold's `RenderInput::Lifecycle` arm exists so the surface has one intake vocabulary; it folds to `false`, and its only producer is the TTY loop.
 

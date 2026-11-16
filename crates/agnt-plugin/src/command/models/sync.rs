@@ -2,6 +2,7 @@ use agnt_runtime::config::ModelsCache;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 
 pub struct AgentModelsSync;
@@ -42,15 +43,22 @@ impl SimplePluginCommand for AgentModelsSync {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
-            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
-        let cache = ModelsCache::fetch_and_store(&paths.models_cache_path)
-            .map_err(|e| LabeledError::new(format!("Failed to sync models: {e}")))?;
-        let provider_count = cache.providers.len();
-        let model_count = cache.list_models(None).len();
-        Ok(Value::string(
-            format!("Synced {provider_count} providers, {model_count} models"),
-            call.head,
-        ))
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let paths =
+                agnt_runtime::config::Paths::resolve_from_config_or_default().map_err(|e| {
+                    LabeledError::new(format!("Failed to resolve application paths: {e}"))
+                })?;
+            let cache = ModelsCache::fetch_and_store(&paths.models_cache_path)
+                .map_err(|e| LabeledError::new(format!("Failed to sync models: {e}")))?;
+            let provider_count = cache.providers.len();
+            let model_count = cache.list_models(None).len();
+            Ok(Value::string(
+                format!("Synced {provider_count} providers, {model_count} models"),
+                call.head,
+            ))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

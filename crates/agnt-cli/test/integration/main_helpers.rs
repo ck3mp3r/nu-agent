@@ -46,19 +46,64 @@ async fn test_integration_main_init_logging_targets_state_dir() -> Result<()> {
     let cli = support::parse_cli(&["hello"])?;
 
     // -- Exec
-    init_logging(&cli.args);
+    init_logging(&cli.args, &cli.command);
 
-    // -- Check
+    // -- Check: the instance's own file, named by the pid `LogIdentity::new`
+    // read inside init_logging.
     let relative = format!(
-        "{}/logs/agent.log",
-        agnt_runtime::utils::paths::APP_DIR_NAME
+        "{}/logs/agent-{}.log",
+        agnt_runtime::utils::paths::APP_DIR_NAME,
+        std::process::id()
     );
     let log_path = env.state_home_path(&relative);
     assert!(
         log_path.exists(),
-        "init_logging must open the state-dir log file at {}",
+        "init_logging must open the instance's log file at {}",
         log_path.display()
     );
+    Ok(())
+}
+
+#[test]
+fn test_integration_main_log_role_for_maps_every_command() -> Result<()> {
+    use agnt_runtime::logging::LogRole;
+
+    // -- Setup & Fixtures
+    let cases = [
+        (None, LogRole::Tui),
+        (Some(Command::Acp(AcpArgs { agent: None })), LogRole::Acp),
+        (
+            Some(Command::A2a(A2aArgs {
+                port: 0,
+                mesh_key: None,
+                ui: UiArgs { theme: None },
+            })),
+            LogRole::A2a,
+        ),
+        (
+            Some(Command::Config(ConfigCommand::Init(ConfigInitArgs {
+                force: false,
+            }))),
+            LogRole::Run,
+        ),
+        (Some(Command::Models(ModelsCommand::Sync)), LogRole::Run),
+        (
+            Some(Command::Provider(ProviderCommand::Auth(
+                ProviderAuthCommand::Status,
+            ))),
+            LogRole::Run,
+        ),
+        (
+            Some(Command::Mcp(McpCommand::Auth(McpAuthCommand::Status))),
+            LogRole::Run,
+        ),
+        (Some(Command::Session(SessionCommand::List)), LogRole::Run),
+    ];
+
+    // -- Exec & Check
+    for (command, expected) in cases {
+        assert_eq!(log_role_for(&command), expected, "{command:?}");
+    }
     Ok(())
 }
 

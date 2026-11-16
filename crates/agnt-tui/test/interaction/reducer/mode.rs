@@ -48,7 +48,7 @@ fn mode_transition_table() {
 }
 
 #[test]
-fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
+fn test_wheel_in_insert_mode_keeps_insert_mode() -> Result<()> {
     // -- Setup & Fixtures: idle insert mode with pending input text.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("draft".to_string()),
@@ -78,9 +78,10 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
         None,
     );
 
-    // -- Check: normal mode, transcript focus, input text preserved.
-    assert_eq!(state.input.mode, InputMode::Normal);
-    assert_eq!(state.scroll.pane_focus, PaneFocus::Transcript);
+    // -- Check: insert mode and the composer keep their ground; the notch is a
+    // transient gesture and the draft survives it.
+    assert_eq!(state.input.mode, InputMode::Insert);
+    assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
     assert_eq!(state.input.pending_submit_text.as_deref(), Some("draft"));
     assert_eq!(state.scroll.cursor_visual_row, 3);
 
@@ -103,8 +104,8 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
         None,
     );
 
-    // -- Check: the busy phase also activates normal mode.
-    assert_eq!(busy.input.mode, InputMode::Normal);
-    assert_eq!(busy.scroll.pane_focus, PaneFocus::Transcript);
+    // -- Check: the busy phase keeps insert mode and the composer too.
+    assert_eq!(busy.input.mode, InputMode::Insert);
+    assert_eq!(busy.scroll.pane_focus, PaneFocus::Input);
     Ok(())
 }

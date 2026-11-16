@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::session::prefix::dir_prefix;
@@ -131,8 +132,13 @@ impl SimplePluginCommand for AgentSessionList {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let store_type = plugin.resolve_store_type(call)?;
-        let rig = crate::plugin::rig_store_config(store_type)?;
-        crate::block_on!(plugin, self.run_inner(engine, call, &rig))
+        install_logging(None, environment_level(), call.head)?;
+        let result = (|| -> Result<Value, LabeledError> {
+            let store_type = plugin.resolve_store_type(call)?;
+            let rig = crate::plugin::rig_store_config(store_type)?;
+            crate::block_on!(plugin, self.run_inner(engine, call, &rig))
+        })();
+        agnt_runtime::logging::LogStore::flush_process_ring();
+        result
     }
 }

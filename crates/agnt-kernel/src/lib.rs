@@ -15,10 +15,10 @@ pub use builtin::{BuiltinKind, ToolKind};
 pub use vocabulary::ToolName;
 
 pub use records::{
-    AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, NoticeRecord,
-    PermissionDecision, PermissionRecord, PromptRecord, PromptStamps, RequestId, SessionId,
-    SessionLifecycle, SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind, ToolOutcome,
-    ToolRecord, ToolSource, ToolStatus, TurnOutcome, TurnRecord, Usage,
+    AutoResolution, CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind,
+    NoticeRecord, PermissionDecision, PermissionRecord, PromptRecord, PromptStamps, RequestId,
+    SessionId, SessionLifecycle, SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind,
+    ToolOutcome, ToolRecord, ToolSource, ToolStatus, TurnOutcome, TurnRecord, Usage,
 };
 
 // endregion: --- Modules

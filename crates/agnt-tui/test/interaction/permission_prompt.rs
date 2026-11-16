@@ -116,11 +116,12 @@ fn test_interaction_permission_prompt_locked_other_char_noop() -> Result<()> {
     Ok(())
 }
 
-/// With no card up the lock still drops Char keys: a normal-mode `i` must not
-/// enter insert mode while the turn holds the lock.
+/// With no card up the lock drops insert mode's editing keys but keeps the
+/// normal keymap reachable: a normal-mode `i` enters insert mode while the turn
+/// holds the lock, and the composer still refuses the character.
 #[test]
-fn test_interaction_permission_prompt_locked_no_card_drops_char() -> Result<()> {
-    // -- Setup & Fixtures: locked, no card.
+fn test_interaction_permission_prompt_locked_no_card_keeps_normal_keymap() -> Result<()> {
+    // -- Setup & Fixtures: locked, no card, normal mode.
     let mut locked = AppState {
         input: InputState::default().with_mode(InputMode::Normal),
         input_locked: true,
@@ -134,8 +135,28 @@ fn test_interaction_permission_prompt_locked_no_card_drops_char() -> Result<()> 
         None,
     );
 
-    // -- Check: the key was dropped.
-    assert_eq!(locked.input.mode, InputMode::Normal);
+    // -- Check: the normal keymap folds under the lock.
+    assert_eq!(locked.input.mode, InputMode::Insert);
+
+    // -- Setup & Fixtures: the same lock over an insert-mode composer.
+    let mut composing = AppState {
+        input: InputState::default().with_mode(InputMode::Insert),
+        input_locked: true,
+        ..Default::default()
+    };
+
+    // -- Exec
+    let changed = dispatch_terminal_event(
+        &mut composing,
+        &TerminalEvent::Key(TerminalKey::Char('a')),
+        None,
+    );
+
+    // -- Check: the gate drops the character at the reducer boundary, so the
+    // keymap state does not move — the coordinator owns the textarea.
+    assert!(!changed);
+    assert_eq!(composing.input.mode, InputMode::Insert);
+    assert!(!composing.input.insert_exit_pending_j());
 
     // -- Setup & Fixtures: the same key with the lock released.
     let mut unlocked = AppState {

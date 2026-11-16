@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use agnt_runtime::bus::{FactRecord, McpServerUsability};
@@ -99,6 +100,7 @@ pub struct IdentityState {
     pub(crate) active_model_identity: String,
     pub(crate) active_persona_icon: Option<String>,
     pub(crate) agent_cycle_names: Vec<String>,
+    pub(crate) instance_log_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -155,6 +157,10 @@ impl IdentityState {
 
     fn set_active_persona_icon(&mut self, icon: Option<String>) {
         self.active_persona_icon = icon;
+    }
+
+    pub(crate) fn set_instance_log_path(&mut self, path: Option<PathBuf>) {
+        self.instance_log_path = path;
     }
 }
 
