@@ -20,7 +20,8 @@ async fn test_integration_a2a_run_a2a_starts_server_and_shuts_down() -> Result<(
     }
     let env = support::TestEnv::new().await?;
     env.write_default_config()?;
-    let (args, a2a) = support::parse_a2a_args(&["a2a", "--port", "0"])?;
+    let (args, a2a) =
+        support::parse_a2a_args(&["a2a", "--port", "0", "--agent", "planner", "--name", "peer"])?;
 
     // -- Exec
     let err = dispatch::run_a2a(&args, &a2a)

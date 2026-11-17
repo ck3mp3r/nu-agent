@@ -84,27 +84,23 @@ impl PersonaManager for PersonaState {
         agents_dir: &std::path::Path,
         agents_config: &crate::config::AgentsConfig,
     ) -> Result<SwitchAgentResult, String> {
-        use crate::protocol::persona::{
-            FrontMatterParser, FsPersonaResolver, PersonaFileResolver,
-            PulldownCmarkFrontMatterParser, interpret_front_matter,
-        };
+        use crate::protocol::persona::error::PersonaLoadError;
+        use crate::protocol::persona::resolve::load_persona;
 
-        let resolver = FsPersonaResolver::new(
-            cwd.to_path_buf(),
-            agents_dir.to_path_buf(),
-            agents_config.clone(),
-        );
-        let (_path, contents) = resolver
-            .resolve(agent_name)
-            .map_err(|e| format!("agent switch failed: {e}"))?;
+        let parsed =
+            load_persona(agent_name, cwd, agents_dir, agents_config).map_err(|e| match e {
+                PersonaLoadError::Load(inner) => format!("agent switch failed: {inner}"),
+                PersonaLoadError::Parse(inner) => {
+                    format!("agent switch failed: invalid front matter: {inner}")
+                }
+                PersonaLoadError::Interpret(inner) => {
+                    format!("agent switch failed: invalid front matter fields: {inner}")
+                }
+            })?;
 
-        let parser = PulldownCmarkFrontMatterParser;
-        let raw = parser
-            .parse(&contents)
-            .map_err(|e| format!("agent switch failed: invalid front matter: {e}"))?;
-
-        let parsed = interpret_front_matter(raw.front_matter.as_ref(), raw.body)
-            .map_err(|e| format!("agent switch failed: invalid front matter fields: {e}"))?;
+        // Resolve the overlay before the body leaves `parsed`; its failure is
+        // reported after the state mutations below, as it was inline.
+        let overlay = parsed.permissions_overlay();
 
         // Update persona body
         self.agent_persona_body = Some(parsed.body);
@@ -116,15 +112,8 @@ impl PersonaManager for PersonaState {
         self.agent_icon = parsed.icon;
 
         // Convert frontmatter permissions to PermissionsOverlay
-        let permissions_overlay = match parsed.permissions.as_ref() {
-            Some(mapping) => match PermissionsOverlay::parse_from_yaml(mapping) {
-                Ok(overlay) => Some(overlay),
-                Err(e) => {
-                    return Err(format!("agent switch failed: invalid permissions: {e}"));
-                }
-            },
-            None => None,
-        };
+        let permissions_overlay =
+            overlay.map_err(|e| format!("agent switch failed: invalid permissions: {e}"))?;
 
         log::debug!(
             "switch_agent: switched to identity={identity:?}, model={:?}, body_len={}, has_permissions={}",
@@ -146,3 +135,11 @@ impl PersonaManager for PersonaState {
         })
     }
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/conversation/state/persona.rs"]
+mod persona_test;
+
+// endregion: --- Tests

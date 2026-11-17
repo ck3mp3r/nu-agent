@@ -27,7 +27,7 @@ pub struct ParsedPersona {
 }
 
 /// Interprets front matter into typed ParsedPersona struct
-pub fn interpret_front_matter(
+pub(crate) fn interpret_front_matter(
     front_matter: Option<&noyalib::Mapping>,
     body: String,
 ) -> Result<ParsedPersona, FrontMatterError> {
@@ -273,12 +273,12 @@ fn value_type_name(value: &noyalib::Value) -> String {
 }
 
 /// Trait for parsing front matter from markdown content
-pub trait FrontMatterParser {
+pub(crate) trait FrontMatterParser {
     fn parse(&self, input: &str) -> Result<RawParsedPersona, FrontMatterError>;
 }
 
 /// Pulldown-cmark based front matter parser
-pub struct PulldownCmarkFrontMatterParser;
+pub(crate) struct PulldownCmarkFrontMatterParser;
 
 impl FrontMatterParser for PulldownCmarkFrontMatterParser {
     fn parse(&self, input: &str) -> Result<RawParsedPersona, FrontMatterError> {
@@ -347,3 +347,20 @@ impl FrontMatterParser for PulldownCmarkFrontMatterParser {
         Ok(RawParsedPersona { front_matter, body })
     }
 }
+
+// region:    --- Impls
+
+use crate::tools::authz::PermissionsOverlay;
+
+impl ParsedPersona {
+    /// The permissions overlay the front matter declares, or `None` when it
+    /// declares none.
+    pub(crate) fn permissions_overlay(&self) -> Result<Option<PermissionsOverlay>, String> {
+        self.permissions
+            .as_ref()
+            .map(PermissionsOverlay::parse_from_yaml)
+            .transpose()
+    }
+}
+
+// endregion: --- Impls

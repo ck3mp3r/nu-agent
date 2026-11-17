@@ -49,7 +49,6 @@ fn create_minimal_flag_config() -> Config {
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
-        a2a_port: None,
         session_store_type: None,
         pricing: None,
     }

@@ -25,7 +25,6 @@ async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
     seed_cached_session_key(token_dir.path())?;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -79,7 +78,6 @@ async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> 
     seed_cached_session_key(token_dir.path())?;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -328,7 +326,6 @@ async fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         model: "gpt-4".to_string(),
         api_key: Some("fake-token".to_string()),
@@ -347,7 +344,6 @@ fn cached_provider_client_openai_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4".to_string(),
         api_key: Some("sk-fake".to_string()),
@@ -364,7 +360,6 @@ fn cached_provider_client_ollama_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "ollama".to_string(),
         model: "llama3".to_string(),
         api_key: None,
@@ -387,7 +382,6 @@ async fn openai_without_base_url_produces_openai_variant() -> Result<()> {
     use crate::conversation::state::provider::ProviderState;
 
     let config = Config {
-        a2a_port: None,
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
         api_key: Some("sk-fake".to_string()),
@@ -412,7 +406,6 @@ async fn openai_with_base_url_produces_openai_completions_variant() -> Result<()
     use crate::conversation::state::provider::ProviderState;
 
     let config = Config {
-        a2a_port: None,
         provider: "openai".to_string(),
         model: "mistral-7b".to_string(),
         api_key: Some("sk-fake".to_string()),

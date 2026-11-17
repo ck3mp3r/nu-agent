@@ -92,3 +92,35 @@ impl std::error::Error for FrontMatterError {
         }
     }
 }
+
+/// Which leg of the shared persona load failed: the file read, the front-matter
+/// parse, or the front-matter interpretation.
+///
+/// The variant carries the typed error and no message, so each caller composes
+/// its own prefix over the leg it names.
+#[derive(Debug)]
+pub(crate) enum PersonaLoadError {
+    Load(PersonaError),
+    Parse(FrontMatterError),
+    Interpret(FrontMatterError),
+}
+
+impl fmt::Display for PersonaLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PersonaLoadError::Load(error) => write!(f, "{error}"),
+            PersonaLoadError::Parse(error) | PersonaLoadError::Interpret(error) => {
+                write!(f, "{error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PersonaLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PersonaLoadError::Load(error) => Some(error),
+            PersonaLoadError::Parse(error) | PersonaLoadError::Interpret(error) => Some(error),
+        }
+    }
+}

@@ -697,7 +697,7 @@ A model switch rewrites the model record and relists; it passes no title, so the
 title is preserved.
 
 `agent session list` and `agent session inspect` read these records. The plugin
-command shows all six listing fields (`id`, `title`, `model`, `messages`,
+command shows all seven listing fields (`id`, `title`, `model`, `messages`,
 `updated`, `labels`, `listed` — `listed` as JSON text). The CLI's `agent session
 list` table shows five of them (`ID`, `TITLE`, `MODEL`, `MESSAGES`, `UPDATED`):
 `labels` and `listed` are plugin-owned metadata, so the CLI table leaves them
@@ -767,6 +767,9 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Suggestions are non-modal and independent of command palette popup/table/state.
 - Filtering is deterministic and incremental as input grows (`/c`, `/co`, ...).
 - If slash prefix is removed, inline suggestions close cleanly and never fallback to command palette.
+- `Up` and `BackTab` move the suggestion highlight up, and `Down` moves it down.
+- `Tab` and `Enter` both accept the highlighted suggestion and submit it; the accepted command is not echoed into the transcript.
+- `Esc` closes the suggestion list.
 - Supported slash commands:
   - `/compact`
   - `/uncompact`
@@ -1131,8 +1134,7 @@ edit = "deny"
 - `--permissions <record>` — structured permissions overlay for this run
 - `--tool-timeout <duration>` / `-t` — tool execution timeout (default: 30s)
 - `--session <id>` — session ID to resume (auto-creates if missing)
-- `--a2a-port <int>` — A2A agent port. `0` = random, `>0` = fixed; implies A2A mode
-- `--mesh-key <string>` — mesh isolation key; agents only discover peers with the same key (default: SHA-256 of cwd)
+- `--repetition-guard <string>` — enable or disable the repetition guard (`on|off`); unset keeps the configured value (enabled by default)
 - `--verbose` / `-v` — increase UX detail; repeat (`-v`, `-vv`, `-vvv`)
 - `--quiet` / `-q` — suppress non-essential UX progress output
 - `--log-level <string>` — file log level (`error|warn|info|debug|trace`); writes to this instance's file in `{state base}/nu-agent/logs/` (see [Log file](#log-file))
@@ -1183,7 +1185,16 @@ agent mcp auth status
 agent session list [--store <type>]
 agent session clear <id> [--store <type>]
 agent session inspect <id> [--store <type>]
+
+# A2A mesh peer (--agent is required)
+agent a2a --agent <name> [--port <port>] [--mesh-key <key>]
 ```
+
+### A2A serve
+
+`agent a2a` serves this agent on the mesh. A mesh peer must be launched with `--agent <name>`; without it the peer refuses to serve, because its identity, hook envelopes, facts, and agent card all stamp from the persona.
+
+- `--mesh-key <string>` — mesh isolation key; agents only discover peers with the same key (default: SHA-256 of cwd)
 
 ## MCP Authentication Commands
 

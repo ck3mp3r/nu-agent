@@ -38,7 +38,7 @@ use super::config::{
     resolve_store_type_from_clap, resolve_theme_from_clap, resolve_ui_policy_from_clap,
 };
 use super::permissions::resolve_effective_permissions_from_clap;
-use super::persona::resolve_persona_from_clap;
+use super::persona::resolve_peer_persona_from_clap;
 
 // region:    --- Types
 
@@ -112,7 +112,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let has_explicit_name = cli_name.is_some();
 
     let cli_model_provided = args.model.is_some();
-    let persona_resolution = resolve_persona_from_clap(
+    let persona_resolution = resolve_peer_persona_from_clap(
         agent_name,
         cli_name,
         &agents_config,

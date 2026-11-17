@@ -40,7 +40,7 @@ impl AgentsConfig {
     /// Whether a built-in persona is enabled by this config.
     ///
     /// Non-built-in personas are always enabled.
-    pub fn is_builtin_enabled(&self, name: &str) -> bool {
+    pub(crate) fn is_builtin_enabled(&self, name: &str) -> bool {
         use crate::protocol::persona::builtins;
         match name {
             n if n == builtins::BUILTIN_PLANNER_NAME => self.planner_enabled,

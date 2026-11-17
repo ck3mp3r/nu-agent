@@ -60,7 +60,7 @@ pub const ROWS: &[&str] = &[
 /// The impl-member rows: a `pub` member on a type this crate surfaces, with no
 /// consumer outside it.
 pub const MEMBER_ROWS: &[&str] = &[
-    "ARCH-6 agnt-cli/src/mode/mod.rs:335: `start_configured` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/mode/mod.rs:342: `start_configured` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/turn_terminal.rs:76: `from_result` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/turn_terminal.rs:90: `from_lifecycle_row` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/mode/turn_terminal.rs:111: `lifecycle_row` has no consumer outside `agnt-cli`",

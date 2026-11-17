@@ -21,6 +21,6 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
 ];
 
 /// Check if a name is a built-in persona
-pub fn is_builtin_persona(name: &str) -> bool {
+pub(crate) fn is_builtin_persona(name: &str) -> bool {
     BUILTIN_PERSONAS.iter().any(|p| p.name == name)
 }

@@ -41,6 +41,16 @@ pub struct ExternalCompletion {
 pub trait ExternalTaskStore {
     /// Record `task_id` as rejected, with `reason` as the recorded cause.
     fn reject_task(&self, task_id: &str, reason: &str) -> core::result::Result<(), String>;
+
+    /// Whether `task_id` already holds a terminal state in the store.
+    ///
+    /// A cancel reaches the store before its signal reaches the loop, so the
+    /// loop reads this at dispatch: a task the caller already ended must not
+    /// start a turn. The default answers `false` — a store that cannot report
+    /// state lets every queued prompt dispatch as before.
+    fn is_task_terminal(&self, _task_id: &str) -> bool {
+        false
+    }
 }
 
 // endregion: --- Types

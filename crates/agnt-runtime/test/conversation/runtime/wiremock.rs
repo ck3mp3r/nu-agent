@@ -36,7 +36,6 @@ fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Confi
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
-        a2a_port: None,
         session_store_type: None,
         pricing: None,
     }

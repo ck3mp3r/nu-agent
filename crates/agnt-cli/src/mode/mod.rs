@@ -296,6 +296,13 @@ impl ExternalTaskStore for A2aExternalTaskGate {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+
+    fn is_task_terminal(&self, task_id: &str) -> bool {
+        self.0
+            .get_task(task_id)
+            .map(|task| task.status.state.is_terminal())
+            .unwrap_or(false)
+    }
 }
 
 // endregion: --- A2aBridge

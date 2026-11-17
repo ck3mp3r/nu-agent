@@ -5,9 +5,18 @@ use std::io::IsTerminal;
 use agnt_a2a::{
     A2aCompletionEvent, InMemoryTaskStore, IncomingTask, Message, Part, Role, TaskState,
 };
+use agnt_runtime::config::AgentsConfig;
 use agnt_runtime::orchestrator::external::ExternalTaskStore;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// A per-test directory: persona resolution is a filesystem read.
+fn unique_temp_dir(tag: &str) -> Result<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join(format!("agnt-cli-a2a-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
 
 /// An incoming task from a remote agent.
 fn incoming_task(context_id: Option<&str>) -> IncomingTask {
@@ -171,6 +180,52 @@ fn test_dispatch_a2a_gate_rejects_through_the_raw_store() -> Result<()> {
 }
 
 #[test]
+fn test_dispatch_a2a_gate_reports_terminal_store_states() -> Result<()> {
+    // -- Setup & Fixtures
+    let store = Arc::new(InMemoryTaskStore::default());
+    let gate = crate::mode::A2aExternalTaskGate::new(Arc::clone(&store));
+    let mut terminal_ids = Vec::new();
+    for state in [
+        TaskState::Completed,
+        TaskState::Failed,
+        TaskState::Canceled,
+        TaskState::Rejected,
+    ] {
+        let task = store.create_task(None, None, None);
+        // `Canceled` and `Rejected` are reachable from `Submitted` too, so the
+        // `Working` step only matters for the two states that need it.
+        store
+            .update_status(&task.id, TaskState::Working, None)
+            .map_err(|e| format!("{e:?}"))?;
+        store
+            .update_status(&task.id, state.clone(), None)
+            .map_err(|e| format!("{e:?}"))?;
+        terminal_ids.push((task.id, state));
+    }
+    let working = store.create_task(None, None, None);
+    store
+        .update_status(&working.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Exec & Check
+    for (task_id, state) in &terminal_ids {
+        assert!(
+            gate.is_task_terminal(task_id),
+            "the gate must report {state:?} as terminal"
+        );
+    }
+    assert!(
+        !gate.is_task_terminal(&working.id),
+        "the gate must report a working task as live"
+    );
+    assert!(
+        !gate.is_task_terminal("unknown-task"),
+        "the gate must report an id the store does not hold as live"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_dispatch_a2a_peer_tool_definitions_map_registry_one_to_one() -> Result<()> {
     // -- Setup & Fixtures
     let registry = agnt_a2a::a2a_tool_defs();
@@ -195,5 +250,58 @@ fn test_dispatch_a2a_peer_tool_definitions_map_registry_one_to_one() -> Result<(
         );
     }
     assert!(disabled.is_empty());
+    Ok(())
+}
+
+/// A peer's identity, hook envelopes, facts, and agent card all stamp from the
+/// persona, so a peer must name its own. The configured default is an
+/// interactive convenience; it must not satisfy a mesh peer boot.
+#[test]
+fn test_dispatch_a2a_peer_boot_refuses_without_an_explicit_agent() -> Result<()> {
+    // -- Setup & Fixtures
+    // `AgentsConfig::default()` resolves `planner`, so the default persona is
+    // available -- exactly the case that used to stamp an anonymous peer.
+    let dir = unique_temp_dir("peer-no-agent")?;
+    let agents_config = AgentsConfig::default();
+
+    // -- Exec
+    let err = resolve_peer_persona_from_clap(None, None, &agents_config, &dir, &dir)
+        .err()
+        .ok_or("a peer boot without --agent must refuse to serve")?;
+
+    // -- Check
+    assert!(err.to_string().contains("--agent"), "err={err}");
+
+    std::fs::remove_dir_all(&dir)?;
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_a2a_peer_boot_binds_the_explicit_agent_slug() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = unique_temp_dir("peer-explicit-agent")?;
+    std::fs::write(
+        dir.join("reviewer.md"),
+        "---\nname: Reviewer\ndescription: reviews\n---\nReview.",
+    )?;
+    let agents_config = AgentsConfig::default();
+
+    // -- Exec
+    let resolution = resolve_peer_persona_from_clap(
+        Some("reviewer".to_string()),
+        None,
+        &agents_config,
+        &dir,
+        &dir,
+    )?;
+
+    // -- Check
+    assert_eq!(resolution.agent_slug.as_deref(), Some("reviewer"));
+    assert_eq!(
+        resolution.persona.as_ref().and_then(|p| p.name.as_deref()),
+        Some("Reviewer")
+    );
+
+    std::fs::remove_dir_all(&dir)?;
     Ok(())
 }

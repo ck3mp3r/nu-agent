@@ -284,6 +284,7 @@ where
                     quit_pending,
                     slash,
                     ui_request,
+                    external_task_store,
                     ctx,
                 )
                 .await;
@@ -307,6 +308,7 @@ where
                     quit_pending,
                     slash,
                     ui_request,
+                    external_task_store,
                     ctx,
                 )
                 .await;
@@ -374,6 +376,7 @@ where
                             quit_pending,
                             slash,
                             ui_request,
+                            external_task_store,
                             ctx,
                         )
                         .await;

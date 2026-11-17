@@ -1088,9 +1088,9 @@ Environment variables still work as a lowest-priority fallback when `config.toml
 - `AGENT_OUTPUT_BUDGET_RAISE_ENABLED` — opt-in auto-raise of max_tokens on OutputBudget feedback retries (default `false`)
 - `AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER` — multiplier applied to the effective max_tokens for a raised retry (default `2.0`)
 - `AGENT_OUTPUT_BUDGET_RAISE_CAP` — absolute ceiling for the raised max_tokens (default `32768`)
+- `AGENT_REPETITION_GUARD` — enable repetition guard (tool-call + output repetition detection); `true`/`false` (default `true`)
 - `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds (default 120). 0 disables.
 - `AGENT_A2A_ENABLED` — enable A2A (default `false`)
-- `AGENT_A2A_PORT` — A2A port (0 = random, >0 = fixed)
 - `AGENT_SESSION_STORE_TYPE` — `sqlite` or `memory`
 - `{PROVIDER}_API_KEY` — e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (for providers with direct env naming)
 

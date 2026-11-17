@@ -137,6 +137,18 @@ fn test_cli_parses_utility_subcommands() -> Result<()> {
 }
 
 #[test]
+fn test_cli_rejects_the_removed_keep_recent_flag() {
+    // -- Exec
+    let parsed = Cli::try_parse_from(["agent", "--keep-recent", "5"]);
+
+    // -- Check
+    assert!(
+        parsed.is_err(),
+        "--keep-recent has no consumer and must not be accepted"
+    );
+}
+
+#[test]
 fn test_cli_resolve_prompt_prefers_positional() {
     // -- Exec
     let prompt = resolve_prompt(Some("hi".to_string()));

@@ -8,6 +8,8 @@
 
 #[path = "a2a/cancel_before_dispatch.rs"]
 mod cancel_before_dispatch;
+#[path = "a2a/cancel_dispatch_skip.rs"]
+mod cancel_dispatch_skip;
 #[path = "a2a/intake_record.rs"]
 mod intake_record;
 #[path = "a2a/repeat_arrival.rs"]

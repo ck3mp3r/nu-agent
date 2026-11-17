@@ -551,9 +551,6 @@ pub struct Config {
     /// Enable A2A agent-to-agent protocol support (experimental, default: false).
     pub a2a_enabled: Option<bool>,
 
-    /// A2A agent port (CLI-only). Some(0) = random, Some(n>0) = fixed, None = not set.
-    pub a2a_port: Option<u16>,
-
     /// Session store backend type. None = use default (SQLite).
     pub session_store_type: Option<StoreType>,
 

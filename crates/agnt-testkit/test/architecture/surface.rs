@@ -11,10 +11,10 @@
 
 use crate::architecture::{
     Violation, Workspace, arch_6_impl_member_census, arch_6_public_surface_consumer_census,
-    assert_matches_baseline,
 };
 
 use super::support::{self, ARCH_6, ARCH_6_CRATES, ARCH_6_MEMBER_CRATES, Result};
+use super::surface_baseline_diff::{arch_6_baseline_mismatches, render_arch_6_mismatches};
 
 // region:    --- Fixtures
 
@@ -103,19 +103,11 @@ fn test_surface_arch_6_public_surface_consumer_census_pass_on_baseline() -> Resu
         ARCH_6_MEMBER_CRATES.len(),
         "the two halves must record the same crates"
     );
-    for ((krate, item_rows), (member_crate, member_rows)) in
-        ARCH_6_CRATES.iter().zip(ARCH_6_MEMBER_CRATES.iter())
-    {
-        assert_eq!(krate, member_crate, "the two halves must be in crate order");
-        let item_found = crate_rows(&items, krate);
-        let member_found = crate_rows(&members, krate);
-        assert_matches_baseline(ARCH_6, &item_found, item_rows);
-        assert_matches_baseline(ARCH_6, &member_found, member_rows);
-        assert_eq!(
-            item_found.len() + member_found.len(),
-            item_rows.len() + member_rows.len(),
-            "{krate} rows must partition exactly"
-        );
+    // Every half is compared before the driver fails: one drift used to abort the
+    // walk where it stood, so each round trip unmasked exactly one more crate.
+    let mismatches = arch_6_baseline_mismatches(&items, &members);
+    if let Some(report) = render_arch_6_mismatches(&mismatches) {
+        panic!("{report}");
     }
     let recorded_items: usize = ARCH_6_CRATES.iter().map(|(_, rows)| rows.len()).sum();
     let recorded_members: usize = ARCH_6_MEMBER_CRATES
@@ -434,16 +426,6 @@ fn test_surface_arch_6_partition_flags_an_unrecorded_crate() -> Result<()> {
 // endregion: --- Impl-member drivers
 
 // region:    --- Support
-
-/// The violations whose site sits under `krate`'s directory.
-fn crate_rows(found: &[Violation], krate: &str) -> Vec<Violation> {
-    let prefix = format!("{krate}/");
-    found
-        .iter()
-        .filter(|violation| violation.site.starts_with(&prefix))
-        .cloned()
-        .collect()
-}
 
 /// WHEN the walk reports a crate the record does not name, or the record names a
 /// crate twice, THEN the partition SHALL fail.

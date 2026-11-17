@@ -295,10 +295,6 @@ pub struct AgentArgs {
     /// Agent instance identity for multi-agent messaging.
     #[arg(long, global = true)]
     pub name: Option<String>,
-
-    /// Number of recent messages to keep during compaction.
-    #[arg(long, global = true)]
-    pub keep_recent: Option<u32>,
 }
 
 // endregion: --- Types

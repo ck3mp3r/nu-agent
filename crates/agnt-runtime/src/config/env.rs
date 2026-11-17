@@ -65,8 +65,6 @@ impl Config {
         let read_timeout_secs: Option<u64> = parse_env_var(env, "AGENT_READ_TIMEOUT_SECS");
         let a2a_enabled: Option<bool> = parse_env_var(env, "AGENT_A2A_ENABLED");
 
-        let a2a_port: Option<u16> = parse_env_var(env, "AGENT_A2A_PORT");
-
         let session_store_type = session_store_type_from_env(env);
 
         log::debug!(
@@ -102,7 +100,6 @@ impl Config {
             max_tool_calls_per_subturn,
             additional_params: None,
             a2a_enabled,
-            a2a_port,
             session_store_type,
             // The pricing ladder's config outcome is config-file only: no
             // env var sets a price.

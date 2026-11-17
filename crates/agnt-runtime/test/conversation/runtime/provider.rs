@@ -10,7 +10,6 @@ fn provider_dispatch_unsupported_provider_returns_error() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "unsupported-provider".to_string(),
         provider_kind: None,
         catalog: None,
@@ -59,7 +58,6 @@ fn client_cache_key_contains_provider_and_model() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -116,7 +114,6 @@ fn client_cache_key_includes_base_url_when_set() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -173,7 +170,6 @@ fn active_model_identity_returns_provider_slash_model() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -260,7 +256,6 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,

@@ -358,22 +358,42 @@ pub(crate) async fn dispatch_pending_completions<S, U>(
 ///
 /// One turn runs at a time: the queue drains in arrival order, and an entry is
 /// dispatched only when no turn and no blocking request is pending. A cancel
-/// that arrived before the task's turn began is honoured the moment it begins.
-pub(crate) async fn dispatch_queued_external_prompt<S, U>(
+/// that arrived before the task's turn began is honoured the moment it begins,
+/// and an entry whose store row is already terminal is skipped: its caller ended
+/// the task before the dispatch reached it, so no turn can observe the cancel.
+pub(crate) async fn dispatch_queued_external_prompt<S, U, E>(
     queue: &mut ExternalQueue,
     quit_pending: bool,
     slash: &mut S,
     ui_request: &U,
+    external_task_store: Option<&Arc<E>>,
     ctx: &mut OrchestrationContext<'_>,
 ) where
     S: SlashHandler,
     U: UiRequestHandler,
+    E: ExternalTaskStore,
 {
     if quit_pending || *ctx.worker_active || ui_request.has_blocking_pending() {
         return;
     }
-    let Some(entry) = queue.take_next() else {
-        return;
+    // A cancel reaches the store before its signal reaches this loop, so the
+    // task is terminal before its turn begins and the cancel this dispatch would
+    // publish has no subscriber yet. Skip the ended entry instead of running a
+    // turn for work the caller already gave up on, and reach the next prompt in
+    // the same idle cycle. The cancel that waited for this task stops nothing
+    // now: the queue drops it, so a later turn for the same id carries none.
+    let entry = loop {
+        let Some(entry) = queue.take_next() else {
+            return;
+        };
+        if !external_task_store.is_some_and(|store| store.is_task_terminal(&entry.task_id)) {
+            break entry;
+        }
+        log::warn!(
+            "external task {} is already terminal in its store; skipping its turn",
+            entry.task_id
+        );
+        queue.abandon_awaited_cancel(&entry.task_id);
     };
     slash
         .handle(entry.prompt, Some(entry.task_id.clone()), ctx)

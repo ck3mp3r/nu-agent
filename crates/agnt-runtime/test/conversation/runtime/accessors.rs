@@ -10,7 +10,6 @@ fn accessor_provider_returns_provider_string() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -53,7 +52,6 @@ fn accessor_model_returns_model_string() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -94,7 +92,6 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -138,7 +135,6 @@ fn accessor_max_context_tokens_returns_value_when_set() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,
@@ -182,7 +178,6 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
     use crate::config::Config;
 
     let config = Config {
-        a2a_port: None,
         provider: "copilot".to_string(),
         provider_kind: None,
         catalog: None,

@@ -115,6 +115,20 @@ impl ExternalQueue {
         cancels_at_entry
     }
 
+    /// Drop the cancel that waits for `task_id`, because the dispatch it named
+    /// is abandoned.
+    ///
+    /// A turn that never begins can honour no cancel: keeping the waiting cancel
+    /// would fire it at a later turn of the same task id, for a caller that was
+    /// already told the task ended. A cancel naming another task still waits for
+    /// that task's own dispatch. Idempotent: a queue holding no cancel for this id
+    /// is unchanged.
+    pub(crate) fn abandon_awaited_cancel(&mut self, task_id: &str) {
+        if self.awaiting_cancel.as_deref() == Some(task_id) {
+            self.awaiting_cancel = None;
+        }
+    }
+
     /// The turn in flight finished.
     ///
     /// Turns are serial, so the finished turn is the one in flight whatever id

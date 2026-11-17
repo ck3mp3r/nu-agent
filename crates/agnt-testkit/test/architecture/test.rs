@@ -21,6 +21,7 @@ mod signatures;
 mod sources;
 mod support;
 mod surface;
+mod surface_baseline_diff;
 mod test_doubles;
 
 // endregion: --- Modules

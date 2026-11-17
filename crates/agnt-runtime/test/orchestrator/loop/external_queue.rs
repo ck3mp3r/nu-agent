@@ -160,6 +160,78 @@ fn test_external_queue_drain_returns_the_queued_prompt_and_clears_the_waiting_ca
 }
 
 #[test]
+fn test_external_queue_abandoning_the_awaited_cancel_clears_the_matching_task() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut queue = ExternalQueue::default();
+    queue.admit("task-a".to_string(), "prompt a".to_string());
+    let waiting = queue.cancel("task-a".to_string());
+
+    // -- Exec
+    queue.abandon_awaited_cancel("task-a");
+    let entry = queue.take_next().ok_or("task-a should still be queued")?;
+    let cancels_at_entry = queue.begin_turn(entry.task_id);
+
+    // -- Check
+    assert_eq!(waiting, CancelDisposition::WaitsForDispatch);
+    assert!(
+        !cancels_at_entry,
+        "the abandoned cancel must not fire at the dispatch it named"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_external_queue_abandoning_the_awaited_cancel_keeps_another_task() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut queue = ExternalQueue::default();
+    queue.admit("task-a".to_string(), "prompt a".to_string());
+    queue.admit("task-b".to_string(), "prompt b".to_string());
+    let waiting = queue.cancel("task-b".to_string());
+
+    // -- Exec
+    queue.abandon_awaited_cancel("task-a");
+    let first = queue.take_next().ok_or("task-a should be queued")?;
+    let a_cancels_at_entry = queue.begin_turn(first.task_id);
+    queue.finish_turn();
+    let second = queue.take_next().ok_or("task-b should be queued")?;
+    let b_cancels_at_entry = queue.begin_turn(second.task_id);
+
+    // -- Check
+    assert_eq!(waiting, CancelDisposition::WaitsForDispatch);
+    assert!(
+        !a_cancels_at_entry,
+        "the cancel named task-b, so task-a's turn is not cancelled"
+    );
+    assert!(
+        b_cancels_at_entry,
+        "a cancel naming another task must survive the abandonment"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_external_queue_abandoning_the_awaited_cancel_is_idempotent() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut queue = ExternalQueue::default();
+    queue.admit("task-a".to_string(), "prompt a".to_string());
+    let waiting = queue.cancel("task-a".to_string());
+
+    // -- Exec
+    queue.abandon_awaited_cancel("task-a");
+    queue.abandon_awaited_cancel("task-a");
+    let entry = queue.take_next().ok_or("task-a should still be queued")?;
+    let cancels_at_entry = queue.begin_turn(entry.task_id);
+
+    // -- Check
+    assert_eq!(waiting, CancelDisposition::WaitsForDispatch);
+    assert!(
+        !cancels_at_entry,
+        "a repeated abandonment must not resurrect the cancel"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_external_queue_drain_returns_prompts_in_arrival_order() -> Result<()> {
     // -- Setup & Fixtures
     let mut queue = ExternalQueue::default();

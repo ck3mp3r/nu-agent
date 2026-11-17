@@ -1,6 +1,7 @@
 pub mod builtins;
 pub mod error;
 pub mod parser;
+pub mod resolve;
 pub mod resolver;
 
 pub use error::*;
@@ -18,3 +19,7 @@ mod builtins_test;
 #[cfg(test)]
 #[path = "../../../test/protocol/persona/error.rs"]
 mod error_test;
+
+#[cfg(test)]
+#[path = "../../../test/protocol/persona/resolve.rs"]
+mod resolve_test;
