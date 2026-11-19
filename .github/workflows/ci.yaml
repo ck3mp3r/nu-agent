@@ -100,7 +100,7 @@ jobs:
           let store_path = ($results | where status == 'success' | first | get path)
 
           # Determine if we should push to cache (only on main)
-          let should_cache = ($env.GITHUB_REF == 'refs/heads/main') or ($env.GITHUB_REF == 'refs/heads/fix/migrate-ci-nix-publish')
+          let should_cache = ($env.GITHUB_REF == 'refs/heads/main')
 
           if $should_cache {
             print '✓ Pushing closure to ck3mp3r.cachix.org...'
