@@ -34,11 +34,12 @@ async fn journey_retry_on_server_error_recovers() -> Result<()> {
     );
 
     let msgs = h.raw_messages().await?;
+    // The failed attempt's mid-flight delta carried no content, so it persisted
+    // nothing; the successful retry's own save carries the request once.
     assert_eq!(
         msgs.len(),
-        3,
-        "expect the failed attempt's delta, then [user, assistant] after the successful retry; \
-         got {msgs:?}"
+        2,
+        "expect one [user, assistant] pair from the successful retry; got {msgs:?}"
     );
     Ok(())
 }

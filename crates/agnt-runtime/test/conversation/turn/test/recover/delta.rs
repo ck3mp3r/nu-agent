@@ -10,6 +10,8 @@
 mod anchoring;
 #[path = "delta/empty_delta.rs"]
 mod empty_delta;
+#[path = "delta/prompt_repeat.rs"]
+mod prompt_repeat;
 #[path = "delta/prose.rs"]
 mod prose;
 #[path = "delta/records_merge.rs"]

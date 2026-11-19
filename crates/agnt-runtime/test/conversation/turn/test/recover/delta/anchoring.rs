@@ -31,7 +31,9 @@ async fn persist_turn_delta_anchors_the_delta_on_the_prompt() -> Result<()> {
             "q2",
             &full_history,
             2,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;
@@ -78,7 +80,9 @@ async fn persist_turn_delta_matches_the_steering_augmented_prompt() -> Result<()
             "the prompt",
             &full_history,
             1,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;
@@ -112,7 +116,9 @@ async fn persist_turn_delta_falls_back_when_the_prompt_is_absent() -> Result<()>
             "the prompt",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;
@@ -126,57 +132,6 @@ async fn persist_turn_delta_falls_back_when_the_prompt_is_absent() -> Result<()>
             Message::assistant(INTERRUPTED_REPLY)
         ],
         "the fallback pair is persisted; got {messages:?}"
-    );
-    Ok(())
-}
-
-/// A history that does not hold the prompt but carries records persists the
-/// prompt and the reconstructed exchange.
-#[tokio::test]
-async fn persist_turn_delta_reconstructs_the_exchange_when_the_prompt_is_absent() -> Result<()> {
-    // -- Setup & Fixtures
-    let config = Config::default();
-    let mut memory_state = MemoryState::new(RigStoreConfig::in_memory());
-    let session_id = "test-recover-no-prompt-records";
-    let full_history = vec![Message::user("something else")];
-    let records = vec![record("tc1", Some("file contents"))?, record("tc2", None)?];
-
-    // -- Exec
-    executor(&config, &mut memory_state)
-        .persist_turn_delta(
-            Some(session_id),
-            "the prompt",
-            &full_history,
-            0,
-            INTERRUPTED_REPLY,
-            recovery(&records, None),
-        )
-        .await;
-
-    // -- Check
-    let messages = stored(&memory_state, session_id).await?;
-    assert_eq!(
-        messages.len(),
-        3,
-        "the prompt plus the reconstructed exchange; got {messages:?}"
-    );
-    assert_eq!(
-        messages[0],
-        Message::user("the prompt"),
-        "the prompt is reconstructed; got {messages:?}"
-    );
-    let Message::Assistant(assistant) = &messages[1] else {
-        return Err("the reconstructed calls must be an assistant message".into());
-    };
-    let calls: Vec<&CallId> = assistant.tool_calls().map(|call| &call.id).collect();
-    assert_eq!(
-        calls,
-        vec![&CallId::from_wire("tc1"), &CallId::from_wire("tc2")]
-    );
-    assert_eq!(
-        result_texts(&messages[2]),
-        vec!["file contents".to_string(), "[interrupted]".to_string()],
-        "a settled call keeps its result, an unsettled one is interrupted; got {messages:?}"
     );
     Ok(())
 }

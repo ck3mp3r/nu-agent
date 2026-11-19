@@ -31,7 +31,9 @@ async fn persist_turn_delta_writes_the_structural_status_of_every_call() -> Resu
             "q2",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&records, None),
         )
         .await;

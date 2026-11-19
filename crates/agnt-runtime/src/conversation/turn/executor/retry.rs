@@ -24,10 +24,10 @@ use crate::conversation::turn::{TurnContext, TurnConversation, TurnInput, error,
 use crate::hook::output_repetition::OUTPUT_REPETITION_BACKOFF_MESSAGE;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 
-use super::TurnRecovery;
 use super::core::TurnExecutor;
 use super::error_kind::CompletionErrorKind;
 use super::response::extract_retry_after_ms;
+use super::{PersistStage, TurnRecovery};
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnExhaustion;
 use crate::conversation::turn::TurnResult;
@@ -231,7 +231,9 @@ where
                             &prompt,
                             &ctx.last_known_history,
                             ctx.pre_turn_message_count,
-                            "[interrupted — turn stopped before responding]",
+                            PersistStage::MidFlight {
+                                keep_head: steering.is_some(),
+                            },
                             TurnRecovery {
                                 tool_records: &ctx.tool_records,
                                 streamed_text: None,
@@ -272,7 +274,9 @@ where
                             &prompt,
                             &ctx.last_known_history,
                             ctx.pre_turn_message_count,
-                            "[interrupted — turn stopped before responding]",
+                            PersistStage::MidFlight {
+                                keep_head: steering.is_some(),
+                            },
                             TurnRecovery {
                                 tool_records: &ctx.tool_records,
                                 streamed_text: None,
@@ -351,7 +355,9 @@ where
                             &prompt,
                             messages,
                             ctx.pre_turn_message_count,
-                            "[interrupted — turn stopped before responding]",
+                            PersistStage::MidFlight {
+                                keep_head: steering.is_some(),
+                            },
                             TurnRecovery {
                                 tool_records: &ctx.tool_records,
                                 streamed_text: None,
@@ -400,11 +406,12 @@ where
                                 text: super::core::REPETITION_STEERING_NOTICE.to_string(),
                             },
                         );
-                        steering = Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
                         self.tool_infra.lock_output_repetition().reset_ladder();
                         // The stopped attempt's delta is persisted before the retry:
                         // the retry's fresh agent loads the session store and must
-                        // see the work this attempt committed.
+                        // see the work this attempt committed. The steering message
+                        // is set after the persist, so the persist reports this
+                        // attempt's own stage.
                         let history = turn_result
                             .messages
                             .as_deref()
@@ -414,13 +421,16 @@ where
                             &prompt,
                             history,
                             turn_result.pre_turn_message_count,
-                            "[interrupted — turn stopped before responding]",
+                            PersistStage::MidFlight {
+                                keep_head: steering.is_some(),
+                            },
                             TurnRecovery {
                                 tool_records: &turn_result.tool_records,
                                 streamed_text: None,
                             },
                         )
                         .await;
+                        steering = Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
                         continue;
                     }
                     break result;

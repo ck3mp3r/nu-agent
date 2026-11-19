@@ -66,10 +66,14 @@ async fn retry_succeeds_on_second_attempt() -> Result<()> {
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        3,
-        "the failed attempt's delta, then the successful retry's prompt and reply; \
-         got {}",
-        persisted.len()
+        2,
+        "the plain attempt persisted nothing mid-flight; the successful retry's save \
+         carries the steered request once; got {persisted:?}"
+    );
+    assert_eq!(
+        persisted[0],
+        crate::types::Message::user("hello"),
+        "the success save carries the request once; got {persisted:?}"
     );
 
     Ok(())

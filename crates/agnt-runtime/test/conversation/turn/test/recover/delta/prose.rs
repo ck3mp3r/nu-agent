@@ -18,7 +18,9 @@ async fn persist_turn_delta_appends_the_streamed_prose_remainder() -> Result<()>
             "q2",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&records, Some("partial answer")),
         )
         .await;
@@ -60,7 +62,9 @@ async fn persist_turn_delta_drops_prose_that_does_not_extend_the_committed_text(
             "q2",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], Some("a different answer")),
         )
         .await;

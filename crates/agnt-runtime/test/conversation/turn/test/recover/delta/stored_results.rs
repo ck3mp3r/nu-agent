@@ -44,7 +44,9 @@ async fn persist_turn_delta_does_not_repeat_a_stored_result() -> Result<()> {
             "q2",
             &full_history,
             3,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;

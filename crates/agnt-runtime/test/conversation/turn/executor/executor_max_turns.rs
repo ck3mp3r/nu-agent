@@ -126,52 +126,48 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
 
     // The retry's model context carries the first attempt's committed work:
     // the persisted delta is loaded from the store and rides the retry request.
+    // Rig's repair merges the steered prompt into the trailing result row, so
+    // the history holds the call row and one merged user row.
     let retry_history = &requests[1].chat_history;
     assert_eq!(
         retry_history.len(),
-        3,
-        "the retry request carries the first attempt's delta plus its own prompt; \
-         got {retry_history:?}"
+        2,
+        "the retry request carries the first attempt's exchange; got {retry_history:?}"
     );
     assert!(
-        matches!(&*retry_history[2], crate::types::Message::User { content }
+        matches!(&*retry_history[1], crate::types::Message::User { content }
             if content.iter().any(|item| matches!(item,
                 crate::types::UserContent::ToolResult(result)
                     if result.call == crate::types::CallId::from_wire("tc1")))),
         "the retry request carries the first attempt's tool result; got {retry_history:?}"
     );
 
-    // The steering retry persisted the exhausted attempt's delta before
-    // re-running, so the successful retry's rig save extends it: the first
-    // attempt's prompt, tool call and tool result, then the retry's steered
-    // prompt and reply.
+    // The steering retry persisted the exhausted attempt's exchange before
+    // re-running; the successful retry's own save appends its steered prompt
+    // and reply: the exchange, then the steered request and the reply.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        5,
-        "the first attempt's delta plus the successful retry's exchange; got {persisted:?}"
-    );
-    assert_eq!(
-        message_text(&persisted[0]).as_deref(),
-        Some("hello"),
-        "the steering retry persists the first attempt's prompt; got {persisted:?}"
+        4,
+        "the first attempt's exchange (2) plus the retry's steered prompt and reply; \
+         got {persisted:?}"
     );
     assert!(
-        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        matches!(&persisted[0], crate::types::Message::Assistant(_)),
         "the first attempt's committed tool call is persisted; got {persisted:?}"
     );
     assert!(
-        matches!(&persisted[2], crate::types::Message::User { .. }),
+        matches!(&persisted[1], crate::types::Message::User { .. }),
         "the first attempt's committed tool result is persisted; got {persisted:?}"
     );
     assert!(
-        message_text(&persisted[3])
+        message_text(&persisted[2])
             .is_some_and(|text| text
                 .starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX)),
         "the retry's prompt carries the steering message; got {persisted:?}"
     );
     assert_eq!(
-        message_text(&persisted[4]).as_deref(),
+        message_text(&persisted[3]).as_deref(),
         Some("recovered"),
         "the retry's reply is persisted; got {persisted:?}"
     );
@@ -283,40 +279,36 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
         request_prompt(&requests[1])
     );
 
-    // Both attempts persist their delta: the steering retry persisted the first
-    // attempt's prompt, tool call and tool result, and the capped final attempt
-    // persists its own steered prompt, tool call and tool result.
+    // Both attempts persist their content: the plain first attempt persisted its
+    // exchange prompt-free, and the capped steered attempt persisted its steering
+    // row with its own exchange.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        6,
-        "one delta per attempt: the steering retry's and the capped final attempt's; \
-         got {persisted:?}"
+        5,
+        "the plain attempt's exchange (2) plus the capped steered attempt's steering \
+         row and exchange (3); got {persisted:?}"
     );
     assert!(
-        message_text(&persisted[0]).is_some_and(|text| text.ends_with("hello")),
-        "the first attempt's delta keeps the original prompt; got {persisted:?}"
-    );
-    assert!(
-        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        matches!(&persisted[0], crate::types::Message::Assistant(_)),
         "the first attempt's committed tool call is persisted; got {persisted:?}"
     );
     assert!(
-        matches!(&persisted[2], crate::types::Message::User { .. }),
+        matches!(&persisted[1], crate::types::Message::User { .. }),
         "the first attempt's committed tool result is persisted; got {persisted:?}"
     );
     assert!(
-        message_text(&persisted[3])
+        message_text(&persisted[2])
             .is_some_and(|text| text
                 .starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX)),
-        "the capped attempt's delta starts from the steered prompt; got {persisted:?}"
+        "the capped attempt's delta starts from its steered prompt; got {persisted:?}"
     );
     assert!(
-        matches!(&persisted[4], crate::types::Message::Assistant(_)),
+        matches!(&persisted[3], crate::types::Message::Assistant(_)),
         "the capped attempt's committed tool call is persisted; got {persisted:?}"
     );
     assert!(
-        matches!(&persisted[5], crate::types::Message::User { .. }),
+        matches!(&persisted[4], crate::types::Message::User { .. }),
         "the capped attempt's committed tool result is persisted; got {persisted:?}"
     );
 

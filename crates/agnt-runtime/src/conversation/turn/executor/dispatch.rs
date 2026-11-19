@@ -23,6 +23,7 @@ use super::core::{
     ExecuteOutcome, NO_OUTPUT_STATEMENT, TURN_STOPPED_NOTICE, TurnExecutor, TurnResponseData,
 };
 use super::error_kind::{CompletionErrorKind, kind_to_user_msg};
+use super::recover::PersistStage;
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
 use crate::conversation::turn::{TurnBudget, TurnExhaustion, TurnFailure};
@@ -36,6 +37,9 @@ where
 {
     /// Dispatch the terminal result of the retry/steering loop: surface stop
     /// reasons and produce the final `ExecuteOutcome` / `LabeledError`.
+    ///
+    /// Every persist here is the turn's end: the delta keeps its prompt row, so
+    /// the turn's request lands once whatever ended it.
     pub(super) async fn dispatch_result(
         &mut self,
         visitor_result: Result<
@@ -47,8 +51,8 @@ where
         >,
         prompt: String,
         span: Span,
-        final_session_id: Option<&str>,
         turn_started: std::time::Instant,
+        final_session_id: Option<&str>,
         task_id: Option<&str>,
     ) -> Result<ExecuteOutcome, Box<TurnFailure>> {
         let turn_result = match visitor_result {
@@ -59,7 +63,9 @@ where
                     &prompt,
                     &messages,
                     ctx.pre_turn_message_count,
-                    "[interrupted — turn stopped before responding]",
+                    PersistStage::TurnEnd {
+                        empty_reply: "[interrupted — turn stopped before responding]",
+                    },
                     TurnRecovery {
                         tool_records: &ctx.tool_records,
                         streamed_text: None,
@@ -101,7 +107,9 @@ where
                             &prompt,
                             messages,
                             ctx.pre_turn_message_count,
-                            &format!("[Turn failed: {msg}]"),
+                            PersistStage::TurnEnd {
+                                empty_reply: &format!("[Turn failed: {msg}]"),
+                            },
                             TurnRecovery {
                                 tool_records: &ctx.tool_records,
                                 streamed_text: None,
@@ -153,7 +161,9 @@ where
                     &prompt,
                     &ctx.last_known_history,
                     ctx.pre_turn_message_count,
-                    &format!("[Turn failed: {msg}]"),
+                    PersistStage::TurnEnd {
+                        empty_reply: &format!("[Turn failed: {msg}]"),
+                    },
                     TurnRecovery {
                         tool_records: &ctx.tool_records,
                         streamed_text: None,
@@ -185,7 +195,9 @@ where
                 &prompt,
                 history,
                 turn_result.pre_turn_message_count,
-                "[interrupted — turn stopped before responding]",
+                PersistStage::TurnEnd {
+                    empty_reply: "[interrupted — turn stopped before responding]",
+                },
                 TurnRecovery {
                     tool_records: &turn_result.tool_records,
                     streamed_text: Some(&turn_result.text),

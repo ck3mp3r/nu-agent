@@ -31,6 +31,26 @@ pub(crate) struct TurnRecovery<'a> {
     pub streamed_text: Option<&'a str>,
 }
 
+/// When in a turn's life its delta is persisted.
+///
+/// The prompt is written when the turn ends, not when an attempt fails: rig's
+/// own save carries it on success, and the host writes it once at every
+/// terminal event. A mid-flight persist therefore carries assistant, tool and
+/// steering content only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PersistStage<'a> {
+    /// The turn is still running.
+    ///
+    /// The delta's head is the prompt row, or the steering row when the attempt
+    /// ran steered. The prompt row is dropped unless `keep_head` says the head
+    /// is steering content the turn must keep.
+    MidFlight { keep_head: bool },
+    /// The turn has ended: this is the turn's one host write of the prompt. A
+    /// terminal delta that reports nothing fills with the request and
+    /// `empty_reply`, so the turn's record is never lost.
+    TurnEnd { empty_reply: &'a str },
+}
+
 // endregion: --- Types
 
 impl<S> TurnExecutor<'_, S>
@@ -54,6 +74,22 @@ where
     /// already answers is dropped from it: saving it again would hold one
     /// call's result twice.
     ///
+    /// The prompt is written when the turn ends, never mid-flight. `stage` says
+    /// which moment this write is. A `MidFlight` delta carries assistant, tool
+    /// and steering content only: its head is the prompt row (or the steering
+    /// row of a steered attempt), and the prompt row is dropped unless the loop
+    /// reports the head as steering content it must keep. `TurnEnd` is the
+    /// turn's one host write of the prompt, so it keeps the anchored head; an
+    /// empty terminal delta fills with the prompt and the placeholder reply, so
+    /// a turn stopped before any LLM call still records its request. On success
+    /// the host writes nothing: rig's own save carries the prompt.
+    ///
+    /// Two consequences follow, by design. Mid-flight exchange and steering rows
+    /// land before the turn's prompt row, and rig's adjacent-user repair merges
+    /// a later prompt row into a stored results row on load, so the sequence
+    /// stays loadable. A steered-success turn carries the steered text as its
+    /// request row.
+    ///
     /// `recovery` holds what the turn recovered beyond its reported history:
     /// every call it dispatched with the result it settled with, and the text
     /// it streamed. A call the delta does not carry is reconstructed as one
@@ -63,13 +99,11 @@ where
     /// already hold is appended, so a cancelled turn keeps its partial answer
     /// without duplicating it.
     ///
-    /// When the prompt is absent from `full_history` and nothing else is
-    /// recovered, `[user(prompt), assistant(empty_delta_reply)]` is persisted: a
-    /// turn stopped before any LLM call would otherwise lose the request
-    /// entirely.
+    /// `attempt_start` is the log length the writing attempt started from: the
+    /// moved-log guard's input.
     ///
     /// The store is loaded as the save base, because a save extends a loaded
-    /// conversation. A log whose length moved since the turn started is left
+    /// conversation. A log whose length moved since the attempt started is left
     /// alone: slicing it would mis-attribute another writer's messages. That
     /// skip is user-visible: the turn's work is lost, so the skip publishes a
     /// `NarrationEvent::SystemMessage` alongside the log line.
@@ -78,8 +112,8 @@ where
         session_id: Option<&str>,
         prompt: &str,
         full_history: &[Message],
-        pre_turn_message_count: usize,
-        empty_delta_reply: &str,
+        attempt_start: usize,
+        stage: PersistStage<'_>,
         recovery: TurnRecovery<'_>,
     ) {
         let Some(session_id) = session_id else {
@@ -113,10 +147,10 @@ where
         };
 
         let loaded_len = conversation.messages().len();
-        if loaded_len != pre_turn_message_count {
+        if loaded_len != attempt_start {
             log::warn!(
                 "Skipping recovery: the session moved mid-turn (log holds {loaded_len} messages, \
-                 the turn started from {pre_turn_message_count})"
+                 the attempt started from {attempt_start})"
             );
             let _ = self
                 .tool_infra
@@ -142,16 +176,24 @@ where
         };
         delta = drop_stored_results(delta, &stored);
 
+        // Mid-flight the prompt belongs to the turn's end: its text blocks are
+        // dropped, while the results a merged row carries stay. Only a steered
+        // attempt's head is content the turn must keep.
+        if let PersistStage::MidFlight { keep_head: false } = stage {
+            delta = drop_leading_prompt_text(delta);
+        }
+
         let missing_calls = missing_tool_calls(&delta, recovery.tool_records);
         if !missing_calls.is_empty() {
-            if anchor.is_none() {
-                delta.insert(0, Message::user(prompt));
-            }
             delta.push(Message::Assistant(AssistantMessage::new(missing_calls)));
         }
 
-        if anchor.is_none() && delta.is_empty() {
-            delta = vec![Message::user(prompt), Message::assistant(empty_delta_reply)];
+        // A terminal event that reported nothing persists the request itself: a
+        // turn stopped before any LLM call would otherwise lose it.
+        if delta.is_empty()
+            && let PersistStage::TurnEnd { empty_reply } = stage
+        {
+            delta = vec![Message::user(prompt), Message::assistant(empty_reply)];
         }
 
         let settled = settled_results(recovery.tool_records);
@@ -174,6 +216,13 @@ where
                     "persist: the streamed text does not extend the committed assistant text"
                 ),
             }
+        }
+
+        // A delta that adds no entry writes nothing: neither the save nor the
+        // settle has anything to record.
+        if delta.is_empty() {
+            log::debug!("persist: the delta adds no entry");
+            return;
         }
 
         // The keys the log already held: the delta's keys are what recovery adds.
@@ -218,8 +267,11 @@ where
     ///
     /// The closed turn is a settled turn like any other: its row, the keys of
     /// the entries recovery persisted and the status every call settled with
-    /// land in one transaction. The submission instant is the persisted
-    /// prompt's own made-time; nothing here is derived from order or invented.
+    /// land in one transaction. A terminal write persists the prompt first, so
+    /// the submission instant is the prompt's own made-time. A mid-flight write
+    /// carries no prompt row: its first new key is an assistant or call row, and
+    /// its made-time stands in for the submit instant — the closest fact the
+    /// log holds, and the drift the lifecycle rule accepts.
     pub(crate) async fn persist_tool_facts(
         &self,
         session_id: &str,
@@ -260,7 +312,7 @@ where
 
 // region:    --- Support
 
-/// The index of the LAST user message in `full_history` that carries `prompt`.
+/// Whether `message` is a user message carrying `prompt` as its text.
 ///
 /// The turn's prompt is always present in the reported history: rig's
 /// `CommittedLog[0]` holds it, and the hook's snapshot appends it. A steering
@@ -270,21 +322,49 @@ where
 /// A message's text is its text blocks concatenated, as rig's repair merges
 /// adjacent user messages by extending their content. A merged message that
 /// only holds the prompt among other blocks is not the prompt message.
+fn carries_prompt(message: &Message, prompt: &str) -> bool {
+    let Message::User { content } = message else {
+        return false;
+    };
+    let text: String = content
+        .iter()
+        .filter_map(|item| match item {
+            UserContent::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    text == prompt || text.ends_with(&format!("\n\n{prompt}"))
+}
+
+/// The index of the LAST user message in `full_history` that carries `prompt`.
 fn prompt_anchor(full_history: &[Message], prompt: &str) -> Option<usize> {
-    let steering_suffix = format!("\n\n{prompt}");
-    full_history.iter().rposition(|message| {
-        let Message::User { content } = message else {
-            return false;
-        };
-        let text: String = content
-            .iter()
-            .filter_map(|item| match item {
-                UserContent::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            })
-            .collect();
-        text == prompt || text.ends_with(&steering_suffix)
-    })
+    full_history
+        .iter()
+        .rposition(|message| carries_prompt(message, prompt))
+}
+
+/// Drops the delta's leading message's text blocks, and the message itself when
+/// they were all it held.
+///
+/// Mid-flight carries content only: the prompt is a text block, while the
+/// results and calls beside it are committed work. The strip reads content
+/// kinds, never text values, so it cannot mistake a steering row for a prompt.
+fn drop_leading_prompt_text(mut delta: Vec<Message>) -> Vec<Message> {
+    let Some(Message::User { content }) = delta.first_mut() else {
+        return delta;
+    };
+    let before = content.len();
+    content.retain(|item| !matches!(item, UserContent::Text(_)));
+    let dropped = before - content.len();
+    let empty = content.is_empty();
+    if dropped == 0 {
+        return delta;
+    }
+    log::debug!("persist: dropped {dropped} prompt text block(s) from a mid-flight delta");
+    if empty {
+        delta.remove(0);
+    }
+    delta
 }
 
 /// Drops from the delta's leading user message every tool result the store

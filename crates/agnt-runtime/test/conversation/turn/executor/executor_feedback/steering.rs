@@ -156,9 +156,9 @@ async fn successful_feedback_retry_delivers_feedback_exactly_once() -> Result<()
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        3,
-        "the failed attempt's delta, then the completed run's prompt and reply; \
-         got {persisted:?}"
+        2,
+        "the plain attempt persisted nothing mid-flight; the completed run's save \
+         carries the steered prompt once; got {persisted:?}"
     );
     assert_eq!(
         feedback_message_count(&persisted),

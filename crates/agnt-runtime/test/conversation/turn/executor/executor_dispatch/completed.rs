@@ -26,8 +26,8 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
             Ok(result),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            Some(session_id),
             std::time::Instant::now(),
+            Some(session_id),
             None,
         )
         .await
@@ -92,8 +92,8 @@ async fn dispatch_completed_turn_skips_the_assistant_message_when_deltas_were_em
             Ok(completed_result("streamed answer")),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            Some(session_id),
             std::time::Instant::now(),
+            Some(session_id),
             None,
         )
         .await
@@ -138,8 +138,8 @@ async fn dispatch_completed_turn_without_a_session_skips_token_tracking() -> Res
             Ok(completed_result("sessionless answer")),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            None,
             std::time::Instant::now(),
+            None,
             None,
         )
         .await

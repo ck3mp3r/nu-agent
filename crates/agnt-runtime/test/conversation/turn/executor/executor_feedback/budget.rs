@@ -112,14 +112,13 @@ async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<
             "retry {i} must not carry the First remedy (latest-wins, not accumulation); got: {prompt}"
         );
     }
-    // Every attempt's delta is persisted: the three feedback retries persist
-    // theirs before re-running, and the capped final attempt persists its own.
+    // Every steered attempt keeps its own row — the plain first attempt persisted
+    // nothing mid-flight, and the capped attempt's row is its terminal write.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        4,
-        "one delta per attempt: three feedback retries plus the capped final attempt; \
-         got {persisted:?}"
+        3,
+        "three steered attempts, one row each; got {persisted:?}"
     );
     assert!(
         message_text(&persisted[0]).is_some_and(|text| text.ends_with("hello")),
@@ -273,9 +272,9 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        4,
-        "one delta per attempt: two feedback retries, the backoff retry and the final \
-         failed attempt; got {persisted:?}"
+        3,
+        "the two steered retries and the capped terminal attempt, one row each; \
+         got {persisted:?}"
     );
     assert!(
         message_text(&persisted[0]).is_some_and(|text| text.ends_with("hello")),

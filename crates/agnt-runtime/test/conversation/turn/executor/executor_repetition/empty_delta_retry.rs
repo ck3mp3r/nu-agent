@@ -1,22 +1,21 @@
 use super::*;
 
-/// A repetition stop whose stopped attempt reports an EMPTY delta must still
-/// persist the stopped attempt before the steering retry, and the placeholder
-/// must carry the ORIGINAL prompt, not the steered one.
+/// A repetition stop whose stopped attempt reports an EMPTY delta must not
+/// persist a placeholder: the turn's request is written at its end, and the
+/// steered retry's own save carries it.
 ///
 /// The store's dangling user tail merges with the prompt into one user
 /// message in rig's canonical history (`repair` merges adjacent non-empty
 /// user messages by extending content, with no separator between), and the
 /// anchor reads a message's text blocks concatenated. The merged text
 /// neither is the prompt nor ends with the `"\n\n{prompt}"` steering suffix,
-/// so the content anchor is absent and the fallback pair persists: the
-/// original prompt and the interrupted placeholder.
+/// so the content anchor is absent and the mid-flight delta is empty: nothing
+/// is written.
 ///
-/// The steered retry then completes, so the store ends with five messages: the
-/// seed, the original prompt, the placeholder, the steered prompt and the
-/// retry's answer.
+/// The steered retry then completes, so the store ends with three messages: the
+/// seed, the steered prompt and the retry's answer.
 #[tokio::test]
-async fn repetition_stop_empty_delta_retry_persists_original_prompt_placeholder() -> Result<()> {
+async fn repetition_stop_empty_delta_retry_writes_no_placeholder() -> Result<()> {
     // -- Setup & Fixtures
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
@@ -76,25 +75,15 @@ async fn repetition_stop_empty_delta_retry_persists_original_prompt_placeholder(
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        5,
-        "the seed, the empty-delta placeholder pair and the retry's exchange; got {persisted:?}"
+        3,
+        "the seed, the steered prompt and the retry's answer; got {persisted:?}"
     );
     assert_eq!(
         message_text(&persisted[0]).as_deref(),
         Some("dangling question"),
         "the seed must stay untouched; got {persisted:?}"
     );
-    assert_eq!(
-        message_text(&persisted[1]).as_deref(),
-        Some("hello"),
-        "the placeholder's user message must carry the ORIGINAL prompt, not the steered one; got {persisted:?}"
-    );
-    assert_eq!(
-        message_text(&persisted[2]).as_deref(),
-        Some("[interrupted — turn stopped before responding]"),
-        "an empty delta must persist the interrupted placeholder; got {persisted:?}"
-    );
-    let steered = message_text(&persisted[3]).ok_or("the steered prompt must carry text")?;
+    let steered = message_text(&persisted[1]).ok_or("the steered prompt must carry text")?;
     assert!(
         steered.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE),
         "the retry's prompt must carry the repetition backoff message; got {steered:?}"
@@ -104,7 +93,7 @@ async fn repetition_stop_empty_delta_retry_persists_original_prompt_placeholder(
         "the retry's prompt must keep the original prompt; got {steered:?}"
     );
     assert_eq!(
-        message_text(&persisted[4]).as_deref(),
+        message_text(&persisted[2]).as_deref(),
         Some("I changed my mind."),
         "the retry's answer must be persisted; got {persisted:?}"
     );

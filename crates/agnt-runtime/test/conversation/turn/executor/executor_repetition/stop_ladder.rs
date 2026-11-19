@@ -287,19 +287,28 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
         request_prompt(&requests[first_steered]).ends_with("hello"),
         "the steered prompt keeps the original prompt"
     );
-    // The four below-threshold turns saved their exchanges; each of the three
-    // conversions persisted its stopped attempt's delta before re-running, and
-    // the terminal stopped attempt appended its delta on top. The delta is
-    // anchored on the prompt, so a stopped attempt whose reported history merged
-    // the store's trailing user message with the steered prompt persists that
-    // merged message: the count slice starts past the merged prompt message and
-    // drops it (an empty slice would fall back to the two-message placeholder
-    // pair), while the anchor restores the merged message itself.
+    // The four below-threshold turns saved their exchanges: 8 rows. Each of the
+    // three conversions persisted its stopped attempt's delta before re-running,
+    // and the terminal stopped attempt appended its delta on top, for 27 more.
+    //
+    // Every persist is prompt-free, and the trace shows what that leaves. The
+    // first stop's delta is the prompt row with the attempt's committed
+    // assistant text after it: the lifecycle drop removes only the leading
+    // prompt row, so its text tail persists — that is why index 8 below is that
+    // committed text and not the next stop's steering row. The three
+    // stop-to-steering conversions persist their steering row at the delta head,
+    // and the terminal stop persists its steered, prompt-form row once with the
+    // streamed remainder.
+    //
+    // 8 + 27 = 35. That is one fewer than the slice rule left (36, whose head
+    // survived); the log-wide rule also left 35, but by collapsing the whole
+    // prompt-led head, not by dropping only the prompt row.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        36,
-        "the four completed turns plus one delta per stopped attempt; got {persisted:?}"
+        35,
+        "the four completed turns plus one prompt-free delta per stopped attempt; \
+         got {persisted:?}"
     );
     for (i, message) in persisted.iter().take(8).enumerate() {
         let expected = if i % 2 == 0 {
@@ -313,9 +322,11 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
             "persisted[{i}] must be the completed turn's exchange; got {persisted:?}"
         );
     }
-    assert!(
-        message_text(&persisted[8]).is_some_and(|text| text.ends_with("hello")),
-        "the first stopped attempt's delta starts from the original prompt; got {persisted:?}"
+    assert_eq!(
+        message_text(&persisted[8]).as_deref(),
+        Some("I will do the thing."),
+        "the plain first stop writes no prompt row: its delta starts at the committed \
+         assistant text; got {persisted:?}"
     );
 
     Ok(())

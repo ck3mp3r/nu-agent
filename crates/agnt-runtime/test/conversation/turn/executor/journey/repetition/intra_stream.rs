@@ -61,13 +61,15 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
         retry_prompt.ends_with("do the thing"),
         "the retry prompt must keep the original prompt; got: {retry_prompt}"
     );
-    // The conversion persisted the stopped attempt's delta, then the completed
-    // run saved its own exchange.
+    // The conversion persisted the stopped attempt's steering row; the
+    // completed run's own save carries the same steered prompt, and rig's
+    // adjacent-user repair merges the two into one row: the request once, then
+    // the reply.
     let msgs = h.raw_messages().await?;
     assert_eq!(
         msgs.len(),
-        3,
-        "the stopped attempt's delta, then the completed turn's exchange; got: {msgs:?}"
+        2,
+        "the merged steered request and the completed turn's reply; got: {msgs:?}"
     );
     // The executor publishes a warning for the conversion so the user sees
     // that steering is happening instead of only a silent retry.
@@ -138,13 +140,15 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
         retry_prompt.ends_with("do the thing"),
         "the retry prompt must keep the original prompt; got: {retry_prompt}"
     );
-    // The conversion persisted the stopped attempt's delta, then the completed
-    // run saved its own exchange.
+    // The conversion persisted the stopped attempt's steering row; the
+    // completed run's own save carries the same steered prompt, and rig's
+    // adjacent-user repair merges the two into one row: the request once, then
+    // the reply.
     let msgs = h.raw_messages().await?;
     assert_eq!(
         msgs.len(),
-        3,
-        "the stopped attempt's delta, then the completed turn's exchange; got: {msgs:?}"
+        2,
+        "the merged steered request and the completed turn's reply; got: {msgs:?}"
     );
     // The executor publishes a warning for the conversion so the user sees
     // that steering is happening instead of only a silent retry.

@@ -16,7 +16,9 @@ async fn persist_turn_delta_with_an_empty_delta_appends_the_prompt_and_placehold
             "the prompt",
             &[],
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;

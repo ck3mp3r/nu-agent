@@ -43,8 +43,8 @@ async fn dispatch_completed_turn_publishes_turn_completed_with_the_task_id() -> 
             Ok(completed_result("final answer")),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            Some(session_id),
             std::time::Instant::now(),
+            Some(session_id),
             Some("task-42"),
         )
         .await
@@ -86,8 +86,8 @@ async fn dispatch_cancelled_turn_publishes_turn_completed_with_the_task_id() -> 
             Ok(cancelled_result(None, Vec::new(), None, "", None)),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            None,
             std::time::Instant::now(),
+            None,
             Some("task-43"),
         )
         .await
@@ -130,8 +130,8 @@ async fn dispatch_completed_turn_reports_one_duration_on_both_concerns() -> Resu
             Ok(completed_result("final answer")),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            Some(session_id),
             std::time::Instant::now(),
+            Some(session_id),
             None,
         )
         .await
@@ -181,8 +181,8 @@ async fn dispatch_completed_turn_narrates_one_turn_record() -> Result<()> {
             Ok(completed_result("final answer")),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            Some("test-turn-record-completed"),
             std::time::Instant::now(),
+            Some("test-turn-record-completed"),
             None,
         )
         .await
@@ -221,8 +221,8 @@ async fn dispatch_cancelled_turn_narrates_one_turn_record() -> Result<()> {
             Ok(cancelled_result(None, Vec::new(), None, "", None)),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            None,
             std::time::Instant::now(),
+            None,
             None,
         )
         .await
@@ -263,8 +263,8 @@ async fn dispatch_unstreamed_text_publishes_the_tail_delta_on_the_text_lane() ->
             Ok(completed_result_without_streamed_deltas("final answer")),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
-            Some("test-turn-tail-delta"),
             std::time::Instant::now(),
+            Some("test-turn-tail-delta"),
             None,
         )
         .await

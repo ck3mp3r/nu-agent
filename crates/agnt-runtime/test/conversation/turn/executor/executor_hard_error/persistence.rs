@@ -56,22 +56,16 @@ async fn max_turns_error_persists_the_steered_prompt() -> Result<()> {
         "MaxTurns must propagate as LabeledError to caller"
     );
 
-    // The steering retry persisted the first attempt's delta before re-running,
-    // and the terminal failure persists the delta it carries: the steered prompt
-    // of the final attempt.
+    // The plain first attempt persisted nothing mid-flight, and the terminal
+    // failure keeps its steered head: one row, the steering form of the request.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        2,
-        "the first attempt's delta plus the terminal attempt's delta; got {persisted:?}"
-    );
-    assert_eq!(
-        message_text(&persisted[0]).as_deref(),
-        Some("please call a tool"),
-        "the steering retry persists the first attempt's prompt; got {persisted:?}"
+        1,
+        "only the terminal steered row persists; got {persisted:?}"
     );
     assert!(
-        message_text(&persisted[1]).is_some_and(|text| text.ends_with("please call a tool")),
+        message_text(&persisted[0]).is_some_and(|text| text.ends_with("please call a tool")),
         "the terminal delta keeps the original prompt; got {persisted:?}"
     );
 

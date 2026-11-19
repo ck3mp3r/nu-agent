@@ -32,7 +32,9 @@ async fn persist_turn_delta_appends_the_closed_delta() -> Result<()> {
             "q2",
             &full_history,
             2,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;
@@ -85,7 +87,9 @@ async fn persist_turn_delta_reconstructs_the_missing_tool_exchange() -> Result<(
             "q2",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&records, None),
         )
         .await;
@@ -132,7 +136,9 @@ async fn persist_turn_delta_does_not_duplicate_a_recorded_call() -> Result<()> {
             "q2",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&records, None),
         )
         .await;
@@ -190,7 +196,9 @@ async fn persist_turn_delta_replaces_a_placeholder_result_with_the_settled_recor
             "q2",
             &full_history,
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&records, None),
         )
         .await;

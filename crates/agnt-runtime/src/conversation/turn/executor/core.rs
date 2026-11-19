@@ -249,8 +249,8 @@ where
             visitor_result,
             prompt,
             span,
-            final_session_id,
             turn_started,
+            final_session_id,
             task_id.as_deref(),
         )
         .await

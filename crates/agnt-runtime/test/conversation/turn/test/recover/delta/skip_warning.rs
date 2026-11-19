@@ -22,7 +22,9 @@ async fn persist_turn_delta_skips_when_the_store_moved_mid_turn() -> Result<()> 
             "q2",
             &full_history,
             1,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;
@@ -56,7 +58,9 @@ async fn persist_turn_delta_without_a_session_writes_nothing() -> Result<()> {
             "the prompt",
             &[Message::user("the prompt")],
             0,
-            INTERRUPTED_REPLY,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
             recovery(&[], None),
         )
         .await;

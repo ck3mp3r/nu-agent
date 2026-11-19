@@ -3,9 +3,9 @@
 
 use super::*;
 
-/// A backoff retry persists the failed attempt's delta before re-running, so
-/// the store holds both attempts' deltas in order: the failed attempt's prompt,
-/// then the retry's prompt and reply.
+/// A backoff retry persists the failed attempt's delta before re-running. A
+/// plain attempt's delta carries no prompt, so the store holds only the retry's
+/// own success save: one prompt row and one reply.
 #[tokio::test]
 async fn backoff_retry_persists_the_failed_attempt_delta() -> Result<()> {
     // -- Setup & Fixtures
@@ -59,12 +59,11 @@ async fn backoff_retry_persists_the_failed_attempt_delta() -> Result<()> {
     let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
-        3,
-        "the failed attempt's delta, then the retry's prompt and reply; got {messages:?}"
+        2,
+        "the retry's save carries the request once; got {messages:?}"
     );
     assert_eq!(messages[0], Message::user("hello"));
-    assert_eq!(messages[1], Message::user("hello"));
-    let Message::Assistant(assistant) = &messages[2] else {
+    let Message::Assistant(assistant) = &messages[1] else {
         return Err("the retry's reply must be persisted as an assistant message".into());
     };
     assert!(
