@@ -148,9 +148,9 @@ jobs:
         include:
           - os: ubuntu-latest
             nix_system: x86_64-linux
-          - os: macos-15
+          - os: macos-latest
             nix_system: x86_64-darwin
-          - os: macos-15
+          - os: macos-latest
             nix_system: aarch64-darwin
           - os: ubuntu-24.04-arm
             nix_system: aarch64-linux
