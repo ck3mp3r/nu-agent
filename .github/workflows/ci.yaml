@@ -104,11 +104,10 @@ jobs:
 
           if $should_cache {
             print '✓ Pushing closure to ck3mp3r.cachix.org...'
-            let closure_paths = ($store_path | ci nix closure)
-            let cache_results = ($closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org')
+            let pub = ($results | ci nix publish 'https://ck3mp3r.cachix.org')
 
-            let total_paths = ($closure_paths | length)
-            let pushed_count = ($cache_results | where cached == false | length)
+            let total_paths = ($pub | length)
+            let pushed_count = ($pub | where status == uploaded | length)
             let summary = [
               $"## 🏗️ Build & Cache Summary"
               ""
@@ -119,8 +118,7 @@ jobs:
             $summary | ci github summary
           } else {
             print 'ℹ️ Branch push — skipping cache push'
-            let closure_paths = ($store_path | ci nix closure)
-            $closure_paths | ci nix cache 'https://ck3mp3r.cachix.org' --upstream 'https://cache.nixos.org' --dry-run
+            let pub = ($results | ci nix publish 'https://ck3mp3r.cachix.org' --dry-run)
 
             let summary = [
               $"## 🏗️ Build Summary"
