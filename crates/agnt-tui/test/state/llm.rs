@@ -17,6 +17,9 @@ mod markdown;
 #[path = "llm/stopped.rs"]
 mod stopped;
 
+#[path = "llm/stream_fold.rs"]
+mod stream_fold;
+
 #[path = "llm/support.rs"]
 mod support;
 

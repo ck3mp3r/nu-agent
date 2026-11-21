@@ -101,8 +101,8 @@ fn repo_branch_tracker_updates_on_branch_and_detached_transitions() -> Result<()
     Ok(())
 }
 
-#[test]
-fn repo_branch_tracker_refreshes_on_render_tick_without_terminal_event() -> Result<()> {
+#[tokio::test]
+async fn repo_branch_tracker_refreshes_on_render_tick_without_terminal_event() -> Result<()> {
     let temp_dir =
         tempfile::TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
     let repo = temp_dir.path().join("repo");
@@ -116,7 +116,7 @@ fn repo_branch_tracker_refreshes_on_render_tick_without_terminal_event() -> Resu
     // Switch branch externally, then exercise the render-loop path that the
     // branch watcher triggers: refresh + mark render needed. No terminal event.
     run_git(&repo, &["checkout", "-b", "branch-two"])?;
-    coordinator.refresh_repo_branch();
+    coordinator.refresh_repo_branch().await;
 
     assert_eq!(
         coordinator.repo_branch(),
@@ -163,7 +163,7 @@ async fn branch_watcher_signals_on_git_checkout() -> Result<()> {
         .is_ok();
     assert!(signalled, "branch change should emit a watcher signal");
 
-    coordinator.refresh_repo_branch();
+    coordinator.refresh_repo_branch().await;
     assert_eq!(coordinator.repo_branch(), Some("branch-two"));
     Ok(())
 }

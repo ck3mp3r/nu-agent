@@ -3,6 +3,8 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::runtime::render::RowCache;
+use crate::runtime::render::current_time_millis;
 use crate::runtime::render::transcript::{PaintWindow, paint_transcript_rows};
 
 use super::AppState;
@@ -15,9 +17,7 @@ impl AppState {
         if width == 0 {
             return String::new();
         }
-        if !self.transcript.height_index_valid_for(width) {
-            self.transcript.rebuild_height_index(width);
-        }
+        self.transcript.ensure_height_index(width);
         let total_rows = self.transcript.total_visual_rows();
         if start_row >= total_rows {
             return String::new();
@@ -37,8 +37,17 @@ impl AppState {
             first_row: start_row,
             height: rows,
             top: 0,
+            now_millis: current_time_millis(),
         };
-        paint_transcript_rows(&self.transcript, &window, &mut buffer);
+        // The yank renders a one-off window, so it paints through its own cold
+        // cache: the rows it reads may sit anywhere in the transcript, and they
+        // must not evict the visible frame's canvases.
+        paint_transcript_rows(
+            &self.transcript,
+            &window,
+            &mut RowCache::default(),
+            &mut buffer,
+        );
         let mut text_rows: Vec<String> = Vec::with_capacity(rows);
         for y in 0..area.height {
             let mut text = String::new();

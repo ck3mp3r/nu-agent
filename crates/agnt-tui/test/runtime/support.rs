@@ -3,6 +3,7 @@ use std::time::Instant;
 use crate::interaction::input::{TerminalEvent, TerminalKey};
 use crate::interaction::reducer::RenderInput;
 use crate::runtime::RuntimeCoordinator;
+use crate::runtime::frame_timing::FrameKind;
 use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
 use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
@@ -59,11 +60,16 @@ impl RuntimeCoordinator {
     }
 
     pub(crate) fn render_needed(&self) -> bool {
-        self.render_needed
+        self.pending_frame.is_some()
     }
 
     pub(crate) fn set_render_needed(&mut self, needed: bool) {
-        self.render_needed = needed;
+        self.pending_frame = needed.then_some(FrameKind::Recomposed);
+    }
+
+    /// Fix the frame clock, so a test's frames read the same time twice.
+    pub(crate) fn set_frame_clock_millis(&mut self, now_millis: u128) {
+        self.frame_clock_millis = now_millis;
     }
 
     pub(crate) fn set_last_render_at(&mut self, at: Instant) {

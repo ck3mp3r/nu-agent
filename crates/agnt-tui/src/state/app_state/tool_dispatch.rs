@@ -83,6 +83,10 @@ impl AppState {
                 self.open_info_panel(InfoPanel::Skills);
                 true
             }
+            SharedUiAction::RenderStats => {
+                self.render_stats_visible = !self.render_stats_visible;
+                true
+            }
         }
     }
 }

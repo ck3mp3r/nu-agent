@@ -35,6 +35,10 @@ pub(super) fn handle_submit(
             state.queue_launch_request(SharedUiAction::Themes);
             return true;
         }
+        SlashParseResult::Command(agnt_runtime::protocol::slash::SlashCommand::Stats) => {
+            state.queue_launch_request(SharedUiAction::RenderStats);
+            return true;
+        }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
             state.enqueue_immediate_submission_with_facts(submitted_text, facts);
             return true;

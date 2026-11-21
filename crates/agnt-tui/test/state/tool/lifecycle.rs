@@ -61,12 +61,13 @@ fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
     let entry = tool_entry_at(&preview_state, 0)?;
     assert_eq!(entry.preview.as_ref(), Some(&preview));
 
-    // -- Check: the in-place mutation re-measures only that entry, so the index
-    // stays valid and already carries the preview rows.
+    // -- Check: the in-place mutation defers its measure, so the index stays
+    // valid and the frame's flush carries the preview rows.
     assert!(
         preview_state.transcript.height_index_valid_for(width),
         "an in-place preview mutation must keep the height index valid"
     );
+    preview_state.transcript.ensure_height_index(width);
     assert!(
         preview_state.transcript.total_visual_rows() > rows_before,
         "the preview content must add visual rows"
@@ -78,11 +79,12 @@ fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
 // Preview-path height index (task 69706655)
 // ---------------------------------------------------------------------------
 
-/// `set_tool_preview` mutates the tool entry in place and re-measures only
-/// that entry, so the index stays valid and agrees with a wholesale rebuild,
-/// both when the tool entry is last and when another entry follows it.
+/// `set_tool_preview` mutates the tool entry in place and defers its measure to
+/// the frame, so the index stays valid and the frame's flush agrees with a
+/// wholesale rebuild — both when the tool entry is last and when another entry
+/// follows it.
 #[test]
-fn set_tool_preview_remeasures_to_a_wholesale_index() -> Result<()> {
+fn set_tool_preview_defers_to_the_frame_that_matches_a_wholesale_index() -> Result<()> {
     // -- Setup & Fixtures: a tool call with a valid index at width 80.
     let width = 80usize;
     let mut state = AppState::default();
@@ -102,13 +104,15 @@ fn set_tool_preview_remeasures_to_a_wholesale_index() -> Result<()> {
         &edit_preview(),
     );
 
-    // -- Check: one entry, index still valid, total matches a wholesale rebuild.
+    // -- Check: one entry, index still valid, and the frame's flush matches a
+    // wholesale rebuild.
     assert_eq!(state.transcript.len(), 1);
     assert!(state.transcript.height_index_valid_for(width));
+    state.transcript.ensure_height_index(width);
     assert_eq!(
         state.transcript.total_visual_rows(),
         wholesale_total_rows(&state, width),
-        "the re-measured index must match a wholesale rebuild after a tail preview"
+        "the frame's flush must match a wholesale rebuild after a tail preview"
     );
 
     // -- Setup & Fixtures: a user entry after the tool entry.
@@ -137,18 +141,68 @@ fn set_tool_preview_remeasures_to_a_wholesale_index() -> Result<()> {
     );
 
     // -- Check: the mutation keeps the entry count, leaves the index valid, and
-    // the total matches a wholesale rebuild.
+    // the frame's flush matches a wholesale rebuild.
     assert_eq!(mid.transcript.len(), 2);
     assert!(mid.transcript.height_index_valid_for(width));
+    mid.transcript.ensure_height_index(width);
     assert_eq!(
         mid.transcript.total_visual_rows(),
         wholesale_total_rows(&mid, width),
-        "the re-measured index must match a wholesale rebuild after a mid-list preview"
+        "the frame's flush must match a wholesale rebuild after a mid-list preview"
     );
     Ok(())
 }
 
 // -- Test Support
+
+/// WHEN a card attaches through the tool bookkeeping, THE preview SHALL land on
+/// the entry holding that call — the index-correctness pin.
+#[test]
+fn card_attach_lands_on_the_calls_own_entry() -> Result<()> {
+    // -- Setup & Fixtures: a call in flight, then a user entry, so the call's
+    // entry is not the tail.
+    let width = 80usize;
+    let mut state = AppState::default();
+    state
+        .tool
+        .start_tool_call(&mut state.transcript, &tool_call("edit", EDIT_ARGUMENTS));
+    state
+        .transcript
+        .push_entry(TranscriptEntry::Message(MessageEntry {
+            role: MessageRole::User,
+            markdown: "later turn".to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
+        }));
+    state.transcript.rebuild_height_index(width);
+
+    // -- Exec: the card arrives by key, as a permission request carries it.
+    let attached = state.tool.set_preview_for_key(
+        &mut state.transcript,
+        ToolCallId::new("edit", EDIT_ARGUMENTS).as_str(),
+        &edit_preview(),
+    );
+    assert!(attached, "the in-flight call must take the preview");
+
+    // -- Check: exactly one entry carries the preview and it is the tool entry,
+    // not the user entry that follows it.
+    let with_preview = state
+        .transcript
+        .entries()
+        .iter()
+        .filter(|entry| matches!(entry, TranscriptEntry::Tool(tool) if tool.preview.is_some()))
+        .count();
+    assert_eq!(with_preview, 1, "exactly one entry carries the preview");
+    assert!(
+        matches!(
+            state.transcript.entries().last(),
+            Some(TranscriptEntry::Message(_))
+        ),
+        "the user entry must stay untouched at the tail"
+    );
+    Ok(())
+}
 
 /// The diff preview `set_tool_preview` attaches in these tests.
 fn edit_preview() -> Display {

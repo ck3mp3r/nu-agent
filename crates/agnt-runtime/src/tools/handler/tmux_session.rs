@@ -38,7 +38,8 @@ impl BuiltinTool for TmuxSessionTool {
                     "list-sessions",
                     "-F",
                     "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}",
-                ])?;
+                ])
+                .await?;
                 Ok(serde_json::json!({ "sessions": parse_sessions(&output) }))
             }
             "info" => {
@@ -51,7 +52,8 @@ impl BuiltinTool for TmuxSessionTool {
                     session,
                     "-F",
                     "#{window_index}|#{window_name}|#{window_panes}|#{window_active}",
-                ])?;
+                ])
+                .await?;
                 Ok(serde_json::json!({
                     "session": session,
                     "windows": parse_windows(&output),
@@ -72,7 +74,7 @@ impl BuiltinTool for TmuxSessionTool {
                     cmd.push(dir);
                 }
                 let refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
-                run_tmux(&refs)?;
+                run_tmux(&refs).await?;
                 Ok(serde_json::json!({ "session": name }))
             }
             "kill" => {
@@ -80,7 +82,7 @@ impl BuiltinTool for TmuxSessionTool {
                 let session = args.session.as_deref().ok_or_else(|| {
                     ToolHandlerError::validation("tmux_session kill requires 'session'")
                 })?;
-                run_tmux(&["kill-session", "-t", session])?;
+                run_tmux(&["kill-session", "-t", session]).await?;
                 Ok(serde_json::json!({ "killed": session }))
             }
             other => Err(ToolHandlerError::validation(format!(

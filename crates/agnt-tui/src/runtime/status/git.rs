@@ -48,6 +48,45 @@ pub(crate) struct RepoBranchTracker {
     watch_targets: Vec<PathBuf>,
 }
 
+/// One refresh's result: owned, so it can travel off the loop task.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BranchState {
+    repo_context: Option<GitRepoContext>,
+    branch: Option<String>,
+    watch_targets: Vec<PathBuf>,
+}
+
+impl BranchState {
+    /// Read the branch state for `caller_cwd`, starting from `repo_context` when
+    /// it is already known.
+    ///
+    /// Blocking: it may run `git rev-parse` and it reads git ref files. The
+    /// startup path runs it inline; the loop hands it to the blocking pool.
+    pub(crate) fn compute(
+        caller_cwd: Option<&Path>,
+        repo_context: Option<&GitRepoContext>,
+    ) -> Self {
+        let Some(caller_cwd) = caller_cwd else {
+            return Self::default();
+        };
+        let repo_context = match repo_context {
+            Some(context) => Some(context.clone()),
+            None => discover_git_repo_context(caller_cwd),
+        };
+        let Some(context) = repo_context.as_ref() else {
+            return Self::default();
+        };
+        let head_state = read_head_state(context);
+        let branch = head_state.as_ref().and_then(HeadState::branch_label);
+        let watch_targets = watch_targets_for_context(context, head_state.as_ref());
+        Self {
+            repo_context,
+            branch,
+            watch_targets,
+        }
+    }
+}
+
 impl RepoBranchTracker {
     pub(crate) fn from_caller_cwd(caller_cwd: Option<PathBuf>) -> Self {
         let mut tracker = Self {
@@ -56,7 +95,7 @@ impl RepoBranchTracker {
             branch: None,
             watch_targets: Vec::new(),
         };
-        tracker.refresh_branch_state();
+        tracker.refresh();
         tracker
     }
 
@@ -74,35 +113,41 @@ impl RepoBranchTracker {
         &self.watch_targets
     }
 
-    /// Re-read the current branch. Called when a filesystem event fires.
+    /// Re-read the current branch, inline. The startup path uses it; the render
+    /// loop uses [`Self::refresh_off_loop`] instead.
     pub(crate) fn refresh(&mut self) {
-        self.refresh_branch_state();
+        let state = self.compute_state();
+        self.adopt_state(state);
     }
 
-    fn refresh_branch_state(&mut self) {
-        if self.caller_cwd.is_none() {
-            self.repo_context = None;
-            self.branch = None;
-            self.watch_targets.clear();
-            return;
+    /// Re-read the current branch on the blocking pool, then install the result.
+    ///
+    /// The refresh reads git ref files — blocking file I/O the render loop must
+    /// never run on its own task.
+    pub(crate) async fn refresh_off_loop(&mut self) {
+        let caller_cwd = self.caller_cwd.clone();
+        let repo_context = self.repo_context.clone();
+        let computed = tokio::task::spawn_blocking(move || {
+            BranchState::compute(caller_cwd.as_deref(), repo_context.as_ref())
+        })
+        .await;
+        match computed {
+            Ok(state) => self.adopt_state(state),
+            Err(join_error) => log::warn!("git branch refresh task failed: {join_error}"),
         }
+    }
 
-        if self.repo_context.is_none() {
-            self.repo_context = self
-                .caller_cwd
-                .as_deref()
-                .and_then(discover_git_repo_context);
-        }
+    /// This tracker's next state. Blocking: callers on the render loop hand it
+    /// to the blocking pool instead of running it inline.
+    fn compute_state(&self) -> BranchState {
+        BranchState::compute(self.caller_cwd.as_deref(), self.repo_context.as_ref())
+    }
 
-        let Some(context) = self.repo_context.as_ref() else {
-            self.branch = None;
-            self.watch_targets.clear();
-            return;
-        };
-
-        let head_state = read_head_state(context);
-        self.branch = head_state.as_ref().and_then(HeadState::branch_label);
-        self.watch_targets = watch_targets_for_context(context, head_state.as_ref());
+    /// Install one computed state.
+    fn adopt_state(&mut self, state: BranchState) {
+        self.repo_context = state.repo_context;
+        self.branch = state.branch;
+        self.watch_targets = state.watch_targets;
     }
 }
 

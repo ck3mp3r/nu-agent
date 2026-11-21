@@ -54,7 +54,10 @@ impl HookProcess for NuProcess {
         timeout: Duration,
     ) -> Result<(), HookProcessError> {
         let command = handler_command(script, event);
-        let mut child = tokio::process::Command::new("nu")
+        // The hook child runs at the shared child-priority niceness: a hook that
+        // shells out to a build or a linter is exactly the CPU load the policy
+        // demotes below the UI.
+        let mut child = crate::child_priority::child_command("nu")
             .current_dir(cwd)
             // `--stdin` binds the piped envelope to `$in`; without it a `-c`
             // script has no pipeline input at all.

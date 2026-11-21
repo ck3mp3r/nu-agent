@@ -64,7 +64,7 @@ impl BuiltinTool for TmuxWindowTool {
                     cmd.push(dir);
                 }
                 let refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
-                let output = run_tmux(&refs)?;
+                let output = run_tmux(&refs).await?;
                 let (window_id, window_index) =
                     parse_window_create_output(&output).ok_or_else(|| {
                         ToolHandlerError::runtime(format!(
@@ -88,7 +88,7 @@ impl BuiltinTool for TmuxWindowTool {
                     ToolHandlerError::validation("tmux_window kill requires 'window'")
                 })?;
                 let target = format!("{}:{window}", args.session);
-                run_tmux(&["kill-window", "-t", &target])?;
+                run_tmux(&["kill-window", "-t", &target]).await?;
                 Ok(serde_json::json!({ "killed": target }))
             }
             other => Err(ToolHandlerError::validation(format!(

@@ -29,8 +29,14 @@ mod push_entry;
 #[path = "transcript/shift_indices.rs"]
 mod shift_indices;
 
+#[path = "transcript/stream_fold.rs"]
+mod stream_fold;
+
 #[path = "transcript/support.rs"]
 mod support;
+
+#[path = "transcript/version.rs"]
+mod version;
 
 // The monolith resolved `super::<item>` against `crate::state`.
 // Sub-files now resolve `super::` against this module root, so the shared

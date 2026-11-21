@@ -53,7 +53,8 @@ impl BuiltinTool for TmuxPaneTool {
                     args.session.as_str(),
                     "-F",
                     "#{window_index}",
-                ])?;
+                ])
+                .await?;
                 let mut panes = Vec::new();
                 for window_index in windows.lines().filter(|l| !l.trim().is_empty()) {
                     let output = run_tmux(&[
@@ -62,7 +63,8 @@ impl BuiltinTool for TmuxPaneTool {
                         &format!("{}:{}", args.session, window_index),
                         "-F",
                         "#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}",
-                    ])?;
+                    ])
+                    .await?;
                     panes.extend(parse_panes(&output, &args.session, window_index));
                 }
                 Ok(serde_json::json!({ "panes": panes }))
@@ -81,7 +83,8 @@ impl BuiltinTool for TmuxPaneTool {
                     args.session.as_str(),
                     "-F",
                     "#{window_index}",
-                ])?;
+                ])
+                .await?;
                 let mut panes = Vec::new();
                 for window_index in windows.lines().filter(|l| !l.trim().is_empty()) {
                     let output = run_tmux(&[
@@ -90,7 +93,8 @@ impl BuiltinTool for TmuxPaneTool {
                         &format!("{}:{}", args.session, window_index),
                         "-F",
                         "#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{pane_current_path}",
-                    ])?;
+                    ])
+                    .await?;
                     panes.extend(parse_panes_find(
                         &output,
                         &args.session,
@@ -104,7 +108,8 @@ impl BuiltinTool for TmuxPaneTool {
             "process" => {
                 let target =
                     pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
-                let output = run_tmux(&["display-message", "-t", &target, "-p", "#{pane_pid}"])?;
+                let output =
+                    run_tmux(&["display-message", "-t", &target, "-p", "#{pane_pid}"]).await?;
                 let pid = output.trim().parse::<u64>().map_err(|_| {
                     ToolHandlerError::runtime("failed to parse pane PID from tmux output")
                 })?;
@@ -124,7 +129,7 @@ impl BuiltinTool for TmuxPaneTool {
                     cmd.push(format!("-{lines}"));
                 }
                 let refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
-                let output = run_tmux(&refs)?;
+                let output = run_tmux(&refs).await?;
                 Ok(serde_json::json!({ "content": output }))
             }
             "send" => {
@@ -133,8 +138,8 @@ impl BuiltinTool for TmuxPaneTool {
                 })?;
                 let target =
                     pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
-                run_tmux(&["send-keys", "-t", &target, command, "Enter"])?;
-                let output = run_tmux(&["capture-pane", "-t", &target, "-p"])?;
+                run_tmux(&["send-keys", "-t", &target, command, "Enter"]).await?;
+                let output = run_tmux(&["capture-pane", "-t", &target, "-p"]).await?;
                 Ok(serde_json::json!({ "content": output }))
             }
             "split" => {
@@ -167,7 +172,7 @@ impl BuiltinTool for TmuxPaneTool {
                     cmd.push(dir);
                 }
                 let refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
-                let output = run_tmux(&refs)?;
+                let output = run_tmux(&refs).await?;
                 let new_pane = output.trim().to_string();
                 Ok(serde_json::json!({
                     "session": args.session,
@@ -178,7 +183,7 @@ impl BuiltinTool for TmuxPaneTool {
                 require_force(args.force)?;
                 let target =
                     pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
-                run_tmux(&["kill-pane", "-t", &target])?;
+                run_tmux(&["kill-pane", "-t", &target]).await?;
                 Ok(serde_json::json!({ "killed": target }))
             }
             other => Err(ToolHandlerError::validation(format!(

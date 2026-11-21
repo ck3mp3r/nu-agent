@@ -139,6 +139,12 @@ impl LlmState {
         true
     }
 
+    /// Fold one `InferenceChunk` into the streamed assistant block.
+    ///
+    /// The block is one entry for the whole call: a chunk replaces its markdown
+    /// in place and defers the measure to the frame that paints it, so a burst
+    /// of chunks costs one markdown projection per painted frame instead of one
+    /// per arrival.
     fn assistant_message(
         &mut self,
         store: &mut TranscriptStore,
@@ -157,17 +163,15 @@ impl LlmState {
         // block of its own rather than truncate the answer before it.
         store.key_assistant_stream(inference);
 
-        // If this is the first delta, record where the message starts.
-        // push_entry's unified spacer rule separates the streamed entry from
-        // whatever precedes it (tool entry or previous turn).
+        // If this is the first delta, record where the message starts. The
+        // planner's separator rule separates the streamed entry from whatever
+        // precedes it (tool entry or previous turn).
         if store.assistant_stream_start.is_none() {
             store.assistant_stream_start = Some(store.len());
         }
-
-        // Remove previous rendering of this message
-        if let Some(start) = store.assistant_stream_start {
-            store.truncate(start);
-        }
+        let Some(start) = store.assistant_stream_start else {
+            return false;
+        };
 
         // Pre-scan the RAW accumulated text for a diff signature before paying
         // for a markdown projection of the whole message. A projected line can
@@ -178,22 +182,17 @@ impl LlmState {
         // suppress: missed suppression is cosmetic (duplicate diff text in the
         // stream). Over-detection (raw line has a prefix, projected lines do
         // not) falls through to the dedup path below, so it changes nothing.
-        if aggregated_has_diff_signature(trimmed) {
-            let projected_for_dedup = crate::markdown::render_markdown_lines(trimmed, None);
-            if assistant_diff_regurgitation_is_redundant(store, &projected_for_dedup) {
-                return false;
-            }
+        if aggregated_has_diff_signature(trimmed) && diff_regurgitation_is_redundant(store, trimmed)
+        {
+            // Dropping the block is what the rebuild path did: the regurgitated
+            // text is already on screen in the tool entry, so nothing is stored.
+            store.truncate(start);
+            return false;
         }
 
         // Always follow tail with ListState
         scroll.scroll_transcript_to_bottom();
-        store.push_entry(TranscriptEntry::Message(MessageEntry {
-            role: MessageRole::Assistant,
-            markdown: trimmed.to_string(),
-            timestamp_millis: None,
-            model: None,
-            agent: None,
-        }));
+        store.fold_stream_markdown_at(start, trimmed.to_string());
         true
     }
 }
@@ -221,6 +220,25 @@ fn aggregated_has_diff_signature(trimmed: &str) -> bool {
     trimmed
         .split('\n')
         .any(|line| line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("@@ "))
+}
+
+/// True when the accumulated text only repeats what the last tool entry already
+/// displays.
+///
+/// The projection behind the answer costs a markdown parse of the whole
+/// accumulated text, so it runs at most once per painted frame: the store holds
+/// the answer for the frame's window ([`TranscriptStore::diff_gate`]) and every
+/// later chunk of that window reuses it.
+fn diff_regurgitation_is_redundant(store: &mut TranscriptStore, trimmed: &str) -> bool {
+    if let Some(answer) = store.diff_gate() {
+        return answer;
+    }
+    let started = std::time::Instant::now();
+    let projected = crate::markdown::render_markdown_lines(trimmed, None);
+    store.record_diff_gate_cost(started.elapsed().as_millis());
+    let redundant = assistant_diff_regurgitation_is_redundant(store, &projected);
+    store.set_diff_gate(redundant);
+    redundant
 }
 
 fn assistant_diff_regurgitation_is_redundant(

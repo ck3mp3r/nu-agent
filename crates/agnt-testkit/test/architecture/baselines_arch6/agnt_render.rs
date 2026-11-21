@@ -28,7 +28,6 @@ pub const ROWS: &[&str] = &[
 /// consumer outside it.
 pub const MEMBER_ROWS: &[&str] = &[
     "ARCH-6 agnt-render/src/catalog.rs:28: `CURSOR_SLOT_WIDTH` has no consumer outside `agnt-render`",
-    "ARCH-6 agnt-render/src/catalog.rs:31: `of_entry` has no consumer outside `agnt-render`",
     "ARCH-6 agnt-render/src/catalog.rs:55: `marker` has no consumer outside `agnt-render`",
     "ARCH-6 agnt-render/src/catalog.rs:68: `continuation_marker` has no consumer outside `agnt-render`",
     "ARCH-6 agnt-render/src/catalog.rs:78: `cursor_slot` has no consumer outside `agnt-render`",

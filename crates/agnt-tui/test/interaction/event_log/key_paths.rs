@@ -140,7 +140,7 @@ fn golden_key_permission_card_decision() -> Result<()> {
         },
         Some(&cancel_controller),
     );
-    let effects = state.take_pending_events(&cancel_controller);
+    let effects = deliver_outbound(&mut state, &cancel_controller);
 
     // -- Check
     assert!(changed);

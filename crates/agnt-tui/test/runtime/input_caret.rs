@@ -223,3 +223,93 @@ async fn caret_cell_resets_after_textarea_replacement() -> Result<()> {
     );
     Ok(())
 }
+
+/// The restored draft the pickup tests hand the coordinator: more source lines
+/// than the input box can ever show, so the wrapped height is unambiguous.
+const RESTORED_DRAFT: &str =
+    "line one\nline two\nline three\nline four\nline five\nline six\nline seven\nline eight";
+
+/// The wrapped height the restored draft must reach: every line is one visual
+/// row, so the layout clamps the input box at its maximum.
+const RESTORED_HEIGHT: u16 = crate::rendering::layout::INPUT_MAX_HEIGHT;
+
+/// A wheel notch: an event that carries no draft of its own.
+fn wheel_notch() -> DriveEvent {
+    DriveEvent::Key(TerminalEvent::Mouse(TerminalMouse {
+        up: true,
+        column: 10,
+        row: 10,
+    }))
+}
+
+/// WHEN a wheel notch carries a restored draft, THEN THE pickup SHALL recompute
+/// the input layout once for that event, so the input box paints the restored
+/// draft's wrapped rows instead of the previous draft's height.
+#[tokio::test]
+async fn wheel_event_carrying_a_restored_draft_recomputes_the_input_layout() -> Result<()> {
+    // -- Setup & Fixtures: a restored draft waiting for the next event.
+    let mut driver = RenderLoopDriver::new(80, 30);
+    driver.coordinator_mut().state.input.restored_input_text = Some(RESTORED_DRAFT.to_string());
+    let before = driver.coordinator().layout_recomputes();
+    assert_eq!(
+        driver.coordinator().input_height,
+        1,
+        "the fixture starts at the minimum input height"
+    );
+
+    // -- Exec: the wheel notch carries the pickup; it writes no draft itself.
+    driver.advance_with_frame(&[wheel_notch()]).await?;
+
+    // -- Check: the draft landed, and its height is the one that was computed.
+    assert_eq!(
+        driver.coordinator().textarea.lines().join("\n"),
+        RESTORED_DRAFT,
+        "the wheel notch must carry the restored draft into the textarea"
+    );
+    assert_eq!(
+        driver.coordinator().layout_recomputes() - before,
+        1,
+        "a wheel event has no recompute of its own, so the pickup owes exactly one"
+    );
+    assert_eq!(
+        driver.coordinator().input_height,
+        RESTORED_HEIGHT,
+        "the input box must paint the restored draft's wrapped rows, not the previous height"
+    );
+    // The frame itself: the box is tall enough to show the draft's last two
+    // rows, which a one-row box could not.
+    let frame = driver.buffer_text();
+    assert!(
+        frame.contains("line seven") && frame.contains("line eight"),
+        "the frame must paint the restored draft unclipped; frame:\n{frame}"
+    );
+    Ok(())
+}
+
+/// WHEN a key carries a restored draft, THEN THE event SHALL recompute the
+/// input layout exactly once: the pickup defers to the key's own re-wrap.
+#[tokio::test]
+async fn key_event_carrying_a_restored_draft_recomputes_once() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(80, 30);
+    driver.coordinator_mut().state.input.restored_input_text = Some(RESTORED_DRAFT.to_string());
+    let before = driver.coordinator().layout_recomputes();
+
+    // -- Exec
+    driver
+        .advance_with_frame(&[key(TerminalKey::Char('z'))])
+        .await?;
+
+    // -- Check: one recompute for the event, and the restored draft's height.
+    assert_eq!(
+        driver.coordinator().layout_recomputes() - before,
+        1,
+        "the key path recomputes exactly once: the pickup must not add a second"
+    );
+    assert_eq!(
+        driver.coordinator().input_height,
+        RESTORED_HEIGHT,
+        "the key's own re-wrap must cover the restored draft"
+    );
+    Ok(())
+}

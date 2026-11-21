@@ -291,3 +291,157 @@ fn test_map_crossterm_event_mouse_non_wheel_kinds_are_dropped() {
         assert_eq!(mapped, None, "kind {kind:?} must be dropped");
     }
 }
+
+fn mapped_key(
+    code: crossterm::event::KeyCode,
+    modifiers: crossterm::event::KeyModifiers,
+) -> Option<TerminalEvent> {
+    map_crossterm_event_for_test(crossterm::event::Event::Key(
+        crossterm::event::KeyEvent::new(code, modifiers),
+    ))
+}
+
+#[test]
+fn test_map_crossterm_event_unbound_modifier_chars_are_inert() {
+    // -- Setup & Fixtures: every covered modifier on a letter no arm binds.
+    let cases = [
+        (
+            crossterm::event::KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::CONTROL,
+            "ctrl-f",
+        ),
+        (
+            crossterm::event::KeyCode::Char('v'),
+            crossterm::event::KeyModifiers::CONTROL,
+            "ctrl-v",
+        ),
+        (
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyModifiers::CONTROL,
+            "ctrl-a",
+        ),
+        (
+            crossterm::event::KeyCode::Char('b'),
+            crossterm::event::KeyModifiers::ALT,
+            "alt-b",
+        ),
+        (
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyModifiers::SUPER,
+            "super-a",
+        ),
+        (
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::HYPER,
+            "hyper-x",
+        ),
+        (
+            crossterm::event::KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::META,
+            "meta-y",
+        ),
+        (
+            crossterm::event::KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+            "ctrl-shift-f",
+        ),
+    ];
+
+    // -- Exec & Check
+    for (code, modifiers, label) in cases {
+        assert_eq!(mapped_key(code, modifiers), None, "{label} must not paint");
+    }
+}
+
+#[test]
+fn test_map_crossterm_event_bound_control_chars_keep_their_bindings() {
+    // -- Setup & Fixtures: the seven bound control letters.
+    let cases = [
+        ('c', TerminalKey::CtrlC, "ctrl-c"),
+        ('u', TerminalKey::CtrlU, "ctrl-u"),
+        ('d', TerminalKey::CtrlD, "ctrl-d"),
+        ('p', TerminalKey::CtrlP, "ctrl-p"),
+        ('n', TerminalKey::CtrlN, "ctrl-n"),
+        ('j', TerminalKey::CtrlJ, "ctrl-j"),
+        ('k', TerminalKey::CtrlK, "ctrl-k"),
+    ];
+    let control = crossterm::event::KeyModifiers::CONTROL;
+    let control_shift = control | crossterm::event::KeyModifiers::SHIFT;
+
+    // -- Exec & Check: CONTROL and its SHIFT superset keep the binding.
+    for (ch, expected, label) in cases {
+        assert_eq!(
+            mapped_key(crossterm::event::KeyCode::Char(ch), control),
+            Some(TerminalEvent::Key(expected)),
+            "{label}"
+        );
+        assert_eq!(
+            mapped_key(crossterm::event::KeyCode::Char(ch), control_shift),
+            Some(TerminalEvent::Key(expected)),
+            "{label} with shift"
+        );
+    }
+}
+
+#[test]
+fn test_map_crossterm_event_shift_and_unmodified_chars_still_type() {
+    // -- Setup & Fixtures: capitals arrive as Char with SHIFT only.
+    let cases = [
+        ('A', crossterm::event::KeyModifiers::SHIFT, "shift-a"),
+        ('Z', crossterm::event::KeyModifiers::SHIFT, "shift-z"),
+        ('a', crossterm::event::KeyModifiers::NONE, "plain-a"),
+        ('7', crossterm::event::KeyModifiers::NONE, "plain-7"),
+    ];
+
+    // -- Exec & Check
+    for (ch, modifiers, label) in cases {
+        assert_eq!(
+            mapped_key(crossterm::event::KeyCode::Char(ch), modifiers),
+            Some(TerminalEvent::Key(TerminalKey::Char(ch))),
+            "{label} must still type"
+        );
+    }
+}
+
+#[test]
+fn test_map_crossterm_event_enter_variants_unchanged() {
+    // -- Setup & Fixtures: the three Enter forms.
+    let cases = [
+        (
+            crossterm::event::KeyModifiers::ALT,
+            TerminalKey::AltEnter,
+            "alt-enter",
+        ),
+        (
+            crossterm::event::KeyModifiers::SHIFT,
+            TerminalKey::ShiftEnter,
+            "shift-enter",
+        ),
+        (
+            crossterm::event::KeyModifiers::NONE,
+            TerminalKey::Enter,
+            "enter",
+        ),
+    ];
+
+    // -- Exec & Check
+    for (modifiers, expected, label) in cases {
+        assert_eq!(
+            mapped_key(crossterm::event::KeyCode::Enter, modifiers),
+            Some(TerminalEvent::Key(expected)),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn test_map_crossterm_event_bracketed_paste_unchanged() {
+    // -- Setup & Fixtures: bracketed paste is a separate event kind.
+    let event = crossterm::event::Event::Paste("hello".to_string());
+
+    // -- Exec
+    let mapped = map_crossterm_event_for_test(event);
+
+    // -- Check
+    assert_eq!(mapped, Some(TerminalEvent::Paste("hello".to_string())));
+}

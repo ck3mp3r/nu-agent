@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::interaction::cancel::CancelController;
+use crate::test_support::deliver_outbound;
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 
 /// WHEN prompts queue up while a turn runs, THE pending-event drain SHALL
@@ -20,7 +21,7 @@ fn pending_prompts_drain_once_as_one_prompt_submitted_event() -> Result<()> {
     let controller = CancelController::default();
 
     // -- Exec
-    let events = state.take_pending_events(&controller);
+    let events = deliver_outbound(&mut state, &controller);
 
     // -- Check: one coalesced submission in FIFO order, queue empty.
     let submitted: Vec<&str> = events
@@ -34,7 +35,7 @@ fn pending_prompts_drain_once_as_one_prompt_submitted_event() -> Result<()> {
     assert!(pending_prompt_ids(&state).is_empty());
 
     // -- Exec
-    let again = state.take_pending_events(&controller);
+    let again = deliver_outbound(&mut state, &controller);
 
     // -- Check: a second drain delivers nothing.
     assert!(again.is_empty());

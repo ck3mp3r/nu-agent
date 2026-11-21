@@ -118,18 +118,19 @@ async fn test_runtime_slash_round_trip_picker_tab_accept_hands_off() -> Result<(
     Ok(())
 }
 
-/// WHEN the user opens `/`, moves the highlight onto `/status`, narrows with `s`,
-/// and presses Tab, THE render loop SHALL hand off `/status`: the accept reads
+/// WHEN the user opens `/`, moves the highlight onto `/status`, narrows with `h`,
+/// and presses Tab, THE render loop SHALL hand off `/help`: the accept reads
 /// the highlighted row of the narrowed list, never a stale index.
 #[tokio::test]
 async fn test_runtime_slash_round_trip_picker_narrow_tab_accepts_highlighted() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
 
-    // -- Exec: `/` opens the list; four Down presses highlight /status.
+    // -- Exec: `/` opens the list; five Down presses highlight /status.
     driver
         .advance(&typed_keys(&[
             TerminalKey::Char('/'),
+            TerminalKey::Down,
             TerminalKey::Down,
             TerminalKey::Down,
             TerminalKey::Down,
@@ -141,18 +142,18 @@ async fn test_runtime_slash_round_trip_picker_narrow_tab_accepts_highlighted() -
     assert_eq!(
         driver.state().picker.selected_slash_label().as_deref(),
         Some("/status"),
-        "four Down presses highlight /status"
+        "five Down presses highlight /status"
     );
 
-    // -- Exec: `s` narrows the list; Tab accepts the highlight.
+    // -- Exec: `h` narrows the list; Tab accepts the highlight.
     driver
-        .advance(&[key(TerminalKey::Char('s')), key(TerminalKey::Tab)])
+        .advance(&[key(TerminalKey::Char('h')), key(TerminalKey::Tab)])
         .await?;
 
     // -- Check: the narrowed list's first row is accepted.
     assert_eq!(
         submitted_texts(&driver),
-        vec!["/status"],
+        vec!["/help"],
         "the narrowing must reset the highlight to the first narrowed entry"
     );
     assert!(

@@ -1,8 +1,10 @@
 pub(crate) mod backend;
 pub(crate) mod branch_watcher;
 pub mod coordinator;
+mod frame_timing;
 pub mod layout;
 mod panels;
+pub(crate) mod qos;
 pub(crate) mod render;
 mod renderer;
 mod session_picker;

@@ -782,8 +782,10 @@ CLI flags override config.toml, which overrides built-in defaults.
   - `/new`
   - `/session`
   - `/theme`
+  - `/stats`
 - `/help`, `/status`, `/mcp`, and `/skills` route to the same action handlers as Ctrl-P entries.
 - `/models` and Ctrl-P `Models` route to the same shared model-picker action handler.
+- `/stats` toggles the render-stats band: it sits under the status line at the screen bottom, two rows tall — a data row of counters plus a legend row decoding them — never covers the input box, the status line, or the transcript, and only `/stats` turns it on or off.
 - `/new` clears the transcript, starts a new session, and shows the startup logo.
 - `/new` and a session switch both settle the display the session that left was showing: the status line, an open permission card, the compaction display, and a stranded busy phase do not cross the boundary into the session that arrives. A turn still running keeps its own display.
 - While a turn runs, `/new`, a model switch, and an agent switch apply when that turn finishes, and the status bar says so when the command arrives.
@@ -792,6 +794,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
 - Input soft-wraps at word boundaries; the input box grows up to 6 rows, then scrolls internally keeping the caret visible.
 - The input caret is a buffer cell, not the terminal cursor. Insert mode paints a `▏` bar in the input text style; normal/visual mode reverses the character under the caret. The terminal cursor stays hidden, so the caret does not flicker when the pane repaints.
+- A modifier+letter key with no binding never inserts text: `Ctrl`/`Alt`/`Super`+letter (for example `Ctrl-F`, `Alt-B`) leaves the input unchanged, while `Shift`+letter still types the capital and the bound `Ctrl` letters (`Ctrl-C`, `Ctrl-U`, `Ctrl-D`, `Ctrl-P`, `Ctrl-N`, `Ctrl-J`, `Ctrl-K`) keep their actions.
 
 ### Prompt queue and cancel-on-empty-Enter
 

@@ -9,6 +9,7 @@ fn parse_slash_command_exact_matches() {
         (" /uncompact ", SlashCommand::Uncompact),
         (" /mcp ", SlashCommand::Mcp),
         (" /help ", SlashCommand::Help),
+        (" /stats ", SlashCommand::Stats),
         (" /status ", SlashCommand::Status),
         (" /models ", SlashCommand::Models),
         ("/agent", SlashCommand::Agent),
@@ -40,6 +41,10 @@ fn parse_slash_command_negative_cases() {
         parse_slash_command("/agents"),
         SlashParseResult::Unknown("/agents".to_string())
     );
+    assert_eq!(
+        parse_slash_command("/stats off"),
+        SlashParseResult::Unknown("/stats off".to_string())
+    );
 }
 
 #[test]
@@ -51,6 +56,7 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
             SlashCommand::Uncompact,
             SlashCommand::Mcp,
             SlashCommand::Help,
+            SlashCommand::Stats,
             SlashCommand::Status,
             SlashCommand::Models,
             SlashCommand::Agent,
@@ -72,6 +78,10 @@ fn inline_slash_filter_is_prefix_based_and_deterministic() {
         filter_inline_slash_suggestions("/m"),
         vec![SlashCommand::Mcp, SlashCommand::Models]
     );
+    assert_eq!(
+        filter_inline_slash_suggestions("/st"),
+        vec![SlashCommand::Stats, SlashCommand::Status]
+    );
     assert!(filter_inline_slash_suggestions("/x").is_empty());
     assert!(filter_inline_slash_suggestions("hello").is_empty());
 }
@@ -85,6 +95,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
             SlashCommand::Uncompact,
             SlashCommand::Mcp,
             SlashCommand::Help,
+            SlashCommand::Stats,
             SlashCommand::Status,
             SlashCommand::Models,
             SlashCommand::Agent,
@@ -99,6 +110,7 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert_eq!(SlashCommand::Uncompact.label(), "/uncompact");
     assert_eq!(SlashCommand::Mcp.label(), "/mcp");
     assert_eq!(SlashCommand::Help.label(), "/help");
+    assert_eq!(SlashCommand::Stats.label(), "/stats");
     assert_eq!(SlashCommand::Status.label(), "/status");
     assert_eq!(SlashCommand::Models.label(), "/models");
     assert_eq!(SlashCommand::Agent.label(), "/agent");
@@ -111,6 +123,11 @@ fn slash_command_catalog_exports_expected_labels_and_order() {
     assert!(!SlashCommand::Uncompact.summary().is_empty());
     assert!(!SlashCommand::Mcp.summary().is_empty());
     assert!(!SlashCommand::Help.summary().is_empty());
+    assert_eq!(SlashCommand::Stats.label(), "/stats");
+    assert_eq!(
+        SlashCommand::Stats.summary(),
+        "Toggle the render-stats popup"
+    );
     assert!(!SlashCommand::Status.summary().is_empty());
     assert!(!SlashCommand::Models.summary().is_empty());
     assert!(!SlashCommand::Agent.summary().is_empty());
@@ -133,7 +150,7 @@ fn extract_session_id_variants() {
 }
 
 /// Each slash row names the outcome the user wants, never the mechanism that
-/// carries it: no "Open … panel" copy, and the eleven rows in canonical order.
+/// carries it: no "Open … panel" copy, and the twelve rows in canonical order.
 #[test]
 fn test_slash_command_summaries_name_outcomes() -> Result<()> {
     // -- Setup & Fixtures
@@ -142,6 +159,7 @@ fn test_slash_command_summaries_name_outcomes() -> Result<()> {
         "Undo the newest compaction",
         "Enable or disable MCP servers",
         "View key help",
+        "Toggle the render-stats popup",
         "View runtime status",
         "Switch the active model",
         "Switch agent persona",

@@ -167,6 +167,30 @@ async fn nu_timeout_kills_process_and_returns_error() -> Result<()> {
     Ok(())
 }
 
+/// The tool child must run below the agent: `nu` reports its own niceness, and
+/// the process-group wrapper (`nice`) execs it in place, so the report is the
+/// demotion the policy applied.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore]
+async fn nu_spawn_sets_niceness_10() -> Result<()> {
+    let cancel = CancelTx::new("test", 8);
+    let result = NuTool::execute(
+        &serde_json::json!({"command": "^ps -o ni= -p $nu.pid | str trim"}),
+        Path::new("/tmp"),
+        &cancel,
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))?;
+    let stdout = result["stdout"].as_str().ok_or("stdout must be a string")?;
+    assert_eq!(
+        stdout.trim(),
+        "10",
+        "the nu child must run at niceness 10, got: {stdout:?}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore]
 async fn nu_cancellation_kills_process_quickly() -> Result<()> {

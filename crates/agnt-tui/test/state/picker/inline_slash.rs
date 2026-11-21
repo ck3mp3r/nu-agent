@@ -30,6 +30,7 @@ fn inline_slash_suggestions_lifecycle() -> Result<()> {
             "/uncompact",
             "/mcp",
             "/help",
+            "/stats",
             "/status",
             "/models",
             "/agent",
@@ -102,8 +103,8 @@ fn test_state_picker_inline_slash_selection_resets() -> Result<()> {
     assert_eq!(s.selection, 0, "replacing the options resets the selection");
     assert_eq!(
         s.options.first().map(|o| o.id.as_str()),
-        Some("/status"),
-        "the narrowed list starts at /status"
+        Some("/stats"),
+        "the narrowed list starts at /stats"
     );
 
     // -- Exec: moving down again, then re-listing the full command set.

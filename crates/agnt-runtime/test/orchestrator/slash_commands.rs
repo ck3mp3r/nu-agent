@@ -479,7 +479,7 @@ async fn slash_commands_reuse_command_palette_action_handlers() -> TResult {
         ..Default::default()
     };
     let ui = FakeInteractiveUi::with_prompts(&[
-        "/help", "/status", "/mcp", "/models", "/agent", "/skills",
+        "/help", "/status", "/mcp", "/models", "/agent", "/skills", "/stats",
     ])
     .with_bus(bus.clone());
 
@@ -506,6 +506,7 @@ async fn slash_commands_reuse_command_palette_action_handlers() -> TResult {
             SharedUiAction::Models,
             SharedUiAction::Agents,
             SharedUiAction::Skills,
+            SharedUiAction::RenderStats,
         ]
     );
     assert!(runtime.prompts.is_empty());

@@ -56,6 +56,7 @@ fn inline_slash_command_routing_table() {
         "/uncompact",
         "/mcp",
         "/help",
+        "/stats",
         "/status",
         "/skills",
     ] {
@@ -77,7 +78,7 @@ fn inline_slash_command_routing_table() {
     // Tab on a real inline-slash selection submits the highlighted command.
     let mut state = AppState::default();
     state.check_inline_slash("/");
-    for _ in 0..4 {
+    for _ in 0..5 {
         if let Some(s) = state.picker.active_state_mut() {
             s.move_down();
         }

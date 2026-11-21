@@ -89,6 +89,7 @@ pub enum SharedUiAction {
     Sessions,
     Themes,
     Skills,
+    RenderStats,
 }
 
 /// One ordered, complete lifecycle sequence.

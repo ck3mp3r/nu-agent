@@ -15,7 +15,9 @@ use crate::rendering::{
     chrome::{Chrome, ContainerBorder},
     theme::TuiTheme,
 };
+use crate::runtime::layout::STATS_BAND_ROWS;
 use crate::runtime::panels::{inline_slash_title, render_permission_controls};
+use crate::runtime::render::clock_cells::{ClockCell, ClockGlyph};
 use crate::runtime::render::transcript::blit;
 use crate::runtime::render::{paint_user_rail_row, render_modal_frame};
 use crate::widgets::RatatuiBackend;
@@ -35,7 +37,7 @@ impl RuntimeCoordinator {
         stack_h: u16,
         input_h: u16,
         now_millis: u128,
-    ) {
+    ) -> Vec<ClockCell> {
         // ── Frameless bottom stack ─────────────────────────────────────────
         // A one-row gap (while queued), the stacked-message rows flush above
         // the bordered input box, then the shaded status rows flush below it.
@@ -292,6 +294,12 @@ impl RuntimeCoordinator {
 
         frame.render_widget(Paragraph::new(left_content), status_inner);
 
+        let status_last_row = if right_content.is_some() && !fits_on_one_line {
+            status_inner_2
+        } else {
+            status_inner
+        };
+
         if let Some(right_line) = right_content {
             if fits_on_one_line {
                 frame.render_widget(
@@ -305,6 +313,37 @@ impl RuntimeCoordinator {
                 );
             }
         }
+
+        // ── Render-stats band ─────────────────────────────────────────────
+        // The band starts on the first row under the status section's last
+        // painted row (the info row, or its wrapped companion) and is
+        // `STATS_BAND_ROWS` tall: the data row, then the legend that decodes it.
+        // The height accounting already reserved every row.
+        if self.state.render_stats_visible {
+            self.render_stats_band(
+                frame,
+                Rect {
+                    y: status_last_row.y.saturating_add(1),
+                    height: STATS_BAND_ROWS,
+                    ..status_last_row
+                },
+            );
+        }
+
+        // The busy spinner leads the info row: its glyph names the frame clock,
+        // so a clock-only frame repaints this cell and nothing else of the
+        // status section.
+        if busy_millis.is_none() || status_inner.is_empty() {
+            return Vec::new();
+        }
+        vec![ClockCell {
+            position: Position {
+                x: status_inner.x,
+                y: status_inner.y,
+            },
+            glyph: ClockGlyph::Session,
+            style: self.theme.status_running,
+        }]
     }
 }
 

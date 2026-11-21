@@ -9,6 +9,7 @@
 
 pub mod bus;
 pub mod catalog;
+pub(crate) mod child_priority;
 pub mod config;
 pub mod conversation;
 pub mod hook;

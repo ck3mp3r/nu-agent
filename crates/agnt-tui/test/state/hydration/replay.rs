@@ -2,6 +2,8 @@ use super::*;
 
 // region:    --- Replay
 
+use crate::test_support::deliver_outbound;
+
 /// The determinism invariant: replaying the persisted snapshots equals folding
 /// the same event log live AND reproduces main's hydrated shape — entries,
 /// status tokens, compaction bookkeeping, and every display in the preview slot
@@ -162,7 +164,7 @@ fn test_state_hydration_replay_discards_pending_effects() -> Result<()> {
         "the prompt is history, not work"
     );
     assert_eq!(state.pending_prompt_count(), 0, "nothing waits to run");
-    assert!(state.take_pending_events(&cancel_controller).is_empty());
+    assert!(deliver_outbound(&mut state, &cancel_controller).is_empty());
 
     // -- Check: the drain still placed the user row.
     assert_eq!(
@@ -202,7 +204,7 @@ fn test_state_hydration_replay_places_the_row_and_drains_its_submission() -> Res
     // leaves nothing for a later drain to re-execute, and opens no panel.
     assert_eq!(state.pending_prompt_count(), 0, "nothing waits to run");
     assert!(
-        state.take_pending_events(&cancel_controller).is_empty(),
+        deliver_outbound(&mut state, &cancel_controller).is_empty(),
         "the replay's outbound effects are not re-executed"
     );
     assert!(

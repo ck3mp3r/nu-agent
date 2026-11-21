@@ -114,7 +114,7 @@ pub(super) fn format_pwd(cwd: &Path) -> String {
     tail_ellipsize(&shortened, 40)
 }
 
-pub(super) fn status_indicator(now_millis: Option<u128>) -> &'static str {
+pub(crate) fn status_indicator(now_millis: Option<u128>) -> &'static str {
     match now_millis {
         Some(ms) => {
             let idx = ((ms / SPINNER_CADENCE_MS) % BUSY_SPINNER_FRAMES.len() as u128) as usize;

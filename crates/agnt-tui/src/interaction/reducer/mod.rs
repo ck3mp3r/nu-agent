@@ -10,11 +10,16 @@
 
 mod fold;
 mod keys;
+mod labels;
 mod records;
 mod submit;
 mod support;
 
 pub use fold::{Fold, RenderInput, reduce};
+
+pub(crate) use labels::{
+    narration_kind_label, narration_payload_bytes, record_kind_label, record_payload_bytes,
+};
 
 pub(crate) use records::{prompt_facts, release_turn};
 

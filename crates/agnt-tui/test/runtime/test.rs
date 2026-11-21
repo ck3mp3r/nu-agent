@@ -7,6 +7,7 @@
 // region:    --- Modules
 
 mod branch_resolver;
+mod clock_frame;
 mod command_palette;
 mod compaction;
 mod ctrl_c_guard;
@@ -15,6 +16,7 @@ mod help_panel;
 mod input_caret;
 mod input_cursor;
 mod input_events;
+mod input_layout;
 mod lane_2;
 mod mcp_panel;
 mod permission_lock;
@@ -57,7 +59,7 @@ use crate::test_support::{
 };
 use crate::{
     interaction::{
-        input::{TerminalEvent, TerminalKey},
+        input::{TerminalEvent, TerminalKey, TerminalMouse, TerminalResize},
         reducer::ESC_ABORT_CONFIRM_STATUS,
     },
     platform::safety::RestoreRunError,

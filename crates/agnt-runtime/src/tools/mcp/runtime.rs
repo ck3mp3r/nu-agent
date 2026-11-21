@@ -391,7 +391,11 @@ pub(crate) async fn connect_server(
             let caller = resolve_caller_cwd(caller_cwd, server_name)?;
             let cwd = resolve_stdio_cwd(caller.as_path(), server.cwd.clone(), server_name)?;
 
-            let mut cmd = tokio::process::Command::new(command);
+            // The server runs at the shared child-priority niceness. `nice` execs
+            // it in place, so rmcp's child identity, pipes, and lifecycle are
+            // unchanged; a spawn retry is impossible here, which is why the policy
+            // probes PATH instead.
+            let mut cmd = crate::child_priority::child_command(&command);
             for arg in args {
                 cmd.arg(arg);
             }

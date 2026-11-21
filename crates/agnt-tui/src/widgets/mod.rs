@@ -17,6 +17,7 @@ pub(crate) mod text;
 mod tool;
 
 pub use backend::RatatuiBackend;
+pub(crate) use components::status_style;
 
 // endregion: --- Modules
 

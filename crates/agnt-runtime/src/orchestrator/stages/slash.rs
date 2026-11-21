@@ -71,6 +71,9 @@ impl SlashHandler for SlashStage {
             SlashParseResult::Command(SlashCommand::Help) => {
                 self.request_panel(SharedUiAction::Help, ctx);
             }
+            SlashParseResult::Command(SlashCommand::Stats) => {
+                self.request_panel(SharedUiAction::RenderStats, ctx);
+            }
             SlashParseResult::Command(SlashCommand::Status) => {
                 self.request_panel(SharedUiAction::Status, ctx);
             }

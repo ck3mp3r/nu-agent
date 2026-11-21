@@ -94,15 +94,19 @@ pub(crate) fn paint_user_rail_row(
 }
 
 pub(crate) mod bottom_box;
+pub(crate) mod clock_cells;
 pub(super) mod frame;
 mod modals;
 mod picker_footer;
 mod picker_table;
+mod row_cache;
+mod stats;
 
 pub(crate) use frame::current_time_millis;
 pub(crate) use picker_footer::PickerFooter;
 pub(super) use picker_table::section_head_count;
 pub(crate) mod transcript;
+pub(crate) use row_cache::RowCache;
 
 #[cfg(test)]
 #[path = "../../../test/runtime/render/bottom_box/support.rs"]
@@ -123,6 +127,14 @@ mod bottom_box_input_box_test;
 #[cfg(test)]
 #[path = "../../../test/runtime/render/bottom_box/caret.rs"]
 mod bottom_box_caret_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/render/stats.rs"]
+mod stats_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/render/row_cache.rs"]
+mod row_cache_test;
 
 #[cfg(test)]
 #[path = "../../../test/runtime/render/empty_state.rs"]

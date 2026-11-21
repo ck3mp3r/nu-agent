@@ -1,5 +1,5 @@
-//! Transcript domain store: the entry list, the streaming cursors, and the
-//! measure()-based height index.
+//! Transcript store: the entry list, the streaming cursors, and the deferred
+//! measure a streamed fold leaves for the frame.
 //!
 //! The streaming cursors ([`TranscriptStore::assistant_stream_start`] and
 //! [`TranscriptStore::summary_stream_start`]) are indices into
@@ -13,148 +13,28 @@
 //! `push_entry` is the store's sole push API. The render loop reads entries
 //! directly: the height index measures each entry through the TUI backend, and
 //! [`TranscriptStore::frame_plan`] hands the render layer the entry rows it
-//! paints.
+//! paints. The index itself lives in [`height_index`].
 
-use agnt_render::RenderBackend;
+// region:    --- Modules
+
+mod height_index;
+mod measure;
+mod version;
+
+use height_index::{HeightIndex, entry_metrics, pending_metrics};
+use version::Versions;
+
+pub(crate) use version::EntryVersion;
+
+// endregion: --- Modules
+
 use agnt_render::backend::RowRect;
-use agnt_render::planner::{EntryFamily, FramePlan, LayoutPlanner, PlannedEntry};
-use agnt_render::transcript::entry::TranscriptEntry;
-use agnt_render::transcript::ir::Display;
+use agnt_render::planner::{FramePlan, LayoutPlanner, PlannedEntry};
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::{Display, MessageRole};
 use agnt_runtime::protocol::events::InferenceId;
 
-use crate::widgets::RatatuiBackend;
-
 const MAX_TRANSCRIPT_ENTRIES: usize = 2000;
-
-/// One entry's rows in the frame: the separator rows before it and the total
-/// rows it spans at the indexed width.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HeightEntry {
-    /// Separator rows between the previous entry and this one.
-    gap: usize,
-    /// Total rows this entry spans at the indexed width: `gap` plus the rows
-    /// its own content renders to plus the padding rows the frame keeps inside
-    /// its rect.
-    rows: usize,
-    /// Realized top padding: blank rows between the rect's first row and the
-    /// entry's first content row.
-    padding_top: usize,
-}
-
-/// Cached per-entry inputs to the gap walk: the measured content rows, the
-/// entry family, and the entry's own padding. Derived from the entry's data
-/// once per measurement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EntryMetrics {
-    content_rows: usize,
-    family: EntryFamily,
-    padding: (usize, usize),
-}
-
-/// Cumulative row offsets over the entry list, for O(log n) viewport-window
-/// queries. Maintained incrementally: `metrics` caches each entry's measured
-/// row count at the indexed width, and [`HeightIndex::derive`] walks the entry
-/// list through the planner's gap rules to refresh the offsets. A mutation
-/// measures only the entry it touches — never the whole list.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct HeightIndex {
-    /// Cumulative start row for entry i is `starts[i]`; entry i spans
-    /// `starts[i]..starts[i] + entries[i].rows`.
-    starts: Vec<usize>,
-    entries: Vec<HeightEntry>,
-    total_rows: usize,
-    /// Per-entry measurement inputs at the indexed width, parallel to the
-    /// entry list. Holds content rows only — separator rows depend on the
-    /// neighbour pair, so [`HeightIndex::derive`] re-applies them on every
-    /// walk.
-    metrics: Vec<EntryMetrics>,
-}
-
-impl HeightIndex {
-    /// Wholesale rebuild: measure every entry at `width`, then derive the
-    /// offsets from the fresh cache.
-    ///
-    /// Measurement goes through the backend the render loop paints with, so a
-    /// measured row count and a painted row count cannot drift apart. The
-    /// backend's measure reads no theme data by construction, so any theme
-    /// yields the same row counts.
-    fn rebuild(entries: &[TranscriptEntry], width: usize) -> Self {
-        let mut index = Self {
-            metrics: entries
-                .iter()
-                .map(|entry| entry_metrics(entry, width))
-                .collect(),
-            ..Self::default()
-        };
-        index.derive();
-        index
-    }
-
-    /// Refresh `starts`, `entries`, and `total_rows` from the cached entry
-    /// metrics by walking the entry list through the planner's gap rules.
-    /// O(n) enum-match walk — no markdown projection, no measurement.
-    ///
-    /// Separator rows are a rendering concern (see
-    /// [`agnt_render::LayoutPlanner`]); the store holds content entries only.
-    /// Each entry's span therefore includes the separator rows the renderer
-    /// emits *before* it and the padding rows its own rect carries, so
-    /// `total_visual_rows` and `visible_window` stay in lockstep with the
-    /// rendered output. The leading separator rows belong to the incoming
-    /// entry's span, matching the render loop's emission order. After the last
-    /// entry, the trailing separator rows (a user turn closes with one) are
-    /// added to `total_rows` so the total still matches the rendered output
-    /// (task 670e0292).
-    ///
-    /// Padding is clipped at the frame edges exactly as the planner clips it:
-    /// the first entry keeps no top padding and the last keeps no bottom
-    /// padding, so no outer margin appears and every neighbouring pair totals
-    /// the landed base spacing.
-    fn derive(&mut self) {
-        self.starts.clear();
-        self.entries.clear();
-        self.total_rows = 0;
-        let last_index = self.metrics.len().saturating_sub(1);
-        let mut prev: Option<(EntryFamily, usize)> = None;
-        for (index, metrics) in self.metrics.iter().enumerate() {
-            self.starts.push(self.total_rows);
-            let (top, bottom) = metrics.padding;
-            let padding_top = if prev.is_some() { top } else { 0 };
-            let padding_bottom = if index == last_index { 0 } else { bottom };
-            let separators = prev.map_or(0, |(prev_family, prev_bottom)| {
-                LayoutPlanner::gap_between(prev_family, metrics.family, prev_bottom, padding_top)
-            });
-            let rows = separators + metrics.content_rows + padding_top + padding_bottom;
-            self.entries.push(HeightEntry {
-                gap: separators,
-                rows,
-                padding_top,
-            });
-            self.total_rows += rows;
-            prev = Some((metrics.family, padding_bottom));
-        }
-        self.total_rows += prev.map_or(0, |(family, _)| LayoutPlanner::trailing_gap(family));
-    }
-
-    /// Binary-search the entry index range covering visual rows
-    /// `offset..offset + viewport_height`. Returns `(first, last)` as an
-    /// exclusive-end range; both are 0 when nothing is visible.
-    fn visible_window(&self, offset: usize, viewport_height: usize) -> (usize, usize) {
-        if self.entries.is_empty() || viewport_height == 0 {
-            return (0, 0);
-        }
-        let end_row = offset.saturating_add(viewport_height);
-        // First entry whose end row extends past `offset` — earlier entries
-        // end at or above the viewport top and are scrolled out.
-        let first = self
-            .starts
-            .partition_point(|&start| start <= offset)
-            .saturating_sub(1);
-        // First entry that starts at or past `end_row` — it and everything
-        // after are below the viewport.
-        let last = self.starts.partition_point(|&start| start < end_row);
-        (first, last)
-    }
-}
 
 /// Transcript entry storage shared by every domain reducer. Every mutation
 /// keeps the height index in lockstep (measuring only the entry it touches);
@@ -166,7 +46,7 @@ impl HeightIndex {
 #[derive(Debug, Clone, Default)]
 pub struct TranscriptStore {
     pub(crate) entries: Vec<TranscriptEntry>,
-    pub(crate) height_index: HeightIndex,
+    height_index: HeightIndex,
     pub(crate) height_index_width: Option<usize>,
     pub(crate) assistant_stream_start: Option<usize>,
     /// The completion call the open streamed block belongs to. Set whenever a
@@ -177,6 +57,31 @@ pub struct TranscriptStore {
     /// takes the delta across one event to shift the domain `block_index`
     /// bookkeeping, so no push site has to thread an evicted out-param.
     evicted_total: usize,
+    /// The entries a fold or a push left stale: the paint path re-measures them
+    /// once per frame ([`TranscriptStore::ensure_height_index`]), so a burst of
+    /// chunks costs one measurement per painted frame — and none in the fold.
+    stale_entries: std::collections::VecDeque<usize>,
+    last_remeasure_index: Option<usize>,
+    /// Lifetime count of single-entry re-measures: what the throttle saves is
+    /// the difference between this count and the number of folds.
+    remeasured_total: usize,
+    /// Milliseconds and calls the measure path has spent re-measuring a displaced
+    /// stale entry, and the diff gate has spent re-projecting the answer: the two
+    /// per-arm costs that run inside a measure or a gate read, never inside a
+    /// fold step. The stream arm reports their deltas.
+    remeasure_millis: u128,
+    remeasure_calls: u64,
+    diff_gate_millis: u128,
+    diff_gate_calls: u64,
+    /// One cache identity per entry, parallel to `entries`: eviction drains it
+    /// with the entries, so a survivor keeps the identity it was pushed with.
+    versions: Versions,
+    /// Painted frames that read the index so far. The streamed fold compares it
+    /// to run its whole-text projection at most once per paint window.
+    measure_epoch: usize,
+    /// The diff gate's last answer for the open streamed block, and the epoch it
+    /// was computed in. Cleared when the block is re-keyed or closed.
+    diff_gate: Option<DiffGate>,
 }
 
 impl TranscriptStore {
@@ -186,9 +91,14 @@ impl TranscriptStore {
     /// Returns the number of entries evicted by the cap enforcement (0 when
     /// nothing was evicted) so the caller can shift its `block_index`
     /// bookkeeping by that amount.
+    ///
+    /// The entry's widget projection waits for the frame that paints it
+    /// ([`Self::ensure_height_index`]): the fold arm that pushes a big tool
+    /// result must not pay for wrapping its body.
     pub fn push_entry(&mut self, entry: TranscriptEntry) -> usize {
         self.entries.push(entry);
-        self.cache_pushed_entry();
+        self.versions.push();
+        self.defer_pushed_entry();
         self.enforce_transcript_cap()
     }
 
@@ -203,6 +113,7 @@ impl TranscriptStore {
         if self.assistant_stream_inference != Some(inference) {
             self.assistant_stream_start = None;
             self.assistant_stream_inference = Some(inference);
+            self.diff_gate = None;
         }
     }
 
@@ -211,69 +122,100 @@ impl TranscriptStore {
     pub(crate) fn close_assistant_stream(&mut self) {
         self.assistant_stream_start = None;
         self.assistant_stream_inference = None;
+        self.diff_gate = None;
+    }
+
+    /// The diff gate's answer for the open block in the current paint window.
+    ///
+    /// `None` means this window has not asked yet, so the caller projects the
+    /// text once and records the answer with [`Self::set_diff_gate`]. A window
+    /// is one painted frame: every later fold in the same frame reuses the
+    /// answer, and the frame that reads the index reopens the question.
+    pub(crate) fn diff_gate(&self) -> Option<bool> {
+        let gate = self.diff_gate?;
+        (gate.epoch == self.measure_epoch).then_some(gate.redundant)
+    }
+
+    /// Record the diff gate's answer for the current paint window.
+    pub(crate) fn set_diff_gate(&mut self, redundant: bool) {
+        self.diff_gate = Some(DiffGate {
+            epoch: self.measure_epoch,
+            redundant,
+        });
     }
 
     /// Set the preview on the tool entry at `index` in place. The entry keeps
-    /// its identity, so no companion entry is pushed; only this entry is
-    /// re-measured. Returns whether the entry is a tool entry.
+    /// its identity, so no companion entry is pushed; the entry joins the
+    /// pending set and the frame that paints it measures it — the fold pays
+    /// nothing. Returns whether the entry is a tool entry.
     pub(crate) fn set_tool_preview_at(&mut self, index: usize, preview: Display) -> bool {
         let Some(TranscriptEntry::Tool(tool)) = self.entries.get_mut(index) else {
             return false;
         };
         tool.preview = Some(preview);
-        self.remeasure_entry_at(index);
+        self.bump_revision(index);
+        self.mark_stale(index);
         true
     }
 
     /// Set the completion display on the tool entry at `index` in place. The
-    /// entry keeps its identity, so no companion entry is pushed; only this
-    /// entry is re-measured. Returns whether the entry is a tool entry.
+    /// entry keeps its identity, so no companion entry is pushed; the entry
+    /// joins the pending set and the frame that paints it measures it — the fold
+    /// pays nothing. Returns whether the entry is a tool entry.
     pub(crate) fn set_tool_result_at(&mut self, index: usize, result: Display) -> bool {
         let Some(TranscriptEntry::Tool(tool)) = self.entries.get_mut(index) else {
             return false;
         };
         tool.result = Some(result);
-        self.remeasure_entry_at(index);
+        self.bump_revision(index);
+        self.mark_stale(index);
         true
     }
 
-    /// Measure the entry just pushed, append its metrics to the cache, then
-    /// re-derive the offsets. No-op when the index is stale — the next
-    /// `rebuild_height_index` re-measures everything.
-    fn cache_pushed_entry(&mut self) {
-        let Some(width) = self.height_index_width else {
+    /// Fold one streamed markdown update into the entry at `index`.
+    ///
+    /// The entry keeps its identity: its markdown is replaced and its cached
+    /// rows are marked stale, so a burst of chunks costs one measurement per
+    /// painted frame instead of one per chunk, and no entry is pushed or evicted
+    /// per chunk. When `index` holds no assistant message — the streamed cursor
+    /// was lost — the tail from `index` is dropped and one fresh assistant entry
+    /// is pushed, which is what the pre-fold streaming shape did on every chunk.
+    pub(crate) fn fold_stream_markdown_at(&mut self, index: usize, markdown: String) {
+        let slot_is_streamed = matches!(
+            self.entries.get(index),
+            Some(TranscriptEntry::Message(message)) if message.role == MessageRole::Assistant
+        );
+        if !slot_is_streamed {
+            self.truncate(index);
+            self.push_entry(TranscriptEntry::Message(MessageEntry {
+                role: MessageRole::Assistant,
+                markdown,
+                timestamp_millis: None,
+                model: None,
+                agent: None,
+            }));
             return;
-        };
-        let Some(entry) = self.entries.last() else {
-            return;
-        };
-        self.height_index.metrics.push(entry_metrics(entry, width));
-        self.height_index.derive();
+        }
+        if let Some(TranscriptEntry::Message(message)) = self.entries.get_mut(index) {
+            message.markdown = markdown;
+        }
+        self.mark_stale(index);
     }
 
-    /// Re-measure one entry mutated in place at the indexed width, then
-    /// re-derive the offsets. No-op when the index is stale — the next
-    /// `rebuild_height_index` re-measures everything.
-    pub(crate) fn remeasure_entry_at(&mut self, index: usize) {
-        let Some(width) = self.height_index_width else {
-            return;
-        };
-        let Some(entry) = self.entries.get(index) else {
-            return;
-        };
-        let metrics = entry_metrics(entry, width);
-        let Some(slot) = self.height_index.metrics.get_mut(index) else {
-            return;
-        };
-        *slot = metrics;
-        self.height_index.derive();
+    /// Move entry `index`'s content revision, so no rows parked for its previous
+    /// content are served again. The id stays, so the entry's parked canvas is
+    /// replaced rather than accumulated.
+    ///
+    /// Every mutation site calls this — the in-place setters through
+    /// [`TranscriptStore::remeasure_entry_at`], and a status stamped behind the
+    /// store's back through this method directly.
+    pub(crate) fn bump_revision(&mut self, index: usize) {
+        self.versions.bump(index);
     }
 
-    /// Rebuild the height index from the backend's `measure(entry, width)` for
-    /// every entry.
-    pub(crate) fn rebuild_height_index(&mut self, width: usize) {
-        self.height_index = HeightIndex::rebuild(&self.entries, width);
-        self.height_index_width = Some(width);
+    /// The cache identity of entry `index`: its stable id and current revision.
+    pub(crate) fn entry_version(&self, index: usize) -> Option<EntryVersion> {
+        self.versions.get(index)
     }
 
     /// Mark the height index stale — the next `rebuild_height_index` must
@@ -355,6 +297,7 @@ impl TranscriptStore {
         let overflow = self.entries.len().saturating_sub(MAX_TRANSCRIPT_ENTRIES);
         if overflow > 0 {
             self.entries.drain(..overflow);
+            self.versions.drain(overflow);
             self.evicted_total = self.evicted_total.saturating_add(overflow);
             self.shift_indices_after_eviction(overflow);
             if self.height_index_width.is_some() {
@@ -386,15 +329,27 @@ impl TranscriptStore {
                 None
             }
         });
+
+        // The pending marks address entries by index, so each follows the entry
+        // it names — and drops when that entry was evicted.
+        self.stale_entries = self
+            .stale_entries
+            .drain(..)
+            .filter_map(|marked| marked.checked_sub(evicted_count))
+            .collect();
     }
 
     /// Drop every entry and end the store's lifetime: the eviction count and
     /// the streaming cursors index rows that no longer exist.
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.versions.clear();
         self.height_index = HeightIndex::default();
         self.height_index_width = None;
         self.evicted_total = 0;
+        self.remeasured_total = 0;
+        self.measure_epoch = 0;
+        self.stale_entries.clear();
         self.close_assistant_stream();
         self.summary_stream_start = None;
     }
@@ -414,12 +369,21 @@ impl TranscriptStore {
         self.evicted_total
     }
 
+    /// Lifetime count of single-entry re-measures. A streamed burst of chunks
+    /// leaves one measure per painted frame behind, so the growth of this count
+    /// is what the deferred measure saves.
+    pub(crate) fn remeasured_total(&self) -> usize {
+        self.remeasured_total
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 
     pub(crate) fn truncate(&mut self, len: usize) {
         self.entries.truncate(len);
+        self.versions.truncate(len);
+        self.stale_entries.retain(|&marked| marked < len);
         if self.height_index_width.is_some() {
             self.height_index.metrics.truncate(len);
             self.height_index.derive();
@@ -431,15 +395,17 @@ impl TranscriptStore {
 
 // region:    --- Support
 
-/// Measure one entry through the backend the render loop paints with, and
-/// cache the separator-walk inputs.
-fn entry_metrics(entry: &TranscriptEntry, width: usize) -> EntryMetrics {
-    let probe = RatatuiBackend::new(u16::try_from(width).unwrap_or(u16::MAX), 0);
-    EntryMetrics {
-        content_rows: probe.measure(entry, width),
-        family: EntryFamily::of(entry),
-        padding: entry.padding(),
-    }
+/// The diff gate's answer for the open streamed block, and the measure epoch
+/// (painted frame) it was computed in.
+///
+/// The answer is a memo, not stored state the surface reads: it expires with the
+/// frame that computed it, and [`TranscriptStore::key_assistant_stream`] and
+/// [`TranscriptStore::close_assistant_stream`] drop it when the block they key
+/// is re-keyed or closed. Its whole purpose is to keep a whole-text markdown
+/// projection off the per-chunk fold path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DiffGate {
+    epoch: usize,
+    redundant: bool,
 }
-
 // endregion: --- Support

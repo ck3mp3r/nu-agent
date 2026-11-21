@@ -226,7 +226,7 @@ pub const ROWS: &[&str] = &[
     "ARCH-6 agnt-runtime/src/protocol/skills.rs:172: `resolve_explicit_skill_request_for_cwd` has no consumer outside `agnt-runtime`",
     "ARCH-6 agnt-runtime/src/protocol/skills.rs:180: `discover_skill_catalog` has no consumer outside `agnt-runtime`",
     "ARCH-6 agnt-runtime/src/protocol/skills.rs:236: `resolve_explicit_skill_request` has no consumer outside `agnt-runtime`",
-    "ARCH-6 agnt-runtime/src/protocol/slash.rs:70: `SLASH_COMMAND_ORDER` has no consumer outside `agnt-runtime`",
+    "ARCH-6 agnt-runtime/src/protocol/slash.rs:73: `SLASH_COMMAND_ORDER` has no consumer outside `agnt-runtime`",
     "ARCH-6 agnt-runtime/src/session/blocking.rs:33: `PoolError` has no consumer outside `agnt-runtime`",
     "ARCH-6 agnt-runtime/src/session/factory.rs:14: `RigStoreError` has no consumer outside `agnt-runtime`",
     "ARCH-6 agnt-runtime/src/session/factory.rs:53: `create_rig_store_at` has no consumer outside `agnt-runtime`",

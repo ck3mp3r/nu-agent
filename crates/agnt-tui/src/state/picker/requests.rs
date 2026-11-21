@@ -68,6 +68,16 @@ impl AppState {
         self.pending_theme_persist.pop_front()
     }
 
+    /// The theme name waiting to be persisted, without taking it.
+    pub(crate) fn theme_persist_request(&self) -> Option<&str> {
+        self.pending_theme_persist.front().map(String::as_str)
+    }
+
+    /// Drop the theme name that was just handed to the command layer.
+    pub(crate) fn delivered_theme_persist_request(&mut self) {
+        self.pending_theme_persist.pop_front();
+    }
+
     pub fn queue_launch_request(&mut self, action: SharedUiAction) {
         self.pending_launch.push_back(action);
         self.disarm_abort();

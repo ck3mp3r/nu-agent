@@ -7,6 +7,17 @@
 //! turn borders it, which is a fact about two neighbours, not about one entry.
 //! The pane also owns the cursor slot and the selection overlay: the backend
 //! paints entry content only.
+//!
+//! One entry's own rows — its canvas, the rows the window copies out of it, and
+//! the cell whose glyph names the frame clock — live in [`entry_paint`].
+
+// region:    --- Modules
+
+mod entry_paint;
+
+use entry_paint::{animated_indicator_cell, paint_entry_rows};
+
+// endregion: --- Modules
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect};
@@ -14,17 +25,17 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
-use agnt_render::backend::RowRect;
+use agnt_render::Theme;
 use agnt_render::planner::PlannedEntry;
 use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::transcript::ir::MessageRole;
-use agnt_render::{RenderBackend, Theme};
 
 use crate::rendering::theme::TuiTheme;
-use crate::runtime::render::frame::current_time_millis;
+use crate::runtime::render::clock_cells::ClockCell;
 use crate::runtime::render::paint_user_rail_row;
+use crate::runtime::render::row_cache::RowCache;
 use crate::state::{InputMode, PaneFocus, TranscriptStore};
-use crate::widgets::RatatuiBackend;
+use crate::widgets::PaintCtx;
 
 use crate::runtime::RuntimeCoordinator;
 
@@ -37,25 +48,25 @@ impl RuntimeCoordinator {
         transcript_following_tail: bool,
         transcript_scroll_offset: usize,
         rendered_scroll_offset: &mut Option<usize>,
-    ) {
+    ) -> Vec<ClockCell> {
         frame.render_widget(Clear, transcript_content_area);
         frame.render_widget(
             Block::default().style(Style::default().bg(self.theme.base)),
             transcript_content_area,
         );
         if transcript_content_area.height == 0 {
-            return;
+            return Vec::new();
         }
         let width = transcript_list_area.width as usize;
         let viewport_height = transcript_list_area.height as usize;
         if width == 0 || viewport_height == 0 {
-            return;
+            return Vec::new();
         }
 
-        // Rebuild the height index when stale (entries added, evicted, or resize)
-        if !self.state.transcript.height_index_valid_for(width) {
-            self.state.transcript.rebuild_height_index(width);
-        }
+        // Settle the height index before anything reads it: a wholesale rebuild
+        // when the width changed, and the one re-measure a streamed fold left
+        // pending — so a burst of chunks costs one measurement per frame.
+        self.state.transcript.ensure_height_index(width);
 
         let total_visual_rows = self.state.transcript.total_visual_rows();
         self.state.scroll.viewport_height = viewport_height;
@@ -80,6 +91,7 @@ impl RuntimeCoordinator {
             first_row: effective_offset,
             height: viewport_height,
             top: top_pad,
+            now_millis: self.frame_clock_millis,
         };
 
         let mut canvas = Buffer::empty(Rect::new(
@@ -88,7 +100,12 @@ impl RuntimeCoordinator {
             u16::try_from(width).unwrap_or(u16::MAX),
             u16::try_from(viewport_height).unwrap_or(u16::MAX),
         ));
-        paint_transcript_rows(&self.state.transcript, &window, &mut canvas);
+        let clock_cells = paint_transcript_rows(
+            &self.state.transcript,
+            &window,
+            &mut self.row_cache,
+            &mut canvas,
+        );
         blit(frame.buffer_mut(), &canvas, transcript_list_area);
 
         // Post-render buffer manipulation: apply selection highlight to visual rows
@@ -137,13 +154,19 @@ impl RuntimeCoordinator {
                 &mut scrollbar_state,
             );
         }
+
+        clock_cells
+            .into_iter()
+            .map(|cell| cell.offset_by(transcript_list_area))
+            .collect()
     }
 }
 
 // region:    --- Paint
 
-/// One paint pass's frame-wide inputs: the width, the absolute row window, and
-/// where that window lands in the target buffer.
+/// One paint pass's frame-wide inputs: the width, the absolute row window,
+/// where that window lands in the target buffer, and the frame clock the rows
+/// read.
 pub(crate) struct PaintWindow<'a> {
     pub theme: &'a TuiTheme,
     pub width: usize,
@@ -153,6 +176,8 @@ pub(crate) struct PaintWindow<'a> {
     pub height: usize,
     /// Buffer row that hosts `first_row`.
     pub top: usize,
+    /// The frame clock the rows read: an in-progress indicator cycles with it.
+    pub now_millis: u128,
 }
 
 impl PaintWindow<'_> {
@@ -172,19 +197,34 @@ impl PaintWindow<'_> {
 /// Pure apart from the frame clock: no scroll state, no terminal. The pane and
 /// the yank path both render through it, so the visible frame and the copied
 /// text cannot drift apart.
+///
+/// `cache` carries each entry's painted rows from one frame to the next. It is
+/// a memo, never a source of truth: the bytes are the same whether a frame
+/// blits a parked canvas or re-renders the entry.
+///
+/// Returns the cells whose glyph reads the frame clock, in buffer coordinates.
 pub(crate) fn paint_transcript_rows(
     store: &TranscriptStore,
     window: &PaintWindow<'_>,
+    cache: &mut RowCache,
     buf: &mut Buffer,
-) {
+) -> Vec<ClockCell> {
     if window.width == 0 || window.height == 0 {
-        return;
+        return Vec::new();
     }
     let (first, last) = store.visible_window(window.first_row, window.height);
     let plan = store.frame_plan(first, last, window.width);
     let entries = store.entries();
     let paint_theme = Theme::from(window.theme);
-    let now_millis = current_time_millis();
+    let now_millis = window.now_millis;
+    // A width or theme that moved since the last frame drops every parked
+    // canvas, before this frame reads one.
+    cache.begin_frame(window.width, paint_theme);
+    let ctx = PaintCtx {
+        theme: &paint_theme,
+        now_millis,
+    };
+    let mut clock_cells: Vec<ClockCell> = Vec::new();
 
     for planned in &plan.entries {
         let Some(entry) = entries.get(planned.index) else {
@@ -195,7 +235,18 @@ pub(crate) fn paint_transcript_rows(
             .checked_sub(1)
             .and_then(|index| entries.get(index));
         paint_gap_rows(buf, planned, previous, entry, window);
-        paint_entry_rows(buf, planned, entry, window, &paint_theme, now_millis);
+        paint_entry_rows(
+            buf,
+            planned,
+            entry,
+            store.entry_version(planned.index),
+            window,
+            ctx,
+            cache,
+        );
+        if let Some(cell) = animated_indicator_cell(planned, entry, window, &paint_theme) {
+            clock_cells.push(cell);
+        }
     }
 
     if let Some(planned) = plan.entries.last() {
@@ -214,6 +265,8 @@ pub(crate) fn paint_transcript_rows(
             );
         }
     }
+
+    clock_cells
 }
 
 /// Paint the separator rows before one planned entry. The first row of a run
@@ -267,62 +320,6 @@ fn paint_gap_row(buf: &mut Buffer, y: usize, width: usize, theme: &TuiTheme, ble
     }
     if bleed {
         paint_user_rail_row(buf, y, usize::from(width), theme);
-    }
-}
-
-/// Paint one planned entry's visible rows. The entry renders into a backend
-/// sized to its own row rect at row 0, so a partially scrolled entry copies the
-/// rows the window shows rather than the rows above it.
-fn paint_entry_rows(
-    buf: &mut Buffer,
-    planned: &PlannedEntry,
-    entry: &TranscriptEntry,
-    window: &PaintWindow<'_>,
-    theme: &Theme,
-    now_millis: u128,
-) {
-    if planned.rect.rows == 0 {
-        return;
-    }
-    let visible_start = planned.rect.row.max(window.first_row);
-    let visible_end = planned
-        .rect
-        .end()
-        .min(window.first_row.saturating_add(window.height));
-    if visible_start >= visible_end {
-        return;
-    }
-    let Ok(rows) = u16::try_from(planned.rect.rows) else {
-        return;
-    };
-    let mut backend = RatatuiBackend::new(u16::try_from(window.width).unwrap_or(u16::MAX), rows);
-    backend.set_now_millis(now_millis);
-    backend.render(
-        entry,
-        RowRect::new(0, window.width, planned.rect.rows)
-            .with_content_offset(planned.rect.content_offset),
-        theme,
-    );
-
-    let canvas = backend.buffer();
-    for row in visible_start..visible_end {
-        let Ok(source_y) = u16::try_from(row - planned.rect.row) else {
-            continue;
-        };
-        let Ok(target_y) = u16::try_from(window.buffer_row(row)) else {
-            continue;
-        };
-        for x in 0..canvas.area.width {
-            let Some(cell) = canvas.cell((x, source_y)) else {
-                continue;
-            };
-            if *cell == Cell::EMPTY {
-                continue;
-            }
-            if let Some(target) = buf.cell_mut((x, target_y)) {
-                *target = cell.clone();
-            }
-        }
     }
 }
 

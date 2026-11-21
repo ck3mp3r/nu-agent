@@ -207,11 +207,18 @@ impl ToolState {
             None => ItemStatus::Unknown,
         };
         let success = status.map(|status| matches!(status, ToolStatus::Success));
-        super::tool_calls::ToolCallBookkeeping::new(
+        let index = super::tool_calls::ToolCallBookkeeping::new(
             &mut self.calls,
             &mut self.active_ids_by_key,
             &mut self.next_call_id,
         )
-        .finish_tool_call(id, success, store.entries_mut(), item_status)
+        .finish_tool_call(id, success, store.entries_mut(), item_status);
+        // The bookkeeping stamps the entry's status through the entry slice, so
+        // the store has to be told: the rows parked for the old glyph describe
+        // content that is no longer on screen.
+        if let Some(index) = index {
+            store.bump_revision(index);
+        }
+        index
     }
 }

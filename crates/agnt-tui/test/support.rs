@@ -9,8 +9,27 @@ use agnt_runtime::protocol::events::{
     ToolRecord, TurnRecord, Usage,
 };
 
+use crate::interaction::cancel::CancelController;
 use crate::interaction::reducer::{RenderInput, reduce};
-use crate::state::{ActivePicker, AppState, CommandPaletteAction, PickerOption, PickerPayload};
+use crate::state::{
+    ActivePicker, AppState, CommandPaletteAction, OutboundDelivery, PickerOption, PickerPayload,
+};
+
+/// Every effect the state has queued, delivered in production order through the
+/// loop's own non-blocking path into a test channel.
+pub(crate) fn deliver_outbound(
+    state: &mut AppState,
+    cancel_controller: &CancelController,
+) -> Vec<agnt_runtime::orchestrator::events::OrchestratorEvent> {
+    state.enqueue_pending_events(cancel_controller);
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(256);
+    while state.try_deliver_outbound(&event_tx) == OutboundDelivery::Sent {}
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    events
+}
 
 /// Fold one stream record through the reducer, exactly as the render loop does.
 pub(crate) fn fold_record(state: &mut AppState, record: SessionRecord) -> bool {

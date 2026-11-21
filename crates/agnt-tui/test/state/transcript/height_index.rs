@@ -178,21 +178,27 @@ fn height_index_rows_match_backend_measure() -> Result<()> {
 /// rebuild of the same blocks, and every block's start row matches that
 /// rebuild. The per-block comparison pins the splice POSITION: a wrong-position
 /// splice keeps the index "valid" and the total equal while relocating rows.
+///
+/// The comparison settles the index first, exactly as the paint does: a push
+/// hands its entry to the frame's deferred measure, so the rows a pushed entry
+/// adds are the frame's to count.
 fn assert_incremental_matches(state: &AppState, width: usize, context: &str) -> Result<()> {
     assert!(
         state.transcript.height_index_valid_for(width),
         "index must stay valid {context}"
     );
+    let mut settled = state.transcript.clone();
+    settled.ensure_height_index(width);
     let mut wholesale = state.transcript.clone();
     wholesale.rebuild_height_index(width);
     assert_eq!(
-        state.transcript.total_visual_rows(),
+        settled.total_visual_rows(),
         wholesale.total_visual_rows(),
         "incremental total must equal a wholesale rebuild {context}"
     );
     for index in 0..state.transcript.entries().len() {
         assert_eq!(
-            state.transcript.start_row_of(index),
+            settled.start_row_of(index),
             wholesale.start_row_of(index),
             "incremental start row of block {index} must equal a wholesale rebuild {context}"
         );

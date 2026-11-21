@@ -1,22 +1,43 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use agnt_render::transcript::ir::ToolName;
 use agnt_runtime::bus::{Bus, LifecycleEvent};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::contracts::UiMessageSnapshot;
-use agnt_runtime::protocol::events::{PermissionRecord, RequestId, SessionRecord, TurnRecord};
+use agnt_runtime::protocol::events::{
+    PermissionRecord, RequestId, SessionRecord, ToolCall, ToolRecord, TurnRecord,
+};
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
-use crate::interaction::input::{TerminalEvent, TerminalKey};
+use crate::interaction::input::{TerminalEvent, TerminalInput, TerminalKey};
 use crate::runtime::RuntimeCoordinator;
 use crate::test_support::entry_text;
 
-use super::{TuiInteractiveUi, run_render_loop};
+use super::{STREAM_DRAIN_MAX, TuiInteractiveUi, run_render_loop};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+// region:    --- Modules
+
+#[path = "interactive/drain_bound.rs"]
+mod drain_bound;
+
+#[path = "interactive/delivery.rs"]
+mod delivery;
+
+// endregion: --- Modules
+
 fn make_ui() -> TuiInteractiveUi {
     TuiInteractiveUi::new(crate::runtime::TuiRuntimeRenderer::new(120, 30))
+}
+
+/// One terminal event stamped with the instant it is sent.
+fn stamped(event: TerminalEvent) -> TerminalInput {
+    TerminalInput {
+        event,
+        read_at: Instant::now(),
+    }
 }
 
 #[test]
@@ -195,7 +216,7 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let cancel_controller = CancelController::default();
     let (event_tx, mut event_rx) = mpsc::channel::<OrchestratorEvent>(64);
-    let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalEvent>(64);
+    let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalInput>(64);
     let (_branch_tx, branch_rx) = mpsc::channel::<()>(8);
     // The loop only needs the terminal for its backend type; no live terminal is
     // opened, so the test backend stands in for the crossterm one.
@@ -224,12 +245,12 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     // Submit the first prompt and let the render loop drain it.
     for key in [TerminalKey::Char('h'), TerminalKey::Char('i')] {
         terminal_tx
-            .send(TerminalEvent::Key(key))
+            .send(stamped(TerminalEvent::Key(key)))
             .await
             .map_err(|_| "should send char")?;
     }
     terminal_tx
-        .send(TerminalEvent::Key(TerminalKey::Enter))
+        .send(stamped(TerminalEvent::Key(TerminalKey::Enter)))
         .await
         .map_err(|_| "should submit first")?;
     let first = event_rx
@@ -245,12 +266,12 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     // pending_prompt_ids but must NOT be drained yet (active prompt still set).
     for key in [TerminalKey::Char('x')] {
         terminal_tx
-            .send(TerminalEvent::Key(key))
+            .send(stamped(TerminalEvent::Key(key)))
             .await
             .map_err(|_| "should send x")?;
     }
     terminal_tx
-        .send(TerminalEvent::Key(TerminalKey::Enter))
+        .send(stamped(TerminalEvent::Key(TerminalKey::Enter)))
         .await
         .map_err(|_| "should submit second")?;
     // The stacked prompt must not drain while the turn is active. Await the
@@ -295,5 +316,69 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
 
     drop(terminal_tx);
     let _ = tokio::time::timeout(Duration::from_millis(500), loop_handle).await;
+    Ok(())
+}
+
+/// WHEN a terminal event's read instant is 300 ms in the past, THE loop SHALL
+/// record that wait: the fold is fast, and the wait is the starvation signal.
+#[tokio::test]
+async fn stale_key_stamp_records_the_input_wait() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = Bus::default();
+    let bus_for_loop = bus.clone();
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    let cancel_controller = CancelController::default();
+    let (event_tx, _event_rx) = mpsc::channel::<OrchestratorEvent>(64);
+    let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalInput>(64);
+    let (_branch_tx, branch_rx) = mpsc::channel::<()>(8);
+    let mut live: Option<&mut ratatui::Terminal<ratatui::backend::TestBackend>> = None;
+
+    // The loop hands the coordinator back when its terminal channel closes, so
+    // the test can read what the loop recorded.
+    let loop_handle = tokio::spawn(async move {
+        run_render_loop(
+            &mut coordinator,
+            &cancel_controller,
+            event_tx,
+            terminal_rx,
+            &mut live,
+            crate::interactive::RenderLoopChannels {
+                branch_rx,
+                theme_persist_tx: None,
+                stream: bus_for_loop.stream(),
+                narration: bus_for_loop.narration(),
+                control: bus_for_loop.control(),
+                lifecycle: bus_for_loop.lifecycle(),
+                facts: bus_for_loop.facts(),
+            },
+        )
+        .await;
+        coordinator
+    });
+
+    // -- Exec: one key whose read instant is 300 ms in the past.
+    let read_at = Instant::now()
+        .checked_sub(Duration::from_millis(300))
+        .ok_or("should construct a past instant")?;
+    terminal_tx
+        .send(TerminalInput {
+            event: TerminalEvent::Key(TerminalKey::Char('h')),
+            read_at,
+        })
+        .await
+        .map_err(|_| "should send the stale key")?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(terminal_tx);
+    let coordinator = tokio::time::timeout(Duration::from_secs(1), loop_handle)
+        .await
+        .map_err(|_| "the loop must exit when the terminal channel closes")?
+        .map_err(|err| format!("the loop task must not panic: {err}"))?;
+
+    // -- Check
+    let wait = coordinator.arm_timing().last_input_wait_millis();
+    assert!(
+        wait >= 250,
+        "a key read 300 ms ago must record a wait of at least 250 ms, got: {wait}"
+    );
     Ok(())
 }

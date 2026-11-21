@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::test_support::{
-    fold_record, fold_turn_completed, inference_started, peer_prompt_record,
+    deliver_outbound, fold_record, fold_turn_completed, inference_started, peer_prompt_record,
 };
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 
@@ -88,7 +88,7 @@ fn test_interaction_abort_cancel_queue_less_confirms_on_the_second_press() -> Re
         state.prompt_items().is_empty(),
         "the queue holds nothing the peer turn created"
     );
-    let events = state.take_pending_events(&cancel_controller);
+    let events = deliver_outbound(&mut state, &cancel_controller);
     assert!(
         events
             .iter()
@@ -180,7 +180,7 @@ fn test_interaction_abort_cancel_queue_less_settle_owes_the_notice() -> Result<(
         !cancel_controller.is_cancel_requested(),
         "an arm lost to a settle must not cancel retroactively"
     );
-    let events = state.take_pending_events(&cancel_controller);
+    let events = deliver_outbound(&mut state, &cancel_controller);
     assert!(
         !events
             .iter()
@@ -200,7 +200,7 @@ fn test_interaction_abort_cancel_queue_less_slash_immediate_arms_and_cancels() -
     let mut state = AppState::default();
     let cancel_controller = CancelController::default();
     state.enqueue_immediate_submission("/compact".to_string());
-    let _ = state.take_pending_events(&cancel_controller);
+    state.discard_pending_events(&cancel_controller);
     fold_record(&mut state, inference_started());
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(state.input_locked, "a live turn holds the input lock");
@@ -302,7 +302,7 @@ fn test_interaction_abort_cancel_queue_less_queue_cycle_arms_confirms_and_restor
         Some("w".to_string()),
         "the queue cancel restores the submitted text to the input"
     );
-    let events = state.take_pending_events(&cancel_controller);
+    let events = deliver_outbound(&mut state, &cancel_controller);
     assert!(
         events
             .iter()

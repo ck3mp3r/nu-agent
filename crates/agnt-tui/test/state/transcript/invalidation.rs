@@ -2,8 +2,8 @@ use super::*;
 
 use crate::state::CompactionStatus;
 
-/// In-place tool mutations re-measure only the mutated entry: the index stays
-/// valid at the current width and its geometry equals a wholesale rebuild.
+/// In-place tool mutations defer their measure to the frame: the index stays
+/// valid at the current width, and the frame's flush equals a wholesale rebuild.
 #[test]
 fn test_transcript_store_set_tool_result_at_keeps_the_height_index_valid() -> Result<()> {
     // -- Setup & Fixtures: an indexed store whose tool entry has a preview.
@@ -21,17 +21,18 @@ fn test_transcript_store_set_tool_result_at_keeps_the_height_index_valid() -> Re
         "the entry must be a tool entry"
     );
 
-    // -- Check: the index is still valid and matches a wholesale rebuild.
+    // -- Check: the index is still valid, and the frame's flush matches.
     assert!(
         state.transcript.height_index_valid_for(width),
         "an in-place result must not invalidate the height index"
     );
+    state.transcript.ensure_height_index(width);
     assert_matches_wholesale(&state, width, "after set_tool_result_at")?;
     Ok(())
 }
 
-/// The preview path behaves like the result path: the mutated entry is
-/// re-measured in place and the index stays valid.
+/// The preview path behaves like the result path: the frame's flush measures the
+/// mutated entry and the index stays valid.
 #[test]
 fn test_transcript_store_set_tool_preview_at_keeps_the_height_index_valid() -> Result<()> {
     // -- Setup & Fixtures
@@ -54,7 +55,61 @@ fn test_transcript_store_set_tool_preview_at_keeps_the_height_index_valid() -> R
         state.transcript.height_index_valid_for(width),
         "an in-place preview must not invalidate the height index"
     );
+    state.transcript.ensure_height_index(width);
     assert_matches_wholesale(&state, width, "after set_tool_preview_at")?;
+    Ok(())
+}
+
+/// WHEN a card attaches to a tool entry while another entry is pending, THE
+/// fold SHALL measure nothing, and THE frame's flush SHALL measure both once.
+///
+/// The second seam: before the deferral the attach path measured its target
+/// eagerly, so a permission fold paid a full widget projection.
+#[test]
+fn test_transcript_store_tool_card_attach_defers_to_the_frame() -> Result<()> {
+    // -- Setup & Fixtures: a measured store whose tail entry is a tool call.
+    let width = 60;
+    let mut state = AppState::default();
+    push_user(&mut state, "run the edit");
+    state.transcript.push_entry(tool_entry());
+    state.transcript.rebuild_height_index(width);
+    let (_, calls_before) = state.transcript.remeasure_cost();
+    let tool_index = state.transcript.len() - 1;
+
+    // -- Exec: the card attaches — the fold's only measure candidate.
+    assert!(
+        state
+            .transcript
+            .set_tool_preview_at(tool_index, code_display()),
+        "the tail entry must be a tool entry"
+    );
+    let (_, calls_in_fold) = state.transcript.remeasure_cost();
+
+    // -- Check: the attach path measured nothing.
+    assert_eq!(
+        calls_in_fold, calls_before,
+        "a card attach must not measure inside the fold"
+    );
+
+    // -- Exec: the frame reads the index.
+    state.transcript.ensure_height_index(width);
+
+    // -- Check: the frame measured the card's entry once, and it is the entry
+    // the warn will name.
+    assert_eq!(
+        state
+            .transcript
+            .remeasure_cost()
+            .1
+            .saturating_sub(calls_before),
+        1,
+        "the frame measures the card's entry once"
+    );
+    assert_eq!(
+        state.transcript.last_remeasure_index(),
+        Some(tool_index),
+        "the warn names the last entry the frame measured"
+    );
     Ok(())
 }
 

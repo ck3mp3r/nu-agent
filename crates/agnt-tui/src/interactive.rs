@@ -2,7 +2,7 @@ use agnt_runtime::bus::{Control, Facts, Lifecycle, Narration, Stream};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use tokio::sync::mpsc;
 
-use crate::interaction::input::TerminalEvent;
+use crate::interaction::input::TerminalInput;
 use crate::runtime::map_crossterm_event;
 use crate::runtime::{RuntimeCoordinator, TuiRuntimeRenderer};
 use crate::state::{ActivePicker, PickerOption};
@@ -48,6 +48,12 @@ pub(crate) const RENDER_TICK: std::time::Duration =
 /// bound waits for the next pass, so the bus lanes always get an arm and never
 /// starve behind a burst of keys.
 pub(crate) const INPUT_BURST_DRAIN_MAX: usize = 32;
+
+/// Most bus records one stream arm folds. A drain past the bound leaves the
+/// tail on the ring — FIFO, published order intact — so it folds on later
+/// wakes and the terminal arm gets an arm between them: however deep the queue,
+/// one keypress never waits behind the whole burst.
+pub(crate) const STREAM_DRAIN_MAX: usize = 64;
 
 impl TuiInteractiveUi {
     pub fn new(renderer: TuiRuntimeRenderer) -> Self {
@@ -232,30 +238,49 @@ impl TuiInteractiveUi {
             if let Err(err) = spawn_terminal_input(terminal_tx) {
                 log::warn!("{err}");
             }
-            tokio::spawn(async move {
-                let mut coordinator = coordinator;
-                let mut live = live_terminal;
-                let mut live_ref = live.as_mut().map(|l| &mut l.terminal);
-                let _branch_watcher = branch_watcher;
-                let channels = RenderLoopChannels {
-                    branch_rx,
-                    theme_persist_tx,
-                    stream: bus.stream(),
-                    narration: bus.narration(),
-                    control: bus.control(),
-                    lifecycle: bus.lifecycle(),
-                    facts: bus.facts(),
-                };
-                run_render_loop(
-                    &mut coordinator,
-                    &cancel_controller,
-                    event_tx,
-                    terminal_rx,
-                    &mut live_ref,
-                    channels,
-                )
-                .await;
-            });
+            // The loop gets its own thread driving its own current-thread
+            // runtime. Every input it consumes arrives over runtime-agnostic
+            // tokio channels, so nothing ties it to the shared worker pool — and
+            // a thread of its own is what the OS can rank above tool work.
+            let spawned = std::thread::Builder::new()
+                .name("tui-render".to_string())
+                .spawn(move || {
+                    crate::runtime::qos::promote_to_user_interactive();
+                    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    else {
+                        log::warn!("failed to build the render loop runtime");
+                        return;
+                    };
+                    runtime.block_on(async move {
+                        let mut coordinator = coordinator;
+                        let mut live = live_terminal;
+                        let mut live_ref = live.as_mut().map(|l| &mut l.terminal);
+                        let _branch_watcher = branch_watcher;
+                        let channels = RenderLoopChannels {
+                            branch_rx,
+                            theme_persist_tx,
+                            stream: bus.stream(),
+                            narration: bus.narration(),
+                            control: bus.control(),
+                            lifecycle: bus.lifecycle(),
+                            facts: bus.facts(),
+                        };
+                        run_render_loop(
+                            &mut coordinator,
+                            &cancel_controller,
+                            event_tx,
+                            terminal_rx,
+                            &mut live_ref,
+                            channels,
+                        )
+                        .await;
+                    });
+                });
+            if let Err(err) = spawned {
+                log::warn!("failed to spawn the render loop thread: {err}");
+            }
         }
     }
 }
@@ -268,12 +293,13 @@ impl TuiInteractiveUi {
 /// tokio runtime waits for every blocking task to finish. A pending read would
 /// therefore stall process exit until the user pressed a key. A detached thread
 /// is torn down with the process instead.
-pub fn spawn_terminal_input(
-    terminal_event_tx: mpsc::Sender<TerminalEvent>,
+pub(crate) fn spawn_terminal_input(
+    terminal_event_tx: mpsc::Sender<TerminalInput>,
 ) -> Result<std::thread::JoinHandle<()>, String> {
     std::thread::Builder::new()
         .name("tui-terminal-input".to_string())
         .spawn(move || {
+            crate::runtime::qos::promote_to_user_interactive();
             loop {
                 let event = match crossterm::event::read() {
                     Ok(event) => event,
@@ -282,8 +308,17 @@ pub fn spawn_terminal_input(
                         break;
                     }
                 };
-                if let Some(terminal_event) = map_crossterm_event(event)
-                    && terminal_event_tx.blocking_send(terminal_event).is_err()
+                // The stamp is the moment the key arrived: the loop measures
+                // what the fold then waited, which is the latency a starved
+                // process shows.
+                let received_at = std::time::Instant::now();
+                if let Some(event) = map_crossterm_event(event)
+                    && terminal_event_tx
+                        .blocking_send(TerminalInput {
+                            event,
+                            read_at: received_at,
+                        })
+                        .is_err()
                 {
                     break;
                 }

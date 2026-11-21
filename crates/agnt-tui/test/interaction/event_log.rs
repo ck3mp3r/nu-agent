@@ -12,8 +12,8 @@ use crate::interaction::{
 };
 use crate::state::{AppState, InputMode, UiPhase};
 use crate::test_support::{
-    inference, inference_chunk, inference_completed, inference_started, spine_turn_completed,
-    tool_completed, tool_started,
+    deliver_outbound, inference, inference_chunk, inference_completed, inference_started,
+    spine_turn_completed, tool_completed, tool_started,
 };
 use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::transcript::ir::{MessageRole, ToolName};
@@ -173,7 +173,7 @@ fn golden_log_prompt_submit_streaming_and_turn_completion() -> Result<()> {
         UiInput::KeyPressed { key: Key::Enter },
         Some(&cancel_controller),
     );
-    let effects = state.take_pending_events(&cancel_controller);
+    let effects = deliver_outbound(&mut state, &cancel_controller);
     let _ = state.take_next_prompt_for_execution();
     fold_datum(&mut state, &log[0], &cancel_controller);
 
@@ -334,7 +334,7 @@ fn golden_log_permission_decision_writes_one_effect() -> Result<()> {
 
     // -- Check: the gate opened and queued nothing yet.
     assert!(state.permission.has_prompt(), "the card is up");
-    assert!(state.take_pending_events(&cancel_controller).is_empty());
+    assert!(deliver_outbound(&mut state, &cancel_controller).is_empty());
 
     // -- Exec: the user allows the call once.
     let decision = ControlCommand::PermissionDecided {
@@ -346,7 +346,7 @@ fn golden_log_permission_decision_writes_one_effect() -> Result<()> {
         RenderInput::Control(&decision),
         Some(&cancel_controller),
     );
-    let effects = state.take_pending_events(&cancel_controller);
+    let effects = deliver_outbound(&mut state, &cancel_controller);
 
     // -- Check
     assert!(changed, "a decision is a visible change");

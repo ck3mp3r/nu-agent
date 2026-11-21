@@ -25,6 +25,7 @@ fn paint_window<'a>(
         first_row,
         height,
         top,
+        now_millis: 0,
     }
 }
 

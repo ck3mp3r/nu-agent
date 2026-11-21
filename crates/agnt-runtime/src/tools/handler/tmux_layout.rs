@@ -28,7 +28,7 @@ impl BuiltinTool for TmuxLayoutTool {
         match args.action.as_str() {
             "select" => {
                 let target = format!("{}:{}", args.session, args.window);
-                run_tmux(&["select-layout", "-t", &target, &args.layout])?;
+                run_tmux(&["select-layout", "-t", &target, &args.layout]).await?;
                 Ok(serde_json::json!({
                     "session": args.session,
                     "window": args.window,

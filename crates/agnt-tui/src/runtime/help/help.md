@@ -37,7 +37,7 @@
 - Suggestions are non-modal and independent of the command palette popup/table/state.
 - If the slash prefix is removed, suggestions close cleanly without falling back to command palette.
 - Up/Down selects a suggestion; `Enter` submits the selected slash command.
-- Supported commands: `/compact`, `/uncompact`, `/mcp`, `/help`, `/status`, `/models`, `/agent`, `/new`, `/session`, `/theme`, `/skills`.
+- Supported commands: `/compact`, `/uncompact`, `/mcp`, `/help`, `/stats`, `/status`, `/models`, `/agent`, `/new`, `/session`, `/theme`, `/skills`.
 - `/help`, `/status`, and `/mcp` map to the same handlers as Ctrl-P actions.
 - `/models` and Ctrl-P `Models` use the same shared model-picker action path.
 - Unknown slash commands warn deterministically and continue the loop.
@@ -56,6 +56,7 @@
 - `/compact` runs immediate force compaction and bypasses threshold gating.
 - `/compact` uses the same compaction execution path as auto-threshold compaction.
 - `/uncompact` restores what the most recent compaction replaced; with nothing to undo it warns and nothing changes.
+- `/stats` toggles the render-stats band at the bottom of the screen: a data row of counters plus a legend row decoding them; the same command turns both on and off, and Esc takes no part.
 - Unknown slash commands show a warning and continue the loop.
 - Slash command text is handled by the runtime and is not sent to the LLM.
 - Slash command text is not echoed into the transcript; only resulting artifacts (for example compaction summary output) may appear.

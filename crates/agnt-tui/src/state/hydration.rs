@@ -154,9 +154,10 @@ pub(crate) fn replay_records(
                 .set_tool_preview(&mut state.transcript, call.id(), &display);
         }
         // Effects out, never in: the replayed log's outbound effects are not
-        // re-executed. A prompt submission is the drain's only visible result;
-        // a persisted slash command must not re-open its panel now.
-        let _ = state.take_pending_events(&cancel_controller);
+        // re-executed, and they do not queue for delivery either. A prompt
+        // submission is the drain's only visible result; a persisted slash
+        // command must not re-open its panel now.
+        state.discard_pending_events(&cancel_controller);
         while state.take_next_launch_request().is_some() {}
     }
 }

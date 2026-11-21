@@ -62,6 +62,11 @@ pub struct AppState {
     pub(crate) pending_switch_requests: VecDeque<SwitchRequest>,
     pub(crate) pending_launch: VecDeque<SharedUiAction>,
     pub(crate) pending_theme_persist: VecDeque<String>,
+    /// The outbound events the orchestrator has not taken yet, in production
+    /// order. An event leaves this queue only after a successful send, so a
+    /// busy or wedged consumer delays the delivery instead of losing it or
+    /// stalling the loop.
+    pub(crate) outbound: OutboundQueue,
     pub(crate) pending_session_picker_refresh: bool,
     pub(crate) pending_agent_picker_refresh: bool,
     /// The surface's own reply hands: one mpsc pair per picker kind. The
@@ -73,6 +78,8 @@ pub struct AppState {
     pub(crate) agent_picker_rx: tokio::sync::mpsc::Receiver<RefreshAgentPickerResult>,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
+    /// Whether the render-stats popup is showing. `/stats` toggles it.
+    pub(crate) render_stats_visible: bool,
     pub permission: PermissionState,
     pub status: StatusState,
     pub(crate) prompt_items: Vec<QueuedPrompt>,
@@ -113,6 +120,7 @@ impl Default for AppState {
             pending_switch_requests: VecDeque::new(),
             pending_launch: VecDeque::new(),
             pending_theme_persist: VecDeque::new(),
+            outbound: OutboundQueue::default(),
             pending_session_picker_refresh: false,
             pending_agent_picker_refresh: false,
             session_picker_tx,
@@ -121,6 +129,7 @@ impl Default for AppState {
             agent_picker_rx,
             info_panel: None,
             info_panel_scroll: 0,
+            render_stats_visible: false,
             permission: PermissionState::default(),
             status: StatusState::default(),
             prompt_items: Vec::new(),
@@ -140,11 +149,38 @@ impl Default for AppState {
     }
 }
 
+/// What one attempt to hand the front outbound event to the orchestrator did.
+///
+/// `Full` is transient — the consumer is alive but busy, so the event keeps its
+/// place. `Closed` is terminal: the consumer is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutboundDelivery {
+    Sent,
+    Empty,
+    Full,
+    Closed,
+}
+
+/// The outbound events awaiting delivery, in production order.
+///
+/// `OrchestratorEvent` carries no `Debug` (its picker hands hold channels), so a
+/// debug dump reports the queue's depth instead of its content.
+#[derive(Default)]
+pub(crate) struct OutboundQueue(VecDeque<OrchestratorEvent>);
+
+impl std::fmt::Debug for OutboundQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("OutboundQueue").field(&self.0.len()).finish()
+    }
+}
+
 impl AppState {
-    pub fn take_pending_events(
-        &mut self,
-        cancel_controller: &CancelController,
-    ) -> Vec<OrchestratorEvent> {
+    /// Drain the state's pending effects onto the persistent outbound queue.
+    ///
+    /// The production gates stay where they are: a prompt still stacks while a
+    /// turn runs, and a decision still needs its open card. This call only moves
+    /// what each gate released, in production order.
+    pub fn enqueue_pending_events(&mut self, cancel_controller: &CancelController) {
         let mut events = Vec::new();
         while let Some(prompt) = self.take_next_prompt_for_execution() {
             // A surface submit carries no task attribution: the loop owns every
@@ -199,7 +235,37 @@ impl AppState {
         if cancel_controller.take_cancel_requested() {
             events.push(OrchestratorEvent::CancelRequested);
         }
-        events
+        self.outbound.0.extend(events);
+    }
+
+    /// Try to hand the front outbound event to the orchestrator.
+    ///
+    /// The event leaves the queue only after a successful send, so a full
+    /// channel keeps it first (FIFO, exactly-once) and a closed one reports the
+    /// consumer gone. Nothing here waits.
+    pub(crate) fn try_deliver_outbound(
+        &mut self,
+        event_tx: &tokio::sync::mpsc::Sender<OrchestratorEvent>,
+    ) -> OutboundDelivery {
+        let Some(event) = self.outbound.0.pop_front() else {
+            return OutboundDelivery::Empty;
+        };
+        match event_tx.try_send(event) {
+            Ok(()) => OutboundDelivery::Sent,
+            Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                // The send handed the event back: it keeps its place at the head.
+                self.outbound.0.push_front(event);
+                OutboundDelivery::Full
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => OutboundDelivery::Closed,
+        }
+    }
+
+    /// Drop the effects a replayed log produced: a hydration must not deliver
+    /// the recorded prompts and decisions, and must not keep them either.
+    pub(crate) fn discard_pending_events(&mut self, cancel_controller: &CancelController) {
+        self.enqueue_pending_events(cancel_controller);
+        self.outbound.0.clear();
     }
 
     /// Prompts that have completed execution, oldest first — the input

@@ -4,6 +4,7 @@ pub enum SlashCommand {
     Uncompact,
     Mcp,
     Help,
+    Stats,
     Status,
     Models,
     Agent,
@@ -20,6 +21,7 @@ impl SlashCommand {
             SlashCommand::Uncompact => "/uncompact",
             SlashCommand::Mcp => "/mcp",
             SlashCommand::Help => "/help",
+            SlashCommand::Stats => "/stats",
             SlashCommand::Status => "/status",
             SlashCommand::Models => "/models",
             SlashCommand::Agent => "/agent",
@@ -36,6 +38,7 @@ impl SlashCommand {
             SlashCommand::Uncompact => "Undo the newest compaction",
             SlashCommand::Mcp => "Enable or disable MCP servers",
             SlashCommand::Help => "View key help",
+            SlashCommand::Stats => "Toggle the render-stats popup",
             SlashCommand::Status => "View runtime status",
             SlashCommand::Models => "Switch the active model",
             SlashCommand::Agent => "Switch agent persona",
@@ -67,11 +70,12 @@ pub enum SlashParseResult {
     Unknown(String),
 }
 
-pub const SLASH_COMMAND_ORDER: [SlashCommand; 11] = [
+pub const SLASH_COMMAND_ORDER: [SlashCommand; 12] = [
     SlashCommand::Compact,
     SlashCommand::Uncompact,
     SlashCommand::Mcp,
     SlashCommand::Help,
+    SlashCommand::Stats,
     SlashCommand::Status,
     SlashCommand::Models,
     SlashCommand::Agent,
@@ -109,6 +113,7 @@ pub fn parse_slash_command(input: &str) -> SlashParseResult {
         "/uncompact" => Some(SlashCommand::Uncompact),
         "/mcp" => Some(SlashCommand::Mcp),
         "/help" => Some(SlashCommand::Help),
+        "/stats" => Some(SlashCommand::Stats),
         "/status" => Some(SlashCommand::Status),
         "/models" => Some(SlashCommand::Models),
         "/agent" => Some(SlashCommand::Agent),

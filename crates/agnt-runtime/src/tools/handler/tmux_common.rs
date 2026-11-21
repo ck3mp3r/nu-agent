@@ -12,10 +12,15 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
 }
 
 /// Run a `tmux` command and return its trimmed stdout.
-pub(crate) fn run_tmux(args: &[&str]) -> Result<String, ToolHandlerError> {
-    let output = std::process::Command::new("tmux")
+///
+/// The child is awaited on the tokio reactor and routed through the shared
+/// child-priority policy: a tmux client never pins a worker and never outranks
+/// the UI.
+pub(crate) async fn run_tmux(args: &[&str]) -> Result<String, ToolHandlerError> {
+    let output = crate::child_priority::child_command("tmux")
         .args(args)
         .output()
+        .await
         .map_err(|e| ToolHandlerError::runtime(format!("Failed to run tmux: {e}")))?;
 
     if !output.status.success() {

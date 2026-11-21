@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::process::{Child, ChildStderr, ChildStdout};
 use tokio::time::Instant;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
@@ -40,7 +40,11 @@ impl BuiltinTool for NuTool {
         // inherited pipes open, so the wrapper's exit is not the call's end.
         let deadline = Instant::now() + timeout;
 
-        let mut command = Command::new("nu");
+        // The wrapper is `nice -n <CHILD_NICENESS> nu` where `nice` is on PATH:
+        // the child runs below the agent, and every process it spawns inherits
+        // the niceness. `nice` execs `nu` in place, so the pid below is still the
+        // group leader the kill signals.
+        let mut command = crate::child_priority::child_command("nu");
         command
             .current_dir(cwd)
             .arg("-c")

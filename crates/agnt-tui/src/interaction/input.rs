@@ -3,6 +3,8 @@
 //! Input is surface state, not bus traffic: a key press, a wheel notch, and a
 //! resize are interpreted here and never leave this crate.
 
+use std::time::Instant;
+
 /// A key the reducer interprets. The surface owns this enum so no terminal
 /// library type crosses the crate boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +90,23 @@ pub enum TerminalEvent {
     Resize(TerminalResize),
     Paste(String),
     Mouse(TerminalMouse),
+}
+
+/// One terminal event with the instant the input thread read it.
+///
+/// The stamp travels beside the event, never inside it: an event's meaning is
+/// its payload alone, and the wait is a property of the transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TerminalInput {
+    pub event: TerminalEvent,
+    pub read_at: Instant,
+}
+
+impl TerminalInput {
+    /// How long this event waited between its read and `now`.
+    pub(crate) fn waited_millis(&self, now: Instant) -> u128 {
+        now.saturating_duration_since(self.read_at).as_millis()
+    }
 }
 
 /// Translate one terminal event into the input the surface interprets. The

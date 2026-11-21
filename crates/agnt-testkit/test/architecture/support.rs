@@ -125,7 +125,7 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
             "ARCH-8 agnt-runtime/src/orchestrator/config.rs:125: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/orchestrator/config.rs:211: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/orchestrator/config.rs:34: `Bus` is a struct field",
-            "ARCH-8 agnt-tui/src/interactive.rs:206: `Bus` is a parameter",
+            "ARCH-8 agnt-tui/src/interactive.rs:212: `Bus` is a parameter",
         ],
     ),
     (ARCH_11A, &[]),

@@ -44,21 +44,15 @@ impl CompactionState {
         if store.summary_stream_start.is_none() {
             store.summary_stream_start = Some(store.len());
         }
+        let Some(start) = store.summary_stream_start else {
+            return false;
+        };
 
-        // Remove previous rendering of this streaming message
-        if let Some(start) = store.summary_stream_start {
-            store.truncate(start);
-        }
-
-        // Store raw markdown — projected at render time with canvas width
+        // Store raw markdown — projected at render time with canvas width — in
+        // place: the entry keeps its identity and its measure is deferred to the
+        // frame, so the summary streams without a rebuild per chunk.
         scroll.scroll_transcript_to_bottom();
-        store.push_entry(TranscriptEntry::Message(MessageEntry {
-            role: agnt_render::transcript::ir::MessageRole::Assistant,
-            markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
-            timestamp_millis: None,
-            model: None,
-            agent: None,
-        }));
+        store.fold_stream_markdown_at(start, crate::markdown::unwrap_single_fenced_block(trimmed));
         true
     }
 

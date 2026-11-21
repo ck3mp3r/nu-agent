@@ -1,4 +1,4 @@
-use super::{compute_bottom_box_height, compute_status_h};
+use super::{STATS_BAND_ROWS, compute_bottom_box_height, compute_status_h};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -55,13 +55,14 @@ fn test_compute_status_h_message_adds_row_when_wraps() -> Result<()> {
 }
 
 /// THE `compute_bottom_box_height` function SHALL return
-/// `stack + (stack > 0 ? 1 : 0) + input + 2 + status`.
+/// `stack + (stack > 0 ? 1 : 0) + input + 2 + status + stats`.
 #[test]
 fn test_compute_bottom_box_height_empty_queue() -> Result<()> {
     // -- Exec
-    let h = compute_bottom_box_height(0, 1, 2);
+    let h = compute_bottom_box_height(0, 1, 2, 0);
 
-    // -- Check: no stack rows, no gap, input borders (2), input (1), status (2).
+    // -- Check: no stack rows, no gap, input borders (2), input (1), status (2),
+    // no stats row.
     assert_eq!(h, 5);
     Ok(())
 }
@@ -69,10 +70,10 @@ fn test_compute_bottom_box_height_empty_queue() -> Result<()> {
 #[test]
 fn test_compute_bottom_box_height_one_stack_row_adds_row_and_gap() -> Result<()> {
     // -- Exec
-    let h = compute_bottom_box_height(1, 1, 2);
+    let h = compute_bottom_box_height(1, 1, 2, 0);
 
     // -- Check: one stack row, one gap row above it, input borders (2), input
-    // (1), status (2).
+    // (1), status (2), no stats row.
     assert_eq!(h, 7);
     Ok(())
 }
@@ -83,10 +84,10 @@ fn test_compute_bottom_box_height_one_stack_row_adds_row_and_gap() -> Result<()>
 #[test]
 fn test_compute_bottom_box_height_wrapped_stack_rows_and_padding() -> Result<()> {
     // -- Exec: four stack rows (two padding rows plus two wrapped text rows).
-    let h = compute_bottom_box_height(4, 1, 2);
+    let h = compute_bottom_box_height(4, 1, 2, 0);
 
     // -- Check: four stack rows, one gap row, input borders (2), input (1),
-    // status (2).
+    // status (2), no stats row.
     assert_eq!(h, 10);
     Ok(())
 }
@@ -96,8 +97,8 @@ fn test_compute_bottom_box_height_wrapped_stack_rows_and_padding() -> Result<()>
 #[test]
 fn test_compute_bottom_box_height_each_extra_stack_row_adds_one() -> Result<()> {
     // -- Exec
-    let one = compute_bottom_box_height(1, 1, 2);
-    let four = compute_bottom_box_height(4, 1, 2);
+    let one = compute_bottom_box_height(1, 1, 2, 0);
+    let four = compute_bottom_box_height(4, 1, 2, 0);
 
     // -- Check
     assert_eq!(four - one, 3);
@@ -109,7 +110,51 @@ fn test_compute_bottom_box_height_each_extra_stack_row_adds_one() -> Result<()> 
 #[test]
 fn test_compute_bottom_box_height_saturates() -> Result<()> {
     // -- Exec
-    let h = compute_bottom_box_height(u16::MAX, 1, 2);
+    let h = compute_bottom_box_height(u16::MAX, 1, 2, 0);
+
+    // -- Check
+    assert_eq!(h, u16::MAX);
+    Ok(())
+}
+
+/// WHEN the stats row is visible, THE `compute_bottom_box_height` function
+/// SHALL reserve exactly one more row than when it is hidden.
+#[test]
+fn test_compute_bottom_box_height_stats_row_adds_one() -> Result<()> {
+    // -- Exec
+    let hidden = compute_bottom_box_height(0, 1, 2, 0);
+    let shown = compute_bottom_box_height(0, 1, 2, 1);
+
+    // -- Check
+    assert_eq!(shown, hidden + 1);
+    Ok(())
+}
+
+/// WHEN the stats band is visible, THE `compute_bottom_box_height` function
+/// SHALL reserve `STATS_BAND_ROWS` rows — the data row and its legend — and
+/// SHALL reserve none while it is hidden.
+#[test]
+fn test_compute_bottom_box_height_stats_band_reserves_two_rows() -> Result<()> {
+    // -- Exec
+    let hidden = compute_bottom_box_height(0, 1, 2, 0);
+    let shown = compute_bottom_box_height(0, 1, 2, STATS_BAND_ROWS);
+
+    // -- Check
+    assert_eq!(STATS_BAND_ROWS, 2, "the band is exactly two rows");
+    assert_eq!(
+        shown,
+        hidden + 2,
+        "the band costs the data row and its legend"
+    );
+    Ok(())
+}
+
+/// IF the contents already saturate the height, THEN THE
+/// `compute_bottom_box_height` function SHALL saturate with the stats row too.
+#[test]
+fn test_compute_bottom_box_height_stats_row_saturates() -> Result<()> {
+    // -- Exec
+    let h = compute_bottom_box_height(u16::MAX, 1, 2, 1);
 
     // -- Check
     assert_eq!(h, u16::MAX);

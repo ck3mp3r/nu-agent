@@ -27,3 +27,5 @@ notify = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# `start_paused` drives the quit-delivery deadline test without real time.
+tokio = { workspace = true, features = ["test-util"] }

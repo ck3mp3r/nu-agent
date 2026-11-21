@@ -22,7 +22,7 @@ use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
-use crate::interaction::input::TerminalEvent;
+use crate::interaction::input::{TerminalEvent, TerminalInput};
 use crate::interactive::run_render_loop;
 use crate::runtime::RuntimeCoordinator;
 use crate::state::AppState;
@@ -265,7 +265,7 @@ impl RenderLoopDriver {
         burst: bool,
     ) -> Result<()> {
         let (event_tx, mut event_rx) = mpsc::channel::<OrchestratorEvent>(256);
-        let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalEvent>(events.len().max(1));
+        let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalInput>(events.len().max(1));
         let (_branch_tx, branch_rx) = mpsc::channel::<()>(8);
 
         let mut coordinator = std::mem::replace(
@@ -304,7 +304,13 @@ impl RenderLoopDriver {
 
         for event in events {
             let delivered = match event {
-                DriveEvent::Key(key) => terminal_tx.send(key.clone()).await.is_ok(),
+                DriveEvent::Key(key) => {
+                    let input = TerminalInput {
+                        event: key.clone(),
+                        read_at: std::time::Instant::now(),
+                    };
+                    terminal_tx.send(input).await.is_ok()
+                }
                 DriveEvent::Record(record) => self.bus.stream().publish((**record).clone()).is_ok(),
                 DriveEvent::TextRecord(record) => {
                     self.bus.stream().publish_text((**record).clone()).is_ok()

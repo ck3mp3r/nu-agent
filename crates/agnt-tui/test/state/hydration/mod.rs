@@ -105,7 +105,7 @@ fn live_reduction(messages: &[UiMessageSnapshot]) -> AppState {
     let (records, _total) = project_snapshots(messages.to_vec());
     for record in records {
         reduce(&mut state, RenderInput::Record(&record), None);
-        let _ = state.take_pending_events(&cancel_controller);
+        state.discard_pending_events(&cancel_controller);
         while state.take_next_launch_request().is_some() {}
     }
     state

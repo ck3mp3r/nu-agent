@@ -23,8 +23,14 @@ mod preview;
 #[path = "transcript/render_loop.rs"]
 mod render_loop;
 
+#[path = "transcript/row_cache.rs"]
+mod row_cache;
+
 #[path = "transcript/scrollbar.rs"]
 mod scrollbar;
+
+#[path = "transcript/stream_replay.rs"]
+mod stream_replay;
 
 #[path = "transcript/separators.rs"]
 mod separators;

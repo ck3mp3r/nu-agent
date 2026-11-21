@@ -3,6 +3,7 @@ use super::*;
 use crate::interaction::cancel::CancelController;
 use crate::interaction::input::{TerminalMouse, TerminalResize};
 use crate::runtime::TerminalEventSource;
+use crate::test_support::deliver_outbound;
 use ratatui::layout::Rect;
 
 /// An idle 'q' is regular input and never requests quit, through either the
@@ -120,9 +121,7 @@ fn coordinator_enter_while_input_locked_queues_prompt_and_clears_draft() -> Resu
 
     // -- Exec: the turn settles and the pending events drain.
     coordinator.fold_record(&turn_completed(0));
-    let events = coordinator
-        .state
-        .take_pending_events(&CancelController::default());
+    let events = deliver_outbound(&mut coordinator.state, &CancelController::default());
 
     // -- Check: the queued prompt is delivered exactly once.
     let submitted: Vec<&str> = events

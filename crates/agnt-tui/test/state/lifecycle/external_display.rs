@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::interaction::cancel::CancelController;
-use crate::test_support::{fold_record, peer_prompt_record, prompt_record};
+use crate::test_support::{deliver_outbound, fold_record, peer_prompt_record, prompt_record};
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 
 /// WHEN two external tasks' prompts arrive back to back, THE surface fold SHALL
@@ -26,7 +26,7 @@ fn stacked_external_prompts_render_without_echoing_a_submit() -> Result<()> {
     assert_eq!(state.transcript.len(), before + 2);
 
     // -- Exec: the render loop drains the surface's outbound effects.
-    let events = state.take_pending_events(&controller);
+    let events = deliver_outbound(&mut state, &controller);
 
     // -- Check: no prompt is submitted and none is queued.
     assert!(
@@ -67,8 +67,7 @@ fn prompt_record_without_a_task_id_places_a_row_without_submitting() -> Result<(
         "a record row never enters the prompt queue"
     );
     assert!(
-        !state
-            .take_pending_events(&controller)
+        !deliver_outbound(&mut state, &controller)
             .iter()
             .any(|event| matches!(event, OrchestratorEvent::PromptSubmitted { .. })),
         "a record row must never echo back as a submit"
@@ -110,7 +109,7 @@ fn peer_prompt_row_matches_the_queue_path_row() -> Result<()> {
             agent,
         },
     );
-    let _ = queued.take_pending_events(&CancelController::default());
+    queued.discard_pending_events(&CancelController::default());
 
     // -- Check: one row each, equal field for field.
     assert_eq!(
