@@ -75,7 +75,7 @@ fn inline_slash_suggestions_lifecycle() -> Result<()> {
 /// index the previous keystroke left behind.
 #[test]
 fn test_state_picker_inline_slash_selection_resets() -> Result<()> {
-    // -- Setup & Fixtures: the full command list, selection moved onto /status.
+    // -- Setup & Fixtures: the full command list, selection moved onto /help.
     let mut state = AppState::default();
     state.check_inline_slash("/");
     for _ in 0..3 {
@@ -92,7 +92,7 @@ fn test_state_picker_inline_slash_selection_resets() -> Result<()> {
             .ok_or("picker should be open")?
             .selection,
         3,
-        "three Down presses reach /status"
+        "three Down presses reach /help"
     );
 
     // -- Exec: a later keystroke replaces the options with the narrowed list.

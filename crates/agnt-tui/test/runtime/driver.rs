@@ -96,6 +96,11 @@ impl RenderLoopDriver {
     /// channel closes.
     const FRAME_BUDGET: Duration = Duration::from_millis(500);
 
+    /// Age the painted-frame clock is wound back by, so the loop's 16 ms frame
+    /// throttle is open when a mocked settle paints. The coordinator seeds the
+    /// same margin in its constructor.
+    const THROTTLE_CLEARANCE: Duration = Duration::from_millis(100);
+
     /// Yields a burst gets to fold every lane that holds a record. Each wake
     /// folds at least one record, so a handful covers a burst of a few.
     const BURST_SETTLE_YIELDS: usize = 16;
@@ -264,6 +269,14 @@ impl RenderLoopDriver {
         settle: Option<Duration>,
         burst: bool,
     ) -> Result<()> {
+        // Tokio time is paused for the whole call: the settle below awaits three
+        // ticks of the loop's own render interval, and with a paused clock those
+        // ticks complete by mocked-time advance instead of real waiting — the
+        // same ticks in the same order, milliseconds instead of a tick period
+        // per frame. Only tokio timers are mocked; `std::time` readings (the
+        // frame throttle) keep their real values.
+        pause_time_once();
+
         let (event_tx, mut event_rx) = mpsc::channel::<OrchestratorEvent>(256);
         let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalInput>(events.len().max(1));
         let (_branch_tx, branch_rx) = mpsc::channel::<()>(8);
@@ -367,16 +380,59 @@ impl RenderLoopDriver {
             .map_err(|error| format!("render loop task failed: {error}"))?;
         self.coordinator = coordinator;
         self.terminal = terminal;
+        if settle.is_some() {
+            self.paint_settled_frame();
+        }
         while let Some(event) = event_rx.recv().await {
             self.orchestrator_events.push(event);
         }
         Ok(())
     }
 
+    /// Paints the frame a mocked settle left pending.
+    ///
+    /// The loop's frame throttle reads `std::time`, which a paused tokio clock
+    /// does not mock. The scripted folds therefore land inside the throttle's
+    /// window, so the settle's ticks are throttled and the last frame stays
+    /// pending — where in real time the settle's own duration always cleared the
+    /// window. Reopening it and painting through the loop's own path yields the
+    /// frame the loop's next tick would have painted.
+    fn paint_settled_frame(&mut self) {
+        self.coordinator.last_render_at = std::time::Instant::now() - Self::THROTTLE_CLEARANCE;
+        let mut live = Some(&mut self.terminal);
+        let _ = self.coordinator.render_if_needed(&mut live);
+    }
+
     // endregion: --- Commands
 }
 
 // region:    --- Support
+
+/// Pauses the loop's clock once per thread, so every `run_loop_once` call runs
+/// on mocked time.
+///
+/// `tokio::time::pause` panics when the clock is already frozen and requires the
+/// `current_thread` runtime, so the guard makes the first call the only one and
+/// a multi-threaded runtime keeps its real-time settle. A test that already
+/// starts paused (`#[tokio::test(start_paused = true)]`) must drive the loop
+/// without this driver: its clock is frozen before the first call.
+fn pause_time_once() {
+    thread_local! {
+        static PAUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    PAUSED.with(|paused| {
+        if paused.get() {
+            return;
+        }
+        if tokio::runtime::Handle::current().runtime_flavor()
+            == tokio::runtime::RuntimeFlavor::CurrentThread
+        {
+            tokio::time::pause();
+        }
+        paused.set(true);
+    });
+}
 
 fn test_terminal(columns: u16, rows: u16) -> Terminal<TestBackend> {
     match Terminal::new(TestBackend::new(columns, rows)) {

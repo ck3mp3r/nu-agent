@@ -122,6 +122,7 @@ dependencies = [
  "agent-client-protocol",
  "agnt-a2a",
  "agnt-acp",
+ "agnt-render",
  "agnt-runtime",
  "agnt-testkit",
  "agnt-tty",

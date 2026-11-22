@@ -3,6 +3,9 @@ name = "agnt-render"
 edition.workspace = true
 version.workspace = true
 
+[features]
+integration = []
+
 [dependencies]
 agnt-kernel = { workspace = true }
 log = { workspace = true }

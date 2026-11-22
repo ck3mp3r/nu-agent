@@ -68,6 +68,7 @@ pub(super) fn plugin_config_with_cache() -> PluginConfig {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     }

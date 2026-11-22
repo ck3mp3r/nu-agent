@@ -175,6 +175,12 @@ pub struct PluginConfig {
     /// Unknown values are kept as `Some(raw)` and ignored at resolve time.
     pub theme: Option<String>,
 
+    /// Languages the transcript renderer highlights. `None` or an empty list
+    /// keeps the built-in default list; the single entry `all` highlights every
+    /// syntax syntect carries. Unknown entries are logged and skipped.
+    #[serde(default)]
+    pub highlight_languages: Option<Vec<String>>,
+
     /// User hook handlers (`[[hooks]]` entries).
     #[serde(default)]
     pub hooks: Vec<HookConfig>,

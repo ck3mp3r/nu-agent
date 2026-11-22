@@ -34,8 +34,9 @@ use crate::error::{Error, Result};
 use crate::mode::{A2aContext, TuiHydrationInput, TuiModeOptions, run_stderr_mode, run_tui_mode};
 
 use super::config::{
-    apply_cli_flags_from_clap, extract_tool_timeout_from_clap, resolve_config_from_clap,
-    resolve_store_type_from_clap, resolve_theme_from_clap, resolve_ui_policy_from_clap,
+    apply_cli_flags_from_clap, extract_tool_timeout_from_clap, init_highlight_languages,
+    resolve_config_from_clap, resolve_store_type_from_clap, resolve_theme_from_clap,
+    resolve_ui_policy_from_clap,
 };
 use super::permissions::resolve_effective_permissions_from_clap;
 use super::persona::resolve_peer_persona_from_clap;
@@ -79,6 +80,10 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let discovery = agnt_runtime::config::Paths::resolve_for_process(None)
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let (mut config, plugin_config) = resolve_config_from_clap(args, &discovery.config_path)?;
+
+    // The renderer resolves every language hint against one syntax set; install
+    // the configured one before the first transcript is drawn.
+    init_highlight_languages(&plugin_config);
 
     let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
     let paths = agnt_runtime::config::Paths::resolve_for_process(plugin_config.paths.as_ref())

@@ -1,0 +1,32 @@
+%YAML 1.2
+---
+name: Nix
+file_extensions: [nix]
+scope: source.nix
+contexts:
+  main:
+    - match: '#.*$'
+      scope: comment.line.number-sign.nix
+    - match: '"'
+      scope: punctuation.definition.string.begin.nix
+      push: double_quoted_string
+    - match: '\\b(let|in|with|if|then|else|rec|inherit|assert)\\b'
+      scope: keyword.control.nix
+    - match: '\\b(true|false|null)\\b'
+      scope: constant.language.nix
+    - match: '\\b[0-9]+\\b'
+      scope: constant.numeric.nix
+    - match: '==|!=|<=|>=|&&|\\|\\||//|->|=>|=|:|\\+|-|\\*|/|<|>'
+      scope: keyword.operator.nix
+    - match: '[A-Za-z_][A-Za-z0-9_''-]*'
+      scope: variable.other.nix
+    - match: '[{}()\\[\\];.,]'
+      scope: punctuation.separator.nix
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.nix
+    - match: '\\\\.'
+      scope: constant.character.escape.nix
+    - match: '"'
+      scope: punctuation.definition.string.end.nix
+      pop: true

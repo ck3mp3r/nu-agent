@@ -231,6 +231,24 @@ to it. A replayed history's calls carry no price, so switching into one puts the
 the same history repeatedly adds nothing to and removes nothing from either
 figure: the token figure re-places, the dollar figure holds.
 
+## Syntax highlighting
+
+Code fences, edit diffs, and code cards render token channels for the languages
+on the highlight list. A language outside the list renders plain tokens.
+
+The built-in list covers rust, python, go, js, ts, json, yaml, toml, bash, sql,
+c, cpp, ruby, diff, nu, and nix. Widen or narrow it in `config.toml`:
+
+```toml
+# Every language syntect carries.
+highlight_languages = ["all"]
+
+# Or exactly these.
+highlight_languages = ["rust", "python", "markdown"]
+```
+
+See [Configuration](configuration.md#highlight-languages) for the full rules.
+
 ## Tool authorization (permissions DSL)
 
 Authorization uses a **map-style** `permissions` DSL (not a rules array).

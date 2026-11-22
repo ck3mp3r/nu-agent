@@ -4,6 +4,7 @@
 
 use super::*;
 
+use crate::runtime::RuntimeCoordinator;
 use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_render::transcript::ir::MessageRole;
 
@@ -212,6 +213,60 @@ fn test_transcript_store_diff_gate_cost_accumulates_per_projection() -> Result<(
         millis_after.saturating_sub(millis_before),
         10,
         "the durations accumulate"
+    );
+    Ok(())
+}
+
+/// WHEN the store's counters already carry totals before the arm begins, THE
+/// breakdown SHALL render the arm's own deltas, not the running totals: the
+/// `reset`→`close_store` arithmetic on nonzero baselines.
+///
+/// The breakdown is driven through the coordinator, which owns the arm timing:
+/// the store's totals are its inputs and the coordinator's own `begin`/`close`
+/// pair is the production path the warn line takes.
+#[test]
+fn test_transcript_store_nonzero_baselines_render_the_arm_deltas() -> Result<()> {
+    // -- Setup & Fixtures: a store that already paid one re-measure and one gate
+    // projection before the arm began.
+    let mut coordinator = RuntimeCoordinator::new(80, 24, None);
+    coordinator
+        .state
+        .transcript
+        .push_entry(user_entry("entry 0"));
+    coordinator.state.transcript.ensure_height_index(40);
+    coordinator.state.transcript.mark_stale(0);
+    coordinator.state.transcript.ensure_height_index(40);
+    coordinator.state.transcript.record_diff_gate_cost(5);
+    let stale_baseline = coordinator.state.transcript.remeasure_cost();
+    let gate_baseline = coordinator.state.transcript.diff_gate_cost();
+    assert!(
+        stale_baseline.1 > 0 && gate_baseline.1 > 0,
+        "the fixture must carry nonzero baselines: {stale_baseline:?} {gate_baseline:?}"
+    );
+
+    // -- Exec: the arm grows both counters by one, then closes.
+    coordinator.begin_stream_arm();
+    coordinator.state.transcript.mark_stale(0);
+    coordinator.state.transcript.ensure_height_index(40);
+    coordinator.state.transcript.record_diff_gate_cost(9);
+    let line = coordinator.stream_arm_breakdown(4);
+
+    // -- Check: the fields carry this arm's deltas, never the store's totals.
+    let stale_field = line
+        .split_whitespace()
+        .find(|field| field.starts_with("stale-remeasure="))
+        .ok_or("the breakdown must name the re-measure delta")?;
+    let gate_field = line
+        .split_whitespace()
+        .find(|field| field.starts_with("diff-gate="))
+        .ok_or("the breakdown must name the diff-gate delta")?;
+    assert!(
+        stale_field.ends_with("/1@0"),
+        "one re-measure of entry 0, not the store's total: {line}"
+    );
+    assert_eq!(
+        gate_field, "diff-gate=9ms/1",
+        "the gate's own 9 ms projection, not the store's total: {line}"
     );
     Ok(())
 }

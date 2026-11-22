@@ -139,6 +139,117 @@ fn highlight_source_tokens_language_table() -> Result<()> {
     Ok(())
 }
 
+/// The systems languages on the default list yield semantic channels.
+///
+/// The default-list table is split across four tests: each syntax pays a
+/// one-time lazy context load, and one unit test must stay under a second.
+#[test]
+fn highlight_source_tokens_default_language_table_systems() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = [
+        ("rust", "fn main() { let x = 1; }"),
+        ("python", "def f():\n    return 1"),
+        ("go", "func main() { x := 1 }"),
+    ];
+
+    // -- Exec & Check
+    assert_semantic_channels(&cases);
+    Ok(())
+}
+
+/// The C-family languages on the default list yield semantic channels.
+#[test]
+fn highlight_source_tokens_default_language_table_c_family() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = [
+        ("js", "function f() { return \"x\"; }"),
+        ("c", "int main(void) { return 0; }"),
+        ("cpp", "int main() { return 0; }"),
+    ];
+
+    // -- Exec & Check
+    assert_semantic_channels(&cases);
+    Ok(())
+}
+
+/// The data and shell languages on the default list yield semantic channels.
+#[test]
+fn highlight_source_tokens_default_language_table_data() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = [
+        ("json", "{\"a\": 1}"),
+        ("yaml", "a: 1 # note"),
+        ("bash", "echo \"hi\""),
+        ("sql", "SELECT 1 FROM t;"),
+    ];
+
+    // -- Exec & Check
+    assert_semantic_channels(&cases);
+    Ok(())
+}
+
+/// The script and diff languages on the default list yield semantic channels.
+#[test]
+fn highlight_source_tokens_default_language_table_script() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = [
+        ("ruby", "def f; 1; end"),
+        ("diff", "--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b"),
+        ("nu", "let x = \"hi\" # note"),
+        ("nix", "let name = \"x\"; in name"),
+    ];
+
+    // -- Exec & Check
+    assert_semantic_channels(&cases);
+    Ok(())
+}
+
+/// Every row yields at least one channel that is not plain.
+fn assert_semantic_channels(cases: &[(&str, &str)]) {
+    for (language, source) in cases {
+        let channels = token_channels(source, language);
+        assert!(
+            channels
+                .iter()
+                .any(|channel| *channel != SyntaxTokenChannel::Plain),
+            "{language} should include at least one semantic channel, got {channels:?}"
+        );
+    }
+}
+
+/// Hints outside the default list are Plain by design.
+///
+/// `ts` and `toml` are absent from syntect 5.3's stock packdump; `markdown` is
+/// present but not on the default list. All three render one plain span per
+/// line through the default path.
+#[test]
+fn highlight_source_tokens_plain_by_design_table() -> Result<()> {
+    // -- Setup & Fixtures
+    let source = "let x = 1;\nlet y = 2;";
+
+    // -- Exec & Check
+    for language in ["ts", "toml", "md"] {
+        let lines = highlight_source_tokens(HighlightRequest {
+            language_hint: Some(language),
+            source,
+        });
+        assert_eq!(lines.len(), 2, "{language} should render two lines");
+        for line in &lines {
+            assert_eq!(
+                line.len(),
+                1,
+                "{language} should render a single span per line"
+            );
+            assert_eq!(
+                line[0].channel,
+                SyntaxTokenChannel::Plain,
+                "{language} should render the plain channel"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Empty input yields no lines; CRLF input splits into stable lines.
 #[test]
 fn highlight_source_tokens_empty_and_crlf_table() {

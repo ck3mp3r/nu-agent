@@ -31,6 +31,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };
@@ -80,6 +81,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };

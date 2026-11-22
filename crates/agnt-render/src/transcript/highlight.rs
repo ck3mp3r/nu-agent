@@ -2,87 +2,17 @@ use std::sync::OnceLock;
 
 use syntect::{
     easy::ScopeRegionIterator,
-    parsing::{ParseState, ScopeStack, SyntaxDefinition, SyntaxReference, SyntaxSet},
+    parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet},
     util::LinesWithEndings,
 };
 
-static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+use super::syntax_packdump::{self, SyntaxSetSpec};
+
+pub(crate) static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
 pub(crate) fn cached_syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(load_syntax_set_with_nix_support)
+    SYNTAX_SET.get_or_init(|| syntax_packdump::build_syntax_set(&SyntaxSetSpec::Default))
 }
-
-const NIX_SYNTAX: &str = r#"%YAML 1.2
----
-name: Nix
-file_extensions: [nix]
-scope: source.nix
-contexts:
-  main:
-    - match: '#.*$'
-      scope: comment.line.number-sign.nix
-    - match: '"'
-      scope: punctuation.definition.string.begin.nix
-      push: double_quoted_string
-    - match: '\\b(let|in|with|if|then|else|rec|inherit|assert)\\b'
-      scope: keyword.control.nix
-    - match: '\\b(true|false|null)\\b'
-      scope: constant.language.nix
-    - match: '\\b[0-9]+\\b'
-      scope: constant.numeric.nix
-    - match: '==|!=|<=|>=|&&|\\|\\||//|->|=>|=|:|\\+|-|\\*|/|<|>'
-      scope: keyword.operator.nix
-    - match: '[A-Za-z_][A-Za-z0-9_''-]*'
-      scope: variable.other.nix
-    - match: '[{}()\\[\\];.,]'
-      scope: punctuation.separator.nix
-
-  double_quoted_string:
-    - meta_scope: string.quoted.double.nix
-    - match: '\\\\.'
-      scope: constant.character.escape.nix
-    - match: '"'
-      scope: punctuation.definition.string.end.nix
-      pop: true
-"#;
-
-const NU_SYNTAX: &str = r#"%YAML 1.2
----
-name: Nu
-file_extensions: [nu]
-scope: source.nu
-contexts:
-  main:
-    - match: '#.*$'
-      scope: comment.line.number-sign.nu
-    - match: '"'
-      scope: punctuation.definition.string.begin.nu
-      push: double_quoted_string
-    - match: '\b(let|def|export|use|const|mut|if|else|match|for|in|where|try|catch|do|return|hide-env|overlay|module)\b'
-      scope: keyword.control.nu
-    - match: '\b(ls|open|get|each|first|last|sort-by|group-by|str|path|format|split|describe|print|echo|input)\b'
-      scope: support.function.nu
-    - match: '\$env(\.[A-Za-z0-9_]+)?'
-      scope: variable.other.nu
-    - match: '\$[A-Za-z0-9_!?]+'
-      scope: variable.other.nu
-    - match: '\b(true|false|null)\b'
-      scope: constant.language.nu
-    - match: '\b\d+(\.\d+)?\b'
-      scope: constant.numeric.nu
-    - match: '\|\||==|!=|<=|>=|&&|=>|\||\+|-|\*|/|=|<|>'
-      scope: keyword.operator.nu
-    - match: '[{}()\[\];,.]'
-      scope: punctuation.separator.nu
-
-  double_quoted_string:
-    - meta_scope: string.quoted.double.nu
-    - match: '\\.'
-      scope: constant.character.escape.nu
-    - match: '"'
-      scope: punctuation.definition.string.end.nu
-      pop: true
-"#;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HighlightRequest<'a> {
@@ -111,123 +41,108 @@ pub struct HighlightedSpan {
     pub channel: SyntaxTokenChannel,
 }
 
-struct Highlighter {
-    syntax_set: &'static SyntaxSet,
-}
-
-impl Default for Highlighter {
-    fn default() -> Self {
-        Self {
-            syntax_set: cached_syntax_set(),
-        }
-    }
-}
-
-fn load_syntax_set_with_nix_support() -> SyntaxSet {
-    let syntax_set = SyntaxSet::load_defaults_newlines();
-    if syntax_set.find_syntax_by_extension("nix").is_some() {
-        return syntax_set;
+/// The syntax `hint` names in `syntax_set`, by token, name or extension.
+///
+/// A hidden syntax never resolves: the configured language list hides every
+/// syntax it leaves out, and the hidden flag is what keeps them unreachable.
+pub(crate) fn resolve_syntax_hint<'a>(
+    syntax_set: &'a SyntaxSet,
+    language_hint: &str,
+) -> Option<&'a SyntaxReference> {
+    let hint = language_hint.trim();
+    if hint.is_empty() {
+        return None;
     }
 
-    let mut builder = syntax_set.into_builder();
-    if let Ok(nix_syntax) = SyntaxDefinition::load_from_str(NIX_SYNTAX, true, Some("Nix")) {
-        builder.add(nix_syntax);
-    }
-    if let Ok(nu_syntax) = SyntaxDefinition::load_from_str(NU_SYNTAX, true, Some("Nu")) {
-        builder.add(nu_syntax);
-    }
-    builder.build()
-}
-
-impl Highlighter {
-    fn highlight(&self, request: HighlightRequest<'_>) -> Vec<Vec<HighlightedSpan>> {
-        if request.source.is_empty() {
-            return Vec::new();
-        }
-
-        let canonical_hint = canonical_language_hint(request.language_hint);
-        match self.syntax_for(canonical_hint.as_deref()) {
-            Some(syntax) => self.highlight_with_syntax(request.source, syntax),
-            None => plain_token_lines(request.source),
-        }
-    }
-
-    fn syntax_for<'a>(&'a self, language_hint: Option<&str>) -> Option<&'a SyntaxReference> {
-        let hint = language_hint?.trim();
-        if hint.is_empty() {
-            return None;
-        }
-
-        self.syntax_set
-            .find_syntax_by_token(hint)
-            .or_else(|| self.syntax_set.find_syntax_by_name(hint))
-            .or_else(|| self.syntax_set.find_syntax_by_extension(hint))
-            .or_else(|| {
-                self.syntax_set
-                    .syntaxes()
+    syntax_set
+        .find_syntax_by_token(hint)
+        .or_else(|| syntax_set.find_syntax_by_name(hint))
+        .or_else(|| syntax_set.find_syntax_by_extension(hint))
+        .or_else(|| {
+            syntax_set
+                .syntaxes()
+                .iter()
+                .find(|syntax| syntax.name.eq_ignore_ascii_case(hint))
+        })
+        .or_else(|| {
+            syntax_set.syntaxes().iter().find(|syntax| {
+                syntax
+                    .file_extensions
                     .iter()
-                    .find(|syntax| syntax.name.eq_ignore_ascii_case(hint))
+                    .any(|ext| ext.eq_ignore_ascii_case(hint))
             })
-            .or_else(|| {
-                self.syntax_set.syntaxes().iter().find(|syntax| {
-                    syntax
-                        .file_extensions
-                        .iter()
-                        .any(|ext| ext.eq_ignore_ascii_case(hint))
-                })
-            })
+        })
+        .filter(|syntax| !syntax.hidden)
+}
+
+/// The highlighted span lines `request` produces against `syntax_set`.
+pub(crate) fn highlight_with_syntax_set(
+    request: HighlightRequest<'_>,
+    syntax_set: &SyntaxSet,
+) -> Vec<Vec<HighlightedSpan>> {
+    if request.source.is_empty() {
+        return Vec::new();
     }
 
-    fn highlight_with_syntax(
-        &self,
-        source: &str,
-        syntax: &SyntaxReference,
-    ) -> Vec<Vec<HighlightedSpan>> {
-        let mut parse_state = ParseState::new(syntax);
-        let mut scope_stack = ScopeStack::new();
-        let mut lines = Vec::new();
-        for raw_line in normalized_lines(source) {
-            let line = raw_line.as_str();
-            let line_with_newline = format!("{line}\n");
-            let parsed = parse_state.parse_line(&line_with_newline, self.syntax_set);
-            match parsed {
-                Ok(parsed_line) => {
-                    let mut spans = Vec::new();
-                    for (region, op) in ScopeRegionIterator::new(&parsed_line, &line_with_newline) {
-                        if scope_stack.apply(op).is_err() {
-                            spans.clear();
-                            spans.push(HighlightedSpan {
-                                text: line.to_string(),
-                                channel: SyntaxTokenChannel::Plain,
-                            });
-                            break;
-                        }
+    let canonical_hint = canonical_language_hint(request.language_hint);
+    match canonical_hint
+        .as_deref()
+        .and_then(|hint| resolve_syntax_hint(syntax_set, hint))
+    {
+        Some(syntax) => highlight_with_syntax(request.source, syntax_set, syntax),
+        None => plain_token_lines(request.source),
+    }
+}
 
-                        if region.is_empty() {
-                            continue;
-                        }
-
-                        if region == "\n" {
-                            continue;
-                        }
-
+fn highlight_with_syntax(
+    source: &str,
+    syntax_set: &SyntaxSet,
+    syntax: &SyntaxReference,
+) -> Vec<Vec<HighlightedSpan>> {
+    let mut parse_state = ParseState::new(syntax);
+    let mut scope_stack = ScopeStack::new();
+    let mut lines = Vec::new();
+    for raw_line in normalized_lines(source) {
+        let line = raw_line.as_str();
+        let line_with_newline = format!("{line}\n");
+        let parsed = parse_state.parse_line(&line_with_newline, syntax_set);
+        match parsed {
+            Ok(parsed_line) => {
+                let mut spans = Vec::new();
+                for (region, op) in ScopeRegionIterator::new(&parsed_line, &line_with_newline) {
+                    if scope_stack.apply(op).is_err() {
+                        spans.clear();
                         spans.push(HighlightedSpan {
-                            text: region.to_string(),
-                            channel: classify_scope_channel(&scope_stack),
+                            text: line.to_string(),
+                            channel: SyntaxTokenChannel::Plain,
                         });
+                        break;
                     }
-                    lines.push(spans);
+
+                    if region.is_empty() {
+                        continue;
+                    }
+
+                    if region == "\n" {
+                        continue;
+                    }
+
+                    spans.push(HighlightedSpan {
+                        text: region.to_string(),
+                        channel: classify_scope_channel(&scope_stack),
+                    });
                 }
-                Err(_) => {
-                    lines.push(vec![HighlightedSpan {
-                        text: line.to_string(),
-                        channel: SyntaxTokenChannel::Plain,
-                    }]);
-                }
+                lines.push(spans);
+            }
+            Err(_) => {
+                lines.push(vec![HighlightedSpan {
+                    text: line.to_string(),
+                    channel: SyntaxTokenChannel::Plain,
+                }]);
             }
         }
-        lines
     }
+    lines
 }
 
 fn canonical_language_hint(language_hint: Option<&str>) -> Option<String> {
@@ -402,10 +317,12 @@ fn plain_token_lines(source: &str) -> Vec<Vec<HighlightedSpan>> {
         .collect::<Vec<_>>()
 }
 
+/// The highlighted span lines `request` produces against the process-wide
+/// syntax set.
 pub fn highlight_source_tokens(request: HighlightRequest<'_>) -> Vec<Vec<HighlightedSpan>> {
-    let highlighter = Highlighter::default();
+    let syntax_set = cached_syntax_set();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        highlighter.highlight(request)
+        highlight_with_syntax_set(request, syntax_set)
     }))
     .unwrap_or_else(|_| plain_token_lines(request.source))
 }

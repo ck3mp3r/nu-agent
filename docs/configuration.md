@@ -59,6 +59,8 @@ Top-level sections:
 - `[paths]` — base-directory overrides for the data, cache, and state trees (optional, see [Paths](#paths))
 - `a2a_enabled` — enable A2A (agent-to-agent) protocol (default: `false`)
 - `theme` — default TUI theme (optional, see [Theme](#theme))
+- `highlight_languages` — languages the transcript renderer highlights (optional,
+  see [Highlight languages](#highlight-languages))
 - `[[hooks]]` — user hook handlers (optional, see [Hooks](#hooks))
 
 #### Paths
@@ -142,6 +144,37 @@ Resolution order (highest first):
 2. `theme` in config.toml
 3. Saved preference file (written by the TUI picker)
 4. Default: `catppuccin-mocha`
+
+### Highlight languages
+
+The `highlight_languages` key sets the languages the transcript renderer
+highlights. Code fences, edit diffs, and code cards render token channels for a
+language on the list. A language outside the list renders plain tokens.
+
+```toml
+# Absent or empty: the built-in default list.
+highlight_languages = []
+
+# Every syntax syntect carries.
+highlight_languages = ["all"]
+
+# Exactly these languages.
+highlight_languages = ["rust", "python", "nix"]
+```
+
+The built-in default list:
+
+```text
+rust, python, go, js, ts, json, yaml, toml, bash, sql, c, cpp, ruby, diff, nu, nix
+```
+
+An entry is a language name or a file extension. An entry the syntax set cannot
+resolve is logged and skipped.
+
+`syntect` 5.3 carries no TypeScript or TOML syntax, so `ts` and `toml` render
+plain tokens even under `"all"`. Markdown is in the syntax set but is not on the
+default list: an edit diff of a `.md` file renders plain tokens until you add
+`markdown` to the list.
 
 ### Model roles
 

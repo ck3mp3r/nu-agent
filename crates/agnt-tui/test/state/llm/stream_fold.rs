@@ -134,6 +134,53 @@ fn test_llm_assistant_stream_diff_gate_answers_once_per_frame() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// The gate's payment is recorded once per paint window
+// ---------------------------------------------------------------------------
+
+/// WHEN the fold pays the diff gate's projection, THE store's `diff_gate_cost`
+/// calls SHALL grow by exactly one; WHEN a second chunk of the same window
+/// folds, THE calls SHALL NOT grow.
+#[test]
+fn test_llm_assistant_stream_diff_gate_records_one_projection_per_window() -> Result<()> {
+    // -- Setup & Fixtures: a completed edit showing a diff for another file, so
+    // the sample diff is not redundant, and a fresh paint window.
+    let mut state = AppState::default();
+    push_edit_with_diff(&mut state, "other");
+    state.transcript.rebuild_height_index(WIDTH);
+    state.transcript.ensure_height_index(WIDTH);
+    let calls_before = state.transcript.diff_gate_cost().1;
+
+    // -- Exec: the first diff-signature chunk of the window.
+    reduce_llm(&mut state, assistant_message(SAMPLE_DIFF));
+
+    // -- Check: the fold's own call recorded the projection.
+    assert_eq!(
+        state
+            .transcript
+            .diff_gate_cost()
+            .1
+            .saturating_sub(calls_before),
+        1,
+        "the first diff-signature chunk must record one projection"
+    );
+
+    // -- Exec: a second chunk of the same window.
+    reduce_llm(&mut state, assistant_message(SAMPLE_DIFF));
+
+    // -- Check: the window's answer holds, so no projection was re-paid.
+    assert_eq!(
+        state
+            .transcript
+            .diff_gate_cost()
+            .1
+            .saturating_sub(calls_before),
+        1,
+        "a later chunk of the same window must record nothing"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // The silent-discard path keeps working and leaves no pending measure
 // ---------------------------------------------------------------------------
 

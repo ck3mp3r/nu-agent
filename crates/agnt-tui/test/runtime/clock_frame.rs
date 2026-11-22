@@ -136,6 +136,67 @@ fn test_runtime_clock_frame_without_a_painted_frame_recomposes() -> Result<()> {
     Ok(())
 }
 
+/// WHEN a state change and a spinner tick land in the same loop arm, THEN THE
+/// frame SHALL be a full recomposition: a pending recomposition never downgrades
+/// to a clock-cells repaint.
+#[test]
+fn test_runtime_clock_frame_tick_does_not_downgrade_a_pending_recomposition() -> Result<()> {
+    // -- Setup & Fixtures: one painted frame, nothing pending.
+    let mut coordinator = animated_coordinator();
+    let mut terminal = Terminal::new(TestBackend::new(COLUMNS, ROWS))?;
+    coordinator.render_if_needed(&mut Some(&mut terminal))?;
+
+    // -- Exec: the arm raises a frame, then folds a spinner tick.
+    coordinator.mark_render_needed();
+    coordinator.mark_clock_tick();
+    coordinator.set_last_render_at(Instant::now() - Duration::from_millis(100));
+    coordinator.render_if_needed(&mut Some(&mut terminal))?;
+
+    // -- Check
+    let timing = coordinator.frame_timing();
+    assert_eq!(
+        timing.recomposed_frames(),
+        2,
+        "the state change must compose the whole frame, not repaint the clock cells"
+    );
+    assert_eq!(
+        timing.clock_frames(),
+        0,
+        "a pending recomposition must not downgrade to a clock-cells repaint"
+    );
+    Ok(())
+}
+
+/// WHEN a clock tick is the only pending change and a painted frame exists,
+/// THEN `render_if_needed` SHALL paint a clock-only frame: the clock-repaint
+/// counter advances and the recomposition counter does not.
+#[test]
+fn test_runtime_clock_frame_tick_after_a_painted_frame_repaints_the_clock_cells() -> Result<()> {
+    // -- Setup & Fixtures: one painted frame, nothing pending.
+    let mut coordinator = animated_coordinator();
+    let mut terminal = Terminal::new(TestBackend::new(COLUMNS, ROWS))?;
+    coordinator.render_if_needed(&mut Some(&mut terminal))?;
+
+    // -- Exec: only the spinner advanced.
+    coordinator.mark_clock_tick();
+    coordinator.set_last_render_at(Instant::now() - Duration::from_millis(100));
+    coordinator.render_if_needed(&mut Some(&mut terminal))?;
+
+    // -- Check
+    let timing = coordinator.frame_timing();
+    assert_eq!(
+        timing.clock_frames(),
+        1,
+        "the tick repaints the clock cells"
+    );
+    assert_eq!(
+        timing.recomposed_frames(),
+        1,
+        "a clock-only frame must not recompose the frame"
+    );
+    Ok(())
+}
+
 /// WHEN the render-stats row is visible, THEN a clock-only tick SHALL raise a
 /// full frame: the row carries the loop's per-frame counters, so a repaint that
 /// skips it would leave stale numbers on the surface.

@@ -150,6 +150,22 @@ pub fn resolve_theme_from_clap(
 
 // endregion: --- Theme
 
+// region:    --- Highlight languages
+
+/// Install the configured highlight-language set.
+///
+/// The renderer keeps one process-wide syntax set and the first install wins,
+/// so a second entry point in the same process keeps the set already installed.
+pub(crate) fn init_highlight_languages(plugin_config: &PluginConfig) {
+    agnt_render::transcript::syntax_packdump::init(
+        agnt_render::transcript::syntax_packdump::SyntaxSetSpec::from_config(
+            plugin_config.highlight_languages.as_deref(),
+        ),
+    );
+}
+
+// endregion: --- Highlight languages
+
 // region:    --- Session store
 
 /// Resolve the session store type from the clap `--store` flag, then the

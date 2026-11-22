@@ -1,6 +1,9 @@
 use super::*;
 
 use crate::runtime::frame_timing::FRAME_SLOW_WARN_MS;
+use crate::test_support::{inference_completed, tool_started};
+use agnt_runtime::protocol::events::{InferenceRecord, SessionRecord, ToolCall};
+use agnt_runtime::tools::handler::ToolSource;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -362,6 +365,43 @@ fn test_runtime_coordinator_stream_arm_aggregates_folds_by_kind() -> Result<()> 
         assert!(line.contains(label), "the line must carry {label}: {line}");
     }
     assert!(line.contains("records=3"), "one record per fold: {line}");
+    Ok(())
+}
+
+/// WHEN a batch folds the kinds the 819 ms repro's line carries — one streamed
+/// chunk, one tool dispatch, and the call's completion — THE breakdown SHALL
+/// count one fold under each of their labels.
+#[test]
+fn test_runtime_coordinator_stream_arm_labels_the_repros_kinds() -> Result<()> {
+    // -- Setup & Fixtures: the call's chunk, a tool the answer dispatches, and
+    // the call's completion, as the producer publishes them.
+    let mut coordinator = RuntimeCoordinator::new(80, 24, None);
+    let call = ToolCall::new("read", ToolSource::Closure, "{\"path\":\"sample.txt\"}");
+    let batch = vec![
+        SessionRecord::Inference(InferenceRecord::Chunk {
+            inference: agnt_runtime::protocol::events::InferenceId::mint(),
+            delta: "delta".to_string(),
+            aggregated: "aggregated".to_string(),
+        }),
+        tool_started(call),
+        inference_completed(10, 20, Some(30), None, false),
+    ];
+
+    // -- Exec
+    coordinator.begin_stream_arm();
+    let _ = coordinator.reduce_record_batch(batch);
+    let line = coordinator.stream_arm_breakdown(4);
+
+    // -- Check: the three labels, one fold each (the millisecond part is real
+    // wall time, so only its presence is asserted here).
+    for label in [
+        "inference-chunk=1/",
+        "tool-started=1/",
+        "inference-completed=1/",
+    ] {
+        assert!(line.contains(label), "the line must carry {label}: {line}");
+    }
+    assert!(line.contains("records=3"), "one fold per record: {line}");
     Ok(())
 }
 

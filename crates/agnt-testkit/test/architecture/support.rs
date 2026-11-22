@@ -133,15 +133,15 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
     (
         ARCH_9B,
         &[
-            "ARCH-9.b agnt-cli/src/dispatch/a2a.rs:165: reqwest::Client::builder",
+            "ARCH-9.b agnt-cli/src/dispatch/a2a.rs:170: reqwest::Client::builder",
             "ARCH-9.b agnt-cli/src/main.rs:305: rustls::crypto::ring::default_provider::install_default",
             "ARCH-9.b agnt-plugin/src/main.rs:9: rustls::crypto::ring::default_provider::install_default",
             "ARCH-9.b agnt-runtime/src/config/models_cache.rs:109: reqwest::blocking::Client::new",
             "ARCH-9.b agnt-runtime/src/conversation/providers.rs:30: ensure_crypto_provider",
             "ARCH-9.b agnt-runtime/src/conversation/providers.rs:32: reqwest::Client::builder",
             "ARCH-9.b agnt-runtime/src/tools/handler/http.rs:62: reqwest::Client::builder",
-            "ARCH-9.b agnt-runtime/src/tools/mcp/runtime.rs:263: ensure_crypto_provider",
-            "ARCH-9.b agnt-runtime/src/tools/mcp/runtime.rs:264: reqwest::Client::builder",
+            "ARCH-9.b agnt-runtime/src/tools/mcp/runtime/http.rs:89: ensure_crypto_provider",
+            "ARCH-9.b agnt-runtime/src/tools/mcp/runtime/http.rs:90: reqwest::Client::builder",
             "ARCH-9.b agnt-runtime/src/utils/crypto.rs:11: rustls::crypto::ring::default_provider::install_default",
         ],
     ),

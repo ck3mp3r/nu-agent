@@ -15,6 +15,7 @@ fn test_resolve_model_invalid_format() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };
@@ -62,6 +63,7 @@ fn test_resolve_model_resolves_without_provider_or_model_config() -> Result<()> 
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };
@@ -92,6 +94,7 @@ fn test_resolve_model_resolves_without_provider_or_model_config() -> Result<()> 
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };

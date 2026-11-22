@@ -76,6 +76,7 @@ fn test_resolve_model_basic() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };

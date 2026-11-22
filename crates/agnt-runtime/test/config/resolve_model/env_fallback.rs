@@ -40,6 +40,7 @@ fn test_resolve_model_with_env_fallback() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };

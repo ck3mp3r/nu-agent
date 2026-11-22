@@ -52,6 +52,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };
@@ -176,6 +177,7 @@ fn apply_persona_model_clears_provider_kind() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        highlight_languages: None,
         hooks: Vec::new(),
         paths: None,
     };

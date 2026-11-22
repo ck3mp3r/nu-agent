@@ -18,6 +18,7 @@ required-features = ["integration"]
 [dependencies]
 agnt-a2a = { workspace = true }
 agnt-acp = { workspace = true }
+agnt-render = { workspace = true }
 agnt-runtime = { workspace = true }
 agnt-tui = { workspace = true }
 agnt-tty = { workspace = true }
