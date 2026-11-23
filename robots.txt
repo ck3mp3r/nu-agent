@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ck3mp3r.github.io/nu-agent//sitemap.xml

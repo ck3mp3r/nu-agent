@@ -1,0 +1,20 @@
+# nu-agent documentation
+
+> Nushell plugin for running an LLM agent from pipelines — installation, configuration, MCP tooling, hooks, and the TUI.
+
+## Start here
+
+- [nu-agent documentation](https://ck3mp3r.github.io/nu-agent/): what nu-agent is, the five things it gives you, and where the rest of the site starts.
+
+## Getting started
+
+- [Quick Start](https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/): build the plugin, install it into Nushell, configure a model, and make a first run.
+
+## User guides
+
+- [Usage](https://ck3mp3r.github.io/nu-agent/docs/user/usage/): the `agent` command surface — flags, personas, model roles, pricing, permissions, hooks, and the TUI.
+- [Configuration](https://ck3mp3r.github.io/nu-agent/docs/user/configuration/): config.toml structure, the path ladders, secret storage, the models cache, compaction, and precedence.
+
+## Integration
+
+- [MCP](https://ck3mp3r.github.io/nu-agent/docs/integration/mcp/): MCP servers, transports, tool namespacing, failure recovery, and authentication.

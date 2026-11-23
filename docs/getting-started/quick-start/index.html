@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <link rel="preload" as="font" href="https://ck3mp3r.github.io/nu-agent/fonts/vendor/jost/jost-v4-latin-regular.woff2" type="font/woff2" crossorigin>
+  <link rel="preload" as="font" href="https://ck3mp3r.github.io/nu-agent/fonts/vendor/jost/jost-v4-latin-700.woff2"  type="font/woff2" crossorigin>
+
+
+<link rel="stylesheet" href="https://ck3mp3r.github.io/nu-agent/main.css">
+
+
+
+  
+  
+    
+  
+
+  
+  
+    
+    
+  
+  
+  
+    
+  
+  
+  
+  
+    
+  
+  
+  
+
+
+  <meta name="robots" content="index, follow">
+  <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+  <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+
+
+	
+
+
+	
+
+<title>Quick Start | nu-agent</title>
+<meta name="description" content="Build nu-agent, install the Nushell plugin, configure a model, and make your first run.">
+<link rel="canonical" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">
+
+
+
+
+
+
+
+
+
+
+<script type="application/ld+json">
+  {
+    "@context": "http://schema.org",
+    "@type": "BreadcrumbList",
+    
+      
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          {
+            "@type": "ListItem",
+            "position":  1 ,
+            "name": "Home",
+            "item": "https://ck3mp3r.github.io/nu-agent/"
+          },
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  2 ,
+            "name": "Docs",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/"
+          },
+        
+      
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  3 ,
+            "name": "Getting Started",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/getting-started/"
+          },
+        
+      
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  4 ,
+            "name": "Quick Start",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/"
+          },
+        
+      
+    
+  }
+</script>
+
+
+
+
+
+
+  <meta name="theme-color" content="#fff">
+  <link rel="apple-touch-icon" sizes="180x180" href="https://ck3mp3r.github.io/nu-agent/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="https://ck3mp3r.github.io/nu-agent/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="https://ck3mp3r.github.io/nu-agent/favicon-16x16.png">
+  
+    <link rel="manifest" href="https://ck3mp3r.github.io/nu-agent/site.webmanifest" crossorigin>
+  
+
+
+  
+
+</head>
+
+  
+
+<body class="docs single">
+  
+  
+  
+  
+<div class="header-bar fixed-top"></div>
+<header class="navbar fixed-top navbar-expand-md navbar-light">
+	<div class="container">
+		<input class="menu-btn order-0" type="checkbox" id="menu-btn">
+		<label class="menu-icon d-md-none" for="menu-btn"><span class="navicon"></span></label>
+		<a class="navbar-brand order-1 order-md-0 me-auto" href="https://ck3mp3r.github.io/nu-agent/">nu-agent</a>
+		<button id="mode" class="btn btn-link order-2 order-md-4" type="button" aria-label="Toggle mode">
+			<span class="toggle-dark"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-moon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg></span>
+			<span class="toggle-light"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-sun"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></span>
+		</button>
+		<ul class="navbar-nav fork-me order-3 order-md-5">
+			
+				
+					<li class="nav-item">
+						<a class="nav-link" href="https://github.com/ck3mp3r/nu-agent"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg><span class="ms-2 visually-hidden">GitHub</span></a>
+					</li>
+				
+			
+		</ul>
+		<div class="collapse navbar-collapse order-4 order-md-1">
+			<ul class="navbar-nav main-nav me-auto order-5 order-md-2">
+				
+					
+				
+				
+				
+					
+						<li class="nav-item docs active">
+							<a class="nav-link" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">Docs</a>
+						</li>
+					
+				
+			</ul>
+			<div class="break order-6 d-md-none"></div>
+			
+				<form class="navbar-form flex-grow-1 order-7 order-md-3">
+					<input id="userinput" class="form-control is-search" type="search" placeholder="Search docs..."
+						aria-label="Search docs..." autocomplete="off">
+					<div id="suggestions" class="shadow bg-white rounded"></div>
+				</form>
+			
+		</div>
+	</div>
+</header>
+
+
+
+  
+<div class="wrap container" role="document">
+  <div class="content">
+    <div class="row flex-xl-nowrap">
+	  
+<div class="col-lg-5 col-xl-4 docs-sidebar">
+	<nav class="docs-links" aria-label="Main navigation">
+			
+			
+			
+			
+					
+					
+					
+							<h3>Getting Started</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link active" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">Quick Start</a></li>
+							
+					</ul>
+					
+					
+					
+					
+							<h3>User guide</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/">Usage</a></li>
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/">Configuration</a></li>
+							
+					</ul>
+					
+					
+					
+					
+							<h3>Integration</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/integration/mcp/">MCP</a></li>
+							
+					</ul>
+					
+					
+			
+	</nav>
+</div>
+
+	  
+  
+  <nav class="docs-toc d-none d-xl-block col-xl-3" aria-label="Secondary navigation">
+  	<div class="page-links">
+  			<h3>On this page</h3>
+  			<nav id="TableOfContents">
+  					<ul>
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/#build-and-install">Build and install</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/#configure-a-model">Configure a model</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/#first-run">First run</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/#common-flags">Common flags</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/#what-s-next">What&#x27;s next?</a></li>
+  							
+  							
+  					</ul>
+  			</nav>
+  	</div>
+  </nav>
+  
+
+      <main class="docs-content col-lg-11 col-xl-9">
+        <h1>Quick Start</h1>
+        
+        <h2 id="build-and-install">Build and install</h2>
+<p>nu-agent is a Nushell plugin, so it ships as a separate binary. Build it in
+release mode and register it with Nushell:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">cargo</span><span style="color: #A6E3A1;"> build --release</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">plugin</span><span style="color: #A6E3A1;"> add target/release/nu_plugin_agent</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">plugin</span><span style="color: #A6E3A1;"> use agent</span></span></code></pre>
+<p><code>plugin add</code> records the binary path in Nushell's plugin registry, and
+<code>plugin use</code> loads it. The command name is <code>agent</code>: the <code>nu_plugin_</code> prefix is
+what makes the binary a plugin.</p>
+<h2 id="configure-a-model">Configure a model</h2>
+<p>Generate a starter config from your environment:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> config init</span><span style="color: #9399B2;font-style: italic;">          # creates config.toml (errors if it already exists)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> config init --force</span><span style="color: #9399B2;font-style: italic;">  # overwrite an existing config.toml</span></span></code></pre>
+<p><code>agent config init</code> scans for <code>OPENAI_API_KEY</code> / <code>ANTHROPIC_API_KEY</code> and any
+<code>AGENT_*</code> overrides, and writes a <code>config.toml</code> reflecting them. The file lives
+at <code>{config base}/nu-agent/config.toml</code> — <code>~/.config/nu-agent/config.toml</code> by
+default; a debug build reads <code>nu-agent-dev/</code> instead.</p>
+<p>Then edit the file and set a model. Two blocks are enough to run against a
+local Ollama server:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ollama/gemma4:31b&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>base_url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;http://127.0.0.1:11434&quot;</span></span></code></pre><h2 id="first-run">First run</h2>
+<p>Pipe a prompt into the agent:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #A6E3A1;">&quot;explain this repo&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span></span></code></pre>
+<p>The input can be a plain string, or a record with <code>prompt</code> and an optional
+<code>context</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;">{</span><span> prompt</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;Summarize&quot;</span><span>, context</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;short bullets&quot;</span><span style="color: #9399B2;"> }</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span></span></code></pre><h2 id="common-flags">Common flags</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Override the model for one call</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;quick answer&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">model</span><span style="color: #A6E3A1;"> &quot;ollama/gemma4:31b&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Quiet mode (suppress non-essential progress UX)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">quiet</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Progressive verbosity on the stderr UX</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">v</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">vv</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">vvv</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Load a persona for instructions and configuration</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;implement the feature&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #A6E3A1;"> coder</span></span></code></pre><h2 id="what-s-next">What's next?</h2>
+<ul>
+<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/">Usage</a> — the full command surface: sessions, hooks, permissions, and the TUI.</li>
+<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/">Configuration</a> — config.toml, secret storage, the models cache, and precedence.</li>
+<li><a href="https://ck3mp3r.github.io/nu-agent/docs/integration/mcp/">MCP</a> — wire nu-agent to MCP servers for extra tools.</li>
+</ul>
+
+        
+        
+<div class="docs-navigation d-flex justify-content-between">
+  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+  
+
+  
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+      
+      
+        
+          
+          
+          <a class="ms-auto" href="https:&#x2F;&#x2F;ck3mp3r.github.io&#x2F;nu-agent&#x2F;docs&#x2F;user&#x2F;usage&#x2F;">
+            <div class="card my-1">
+              <div class="card-body py-2">
+                Usage &rarr;
+              </div>
+            </div>
+          </a>
+          
+          
+          
+        
+      
+    
+      
+      
+        
+      
+    
+  
+</div>
+
+      </main>
+    </div>
+  </div>
+</div>
+
+
+  
+    
+<footer class="footer text-muted">
+	<div class="container">
+		<div class="row">
+			<div class="col-lg-8 order-last order-lg-first">
+				<ul class="list-inline">
+					
+						<li class="list-inline-item"> </li>
+					
+				</ul>
+			</div>
+			<div class="col-lg-8 order-first order-lg-last text-lg-end">
+				<ul class="list-inline">
+					
+				</ul>
+			</div>
+		</div>
+	</div>
+</footer>
+
+  
+
+  
+<script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/js/main.js" defer></script>
+
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/plugins/elasticlunr.min.js" defer></script>
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/search_index.en.js" defer></script>
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/js/search.js" defer></script>
+
+  
+</body>
+</html>

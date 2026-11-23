@@ -1,0 +1,1482 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <link rel="preload" as="font" href="https://ck3mp3r.github.io/nu-agent/fonts/vendor/jost/jost-v4-latin-regular.woff2" type="font/woff2" crossorigin>
+  <link rel="preload" as="font" href="https://ck3mp3r.github.io/nu-agent/fonts/vendor/jost/jost-v4-latin-700.woff2"  type="font/woff2" crossorigin>
+
+
+<link rel="stylesheet" href="https://ck3mp3r.github.io/nu-agent/main.css">
+
+
+
+  
+  
+    
+  
+
+  
+  
+    
+    
+  
+  
+  
+    
+  
+  
+  
+  
+    
+  
+  
+  
+
+
+  <meta name="robots" content="index, follow">
+  <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+  <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+
+
+	
+
+
+	
+
+<title>Configuration | nu-agent</title>
+<meta name="description" content="Nushell plugin for running an LLM agent from pipelines.">
+<link rel="canonical" href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/">
+
+
+
+
+
+
+
+
+
+
+<script type="application/ld+json">
+  {
+    "@context": "http://schema.org",
+    "@type": "BreadcrumbList",
+    
+      
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          {
+            "@type": "ListItem",
+            "position":  1 ,
+            "name": "Home",
+            "item": "https://ck3mp3r.github.io/nu-agent/"
+          },
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  2 ,
+            "name": "Docs",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/"
+          },
+        
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  3 ,
+            "name": "User",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/user/"
+          },
+        
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  4 ,
+            "name": "Configuration",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/user/configuration/"
+          },
+        
+      
+    
+  }
+</script>
+
+
+
+
+
+
+  <meta name="theme-color" content="#fff">
+  <link rel="apple-touch-icon" sizes="180x180" href="https://ck3mp3r.github.io/nu-agent/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="https://ck3mp3r.github.io/nu-agent/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="https://ck3mp3r.github.io/nu-agent/favicon-16x16.png">
+  
+    <link rel="manifest" href="https://ck3mp3r.github.io/nu-agent/site.webmanifest" crossorigin>
+  
+
+
+  
+
+</head>
+
+  
+
+<body class="docs single">
+  
+  
+  
+  
+<div class="header-bar fixed-top"></div>
+<header class="navbar fixed-top navbar-expand-md navbar-light">
+	<div class="container">
+		<input class="menu-btn order-0" type="checkbox" id="menu-btn">
+		<label class="menu-icon d-md-none" for="menu-btn"><span class="navicon"></span></label>
+		<a class="navbar-brand order-1 order-md-0 me-auto" href="https://ck3mp3r.github.io/nu-agent/">nu-agent</a>
+		<button id="mode" class="btn btn-link order-2 order-md-4" type="button" aria-label="Toggle mode">
+			<span class="toggle-dark"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-moon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg></span>
+			<span class="toggle-light"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-sun"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></span>
+		</button>
+		<ul class="navbar-nav fork-me order-3 order-md-5">
+			
+				
+					<li class="nav-item">
+						<a class="nav-link" href="https://github.com/ck3mp3r/nu-agent"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg><span class="ms-2 visually-hidden">GitHub</span></a>
+					</li>
+				
+			
+		</ul>
+		<div class="collapse navbar-collapse order-4 order-md-1">
+			<ul class="navbar-nav main-nav me-auto order-5 order-md-2">
+				
+					
+				
+				
+				
+					
+						<li class="nav-item docs active">
+							<a class="nav-link" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">Docs</a>
+						</li>
+					
+				
+			</ul>
+			<div class="break order-6 d-md-none"></div>
+			
+				<form class="navbar-form flex-grow-1 order-7 order-md-3">
+					<input id="userinput" class="form-control is-search" type="search" placeholder="Search docs..."
+						aria-label="Search docs..." autocomplete="off">
+					<div id="suggestions" class="shadow bg-white rounded"></div>
+				</form>
+			
+		</div>
+	</div>
+</header>
+
+
+
+  
+<div class="wrap container" role="document">
+  <div class="content">
+    <div class="row flex-xl-nowrap">
+	  
+<div class="col-lg-5 col-xl-4 docs-sidebar">
+	<nav class="docs-links" aria-label="Main navigation">
+			
+			
+			
+			
+					
+					
+					
+							<h3>Getting Started</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">Quick Start</a></li>
+							
+					</ul>
+					
+					
+					
+					
+							<h3>User guide</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/">Usage</a></li>
+							                           
+									<li><a class="docs-link active" href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/">Configuration</a></li>
+							
+					</ul>
+					
+					
+					
+					
+							<h3>Integration</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/integration/mcp/">MCP</a></li>
+							
+					</ul>
+					
+					
+			
+	</nav>
+</div>
+
+	  
+  
+  <nav class="docs-toc d-none d-xl-block col-xl-3" aria-label="Secondary navigation">
+  	<div class="page-links">
+  			<h3>On this page</h3>
+  			<nav id="TableOfContents">
+  					<ul>
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#1-config-toml">1. config.toml</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#location">Location</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#top-level-structure">Top-level structure</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#theme">Theme</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#highlight-languages">Highlight languages</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#model-roles">Model roles</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#providers">Providers</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#openai-compatible-providers">OpenAI-compatible providers</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#session-store">Session store</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#compaction">Compaction</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#agents">Agents</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#a2a">A2A</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#hooks">Hooks</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#permissions">Permissions</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#actions">Actions</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#global-policy">Global policy</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#decision-timeout">Decision timeout</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#nested-field-rules">Nested field rules</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#precedence">Precedence</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#safe-defaults">Safe defaults</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#tree-sitter-tools-code-analysis">Tree-sitter tools (code analysis)</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#prerequisites">Prerequisites</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#setup-steps">Setup steps</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#config-file-location">Config file location</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#config-format">Config format</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#grammar-discovery">Grammar discovery</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#cache-path">Cache path</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#supported-languages">Supported languages</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#tools">Tools</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#error-messages">Error messages</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#permission">Permission</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#mcp-servers">MCP Servers</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#transports">Transports</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#fields">Fields</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#auth-optional">Auth (optional)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#auth-commands">Auth commands</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#2-secret-storage">2. Secret Storage</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#startup-hierarchy">Startup hierarchy</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#agent-vault-backend-override">AGENT_VAULT_BACKEND override</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#env-files">.env files</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#store-reference-syntax">store: reference syntax</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#env-reference-syntax">env: reference syntax</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#cmd-reference-syntax">cmd: reference syntax</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#default-vault-lookup">Default vault lookup</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#raw-key-literals-are-rejected">Raw key literals are rejected</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#precedence-1">Precedence</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#managing-credentials">Managing credentials</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#3-models-json">3. models.json</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#syncing">Syncing</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#listing">Listing</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#resolution-priority">Resolution priority</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#persona-model-resolution-rules">Persona model: resolution rules</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#environment-variable-fallback">Environment variable fallback</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#fixed-retry-caps">Fixed retry caps</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#cli-commands-reference">CLI commands reference</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#examples">Examples</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#single-provider-openai">Single provider (OpenAI)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#single-provider-anthropic">Single provider (Anthropic)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#local-ollama">Local Ollama</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#multi-provider">Multi-provider</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#github-copilot">GitHub Copilot</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#additional-parameters">Additional parameters</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#gotchas">Gotchas</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#controlling-thinking-depth-on-anthropic-sonnet-4-6">Controlling thinking depth on Anthropic Sonnet 4.6</a></li>
+  											
+  									</ul>
+  							
+  							
+  					</ul>
+  			</nav>
+  	</div>
+  </nav>
+  
+
+      <main class="docs-content col-lg-11 col-xl-9">
+        <h1>Configuration</h1>
+        
+        <p><code>nu-agent</code> uses a <strong>TOML config file</strong> as its sole source of configuration. The Nushell plugin record is no longer supported — all configuration lives in <code>config.toml</code>.</p>
+<p>Configuration is organised around three files. Each one lives in its tree's app directory: by default <code>{XDG base}/nu-agent/</code>, or <code>{XDG base}/nu-agent-dev/</code> in a debug build. An override re-roots the base and the app directory moves with it — see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a>.</p>
+<table><thead><tr><th>File</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>config.toml</code></td><td><code>{config base}/nu-agent/config.toml</code></td><td>Main configuration: models, providers, MCP, compaction, agents, session store</td></tr>
+<tr><td><code>.env</code></td><td><code>{config base}/nu-agent/.env</code> and <code>./.env</code></td><td>Optional environment variables (see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#2-secret-storage">Secret Storage</a>)</td></tr>
+<tr><td><code>models.json</code></td><td><code>{data base}/nu-agent/models.json</code></td><td>Local cache of the <code>models.dev</code> database</td></tr>
+</tbody></table>
+<blockquote>
+<p>On macOS/Linux the XDG defaults are <code>~/.config</code>, <code>~/.local/share</code>, and <code>~/.cache</code>. If <code>XDG_CONFIG_HOME</code>/<code>XDG_DATA_HOME</code> are set they take precedence, and <code>NU_AGENT_CONFIG_HOME</code>/<code>NU_AGENT_DATA_HOME</code> take precedence over those. Every base, and the <code>nu-agent</code> segment, is described under <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a>.</p>
+</blockquote>
+<h2 id="1-config-toml">1. config.toml</h2>
+<h3 id="location">Location</h3>
+<p><code>{config base}/nu-agent/config.toml</code> — <code>$XDG_CONFIG_HOME/nu-agent/config.toml</code> by default. <code>NU_AGENT_CONFIG_HOME</code> re-roots the whole config tree, and a debug build uses <code>nu-agent-dev</code> as the app directory. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a> for the full ladder.</p>
+<p>If the file does not exist, <code>nu-agent</code> uses built-in defaults (plus environment-variable fallbacks — see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#environment-variable-fallback">Environment Variable Fallback</a>). It is <strong>not</strong> an error for the file to be absent.</p>
+<p>Generate a starter config from your current environment with:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> config init</span><span style="color: #9399B2;font-style: italic;">          # creates config.toml (errors if it already exists)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> config init --force</span><span style="color: #9399B2;font-style: italic;">  # overwrite an existing config.toml</span></span></code></pre>
+<p><code>agent config init</code> writes a starter file from a built-in template. It never writes a secret: store keys with <code>agent provider auth login &lt;name&gt;</code>. When both <code>AGENT_PROVIDER</code> and <code>AGENT_MODEL</code> are set, it writes that model as the <code>[models.default]</code> line and leaves the rest of the file commented out.</p>
+<h3 id="top-level-structure">Top-level structure</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:openai&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai.models.gpt-4o</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>compaction</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>reserve_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 16384</span></span>
+<span class="giallo-l"><span>keep_recent_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 20000</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>agents</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>planner_enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>maker_enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>default</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;planner&quot;</span></span></code></pre>
+<p>Top-level sections:</p>
+<ul>
+<li><code>[models.&lt;role&gt;]</code> — per-role model configuration (at least <code>models.default</code>)</li>
+<li><code>[providers.&lt;name&gt;]</code> — provider definitions</li>
+<li><code>[compaction]</code> — conversation compaction settings (optional)</li>
+<li><code>[agents]</code> — built-in persona availability (optional)</li>
+<li><code>[session_store]</code> — session store backend (optional)</li>
+<li><code>[permissions]</code> — tool execution policy (optional, see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#permissions">Permissions</a>)</li>
+<li><code>[mcp]</code> — MCP server definitions (optional, see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#mcp-servers">MCP Servers</a>)</li>
+<li><code>[paths]</code> — base-directory overrides for the data, cache, and state trees (optional, see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a>)</li>
+<li><code>a2a_enabled</code> — enable A2A (agent-to-agent) protocol (default: <code>false</code>)</li>
+<li><code>theme</code> — default TUI theme (optional, see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#theme">Theme</a>)</li>
+<li><code>highlight_languages</code> — languages the transcript renderer highlights (optional,
+see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#highlight-languages">Highlight languages</a>)</li>
+<li><code>[[hooks]]</code> — user hook handlers (optional, see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#hooks">Hooks</a>)</li>
+<li><code>cmd_timeout_secs</code> — timeout in seconds for a <code>cmd:</code> reference (optional, see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#cmd-reference-syntax"><code>cmd:</code> reference syntax</a>)</li>
+</ul>
+<h4 id="paths">Paths</h4>
+<p>Every path <code>nu-agent</code> touches follows one 4-level ladder per tree, most specific
+first:</p>
+<table><thead><tr><th>Tree</th><th>Env override</th><th><code>[paths]</code> key</th><th>XDG env</th><th>Default under <code>$HOME</code></th></tr></thead><tbody>
+<tr><td>config</td><td><code>NU_AGENT_CONFIG_HOME</code></td><td>—</td><td><code>XDG_CONFIG_HOME</code></td><td><code>~/.config</code></td></tr>
+<tr><td>data</td><td><code>NU_AGENT_DATA_HOME</code></td><td><code>data_home</code></td><td><code>XDG_DATA_HOME</code></td><td><code>~/.local/share</code></td></tr>
+<tr><td>cache</td><td><code>NU_AGENT_CACHE_HOME</code></td><td><code>cache_home</code></td><td><code>XDG_CACHE_HOME</code></td><td><code>~/.cache</code></td></tr>
+<tr><td>state</td><td><code>NU_AGENT_STATE_HOME</code></td><td><code>state_home</code></td><td><code>XDG_STATE_HOME</code></td><td><code>~/.local/state</code></td></tr>
+</tbody></table>
+<p>The ladder precedence is <code>NU_AGENT_&lt;X&gt;_HOME</code> &gt; <code>[paths].&lt;x&gt;_home</code> &gt;
+<code>XDG_&lt;X&gt;_HOME</code> &gt; the XDG default under <code>$HOME</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>paths</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>data_home</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;/srv/nu-agent/data&quot;</span></span>
+<span class="giallo-l"><span>cache_home</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;~/.cache/nu-agent&quot;</span></span>
+<span class="giallo-l"><span>state_home</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;/var/log/nu-agent&quot;</span></span></code></pre>
+<p>The block has exactly three keys: <code>data_home</code>, <code>cache_home</code>, <code>state_home</code>. Rules:</p>
+<ul>
+<li><strong>No file pins.</strong> An override re-roots its whole tree: the tree keeps the
+<code>{APP_DIR_NAME}/&lt;tail&gt;</code> substructure, so <code>config.toml</code>, <code>.env</code>, <code>agents/</code>,
+<code>logs/</code>, <code>sessions.db</code>, <code>tool_audit.log</code>, <code>secrets.json</code>,
+<code>models.json</code>, and <code>theme.json</code> all move with their tree. There is no per-file
+override.</li>
+<li><strong>The config tree has no <code>[paths]</code> key.</strong> The file that would hold it is the
+file the ladder has to find first, so the config tree is re-rooted only by
+<code>NU_AGENT_CONFIG_HOME</code> or an XDG level.</li>
+<li><strong>One carve-out: the grammar cache.</strong> The tree-sitter grammar cache lives at
+<code>{cache base}/tree-sitter/</code> — no <code>{APP_DIR_NAME}</code> segment and no <code>-dev</code> split —
+because the <code>tree-sitter</code> CLI shares that layout. Its base still follows the
+cache ladder; see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#cache-path">Cache path</a>.</li>
+<li><strong>Relative values are rejected at every level.</strong> Env values and <code>[paths]</code>
+values must be absolute or start with <code>~</code>; a relative <code>[paths]</code> value is an
+error at parse time naming the field, and a relative <code>NU_AGENT_*_HOME</code> value is
+an error during resolution naming the variable. <code>XDG_*</code> variables keep their
+standard semantics.</li>
+<li><strong>Unknown <code>[paths]</code> keys are rejected at parse time.</strong> A key the block does not
+define is a hard error that names the key, so a stale key can never silently
+override nothing.</li>
+<li><strong><code>~</code> expands to <code>$HOME</code>.</strong> Only a leading <code>~</code> or <code>~/</code> expands. An empty value
+counts as absent at both override levels, and resolution never creates a
+directory: the first consumer that writes there creates it.</li>
+<li><strong>Resolve once, inject.</strong> Paths are resolved once at startup by
+<code>Paths::resolve_for_process</code>, and consumers receive the resolved values — no
+point-of-use XDG resolution.</li>
+<li><strong>The <code>-dev</code> split.</strong> <code>APP_DIR_NAME</code> is <code>nu-agent-dev</code> in debug builds and
+<code>nu-agent</code> in release builds. The split applies to every derived path,
+including the config file's app directory: <code>.env</code>, hooks, and <code>agents/</code> anchor
+with it.</li>
+<li><strong>Hooks stay relative to the config file's dir.</strong> A relative <code>script</code> in
+<code>[[hooks]]</code> resolves against the directory holding <code>config.toml</code> (see
+<a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#hooks">Hooks</a>).</li>
+</ul>
+<h3 id="theme">Theme</h3>
+<p>The <code>theme</code> key sets the default TUI theme. Valid values are the four built-in Catppuccin flavors:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span>theme</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;catppuccin-frappe&quot;</span></span></code></pre>
+<p>Valid values:</p>
+<ul>
+<li><code>catppuccin-mocha</code> (default)</li>
+<li><code>catppuccin-latte</code></li>
+<li><code>catppuccin-frappe</code></li>
+<li><code>catppuccin-macchiato</code></li>
+</ul>
+<p>An unknown <code>theme</code> value is ignored with a log warning, and the next level in the order below applies. The theme can also be set per-launch with the <code>--theme</code> CLI flag, which overrides the config value; an unknown <code>--theme</code> value is an error. Selecting a theme in the TUI picker persists the choice to <code>$XDG_DATA_HOME/nu-agent/theme.json</code> (mode 0600), which is used on the next launch unless overridden by config or the CLI flag.</p>
+<p>Resolution order (highest first):</p>
+<ol>
+<li><code>--theme</code> CLI flag</li>
+<li><code>theme</code> in config.toml</li>
+<li>Saved preference file (written by the TUI picker)</li>
+<li>Default: <code>catppuccin-mocha</code></li>
+</ol>
+<h3 id="highlight-languages">Highlight languages</h3>
+<p>The <code>highlight_languages</code> key sets the languages the transcript renderer
+highlights. Code fences, edit diffs, and code cards render token channels for a
+language on the list. A language outside the list renders plain tokens.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Absent or empty: the built-in default list.</span></span>
+<span class="giallo-l"><span>highlight_languages</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> []</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Every syntax syntect carries.</span></span>
+<span class="giallo-l"><span>highlight_languages</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;all&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Exactly these languages.</span></span>
+<span class="giallo-l"><span>highlight_languages</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;rust&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;python&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;nix&quot;</span><span style="color: #9399B2;">]</span></span></code></pre>
+<p>The built-in default list:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>rust, python, go, js, ts, json, yaml, toml, bash, sql, c, cpp, ruby, diff, nu, nix</span></span></code></pre>
+<p>An entry is a language name or a file extension. An entry the syntax set cannot
+resolve is logged and skipped.</p>
+<p><code>syntect</code> 5.3 carries no TypeScript or TOML syntax, so <code>ts</code> and <code>toml</code> render
+plain tokens even under <code>"all"</code>. Markdown is in the syntax set but is not on the
+default list: an edit diff of a <code>.md</code> file renders plain tokens until you add
+<code>markdown</code> to the list.</p>
+<h3 id="model-roles">Model roles</h3>
+<p>The <code>[models.&lt;role&gt;]</code> map defines named model roles. Each role is a set of per-role overrides for model selection and generation parameters. At minimum a <code>default</code> role must be present.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span></span>
+<span class="giallo-l"><span>temperature</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.3</span></span>
+<span class="giallo-l"><span>max_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 8192</span></span>
+<span class="giallo-l"><span>max_context_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 128000</span></span>
+<span class="giallo-l"><span>max_tool_turns</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 20</span></span>
+<span class="giallo-l"><span>max_tool_result_bytes</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 20000</span></span>
+<span class="giallo-l"><span>max_tool_calls_per_subturn</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 10</span></span>
+<span class="giallo-l"><span>read_timeout_secs</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 30</span></span>
+<span class="giallo-l"><span>max_retries</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 3</span></span>
+<span class="giallo-l"><span>retry_base_delay_ms</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 1000</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.heavy</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span></span>
+<span class="giallo-l"><span>temperature</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.7</span></span>
+<span class="giallo-l"><span>max_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 16384</span></span>
+<span class="giallo-l"><span>max_context_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 200000</span></span></code></pre><h4 id="modelroleconfig-field-reference">ModelRoleConfig field reference</h4>
+<table><thead><tr><th>Field</th><th>Type</th><th>Description</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>model</code></td><td>String (required)</td><td>Provider/model identifier (e.g. <code>"openai/gpt-4o"</code>)</td><td>—</td></tr>
+<tr><td><code>temperature</code></td><td>float</td><td>Response randomness, 0.0–2.0</td><td>env / model block, else the provider default</td></tr>
+<tr><td><code>max_tokens</code></td><td>int</td><td>Maximum tokens to generate</td><td>env, else the provider default</td></tr>
+<tr><td><code>max_context_tokens</code></td><td>int</td><td>Context window size in tokens; drives compaction threshold</td><td>from <code>models.json</code> / 128,000</td></tr>
+<tr><td><code>max_output_tokens</code></td><td>int</td><td>Maximum output tokens</td><td>env / model block / <code>models.json</code>, else the provider default</td></tr>
+<tr><td><code>max_tool_turns</code></td><td>int</td><td>Maximum tool execution turns per conversation turn</td><td>20 in the pipeline modes, 256 in the TUI</td></tr>
+<tr><td><code>max_tool_result_bytes</code></td><td>int</td><td>Truncation limit for tool results in bytes; 0 = unlimited</td><td>20,000</td></tr>
+<tr><td><code>max_tool_calls_per_subturn</code></td><td>int</td><td>Maximum tool calls in a single LLM response; 0 = unlimited</td><td>25</td></tr>
+<tr><td><code>model_context_tokens</code></td><td>int</td><td>Approximate context window for in-session token warnings</td><td>from <code>models.json</code> / none</td></tr>
+<tr><td><code>context_warning_threshold</code></td><td>float</td><td>Fraction of <code>model_context_tokens</code> at which to warn, above 0.0 and up to 1.0</td><td>0.6</td></tr>
+<tr><td><code>additional_params</code></td><td>table</td><td>Provider-specific parameters forwarded verbatim to the completion request body (see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#additional-parameters">Additional Parameters</a>)</td><td>none</td></tr>
+<tr><td><code>read_timeout_secs</code></td><td>int</td><td>HTTP read timeout in seconds; 0 = disable</td><td>120</td></tr>
+<tr><td><code>max_retries</code></td><td>int</td><td>Retry attempts for transient errors</td><td>3</td></tr>
+<tr><td><code>retry_base_delay_ms</code></td><td>int</td><td>Base backoff in ms, doubles each attempt, capped at 30s</td><td>1,000</td></tr>
+<tr><td><code>output_budget_empty_remedy</code></td><td>string</td><td>Custom empty-output OutputBudget remedy text shown to the model on feedback retry</td><td>built-in default</td></tr>
+<tr><td><code>output_budget_remedy_mode</code></td><td>string</td><td>OutputBudget remedy mode: <code>empty_output</code> or <code>shorter_response</code></td><td><code>empty_output</code></td></tr>
+<tr><td><code>output_budget_raise_enabled</code></td><td>bool</td><td>Opt-in auto-raise of max_tokens on OutputBudget feedback retries</td><td><code>false</code></td></tr>
+<tr><td><code>output_budget_raise_multiplier</code></td><td>float</td><td>Multiplier applied to the effective max_tokens for a raised retry</td><td><code>2.0</code></td></tr>
+<tr><td><code>output_budget_raise_cap</code></td><td>int</td><td>Absolute ceiling for the raised max_tokens</td><td><code>32768</code></td></tr>
+<tr><td><code>repetition_guard</code></td><td>bool</td><td>Enable/disable repetition guard (tool-call + output repetition detection)</td><td><code>true</code></td></tr>
+</tbody></table>
+<p>All fields except <code>model</code> are optional. When omitted, the value is inherited from the next level in the <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#resolution-priority">resolution priority</a>.</p>
+<h3 id="providers">Providers</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:openai&quot;</span><span style="color: #9399B2;font-style: italic;">       # vault lookup, env: reference, or omit for the default vault lookup</span></span>
+<span class="giallo-l"><span>base_url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;https://api.openai.com/v1&quot;</span><span style="color: #9399B2;font-style: italic;">   # optional override</span></span>
+<span class="giallo-l"><span>provider</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai&quot;</span><span style="color: #9399B2;font-style: italic;">            # provider implementation (default: the key itself)</span></span>
+<span class="giallo-l"><span>name</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;OpenAI&quot;</span><span style="color: #9399B2;font-style: italic;">                # optional display name</span></span>
+<span class="giallo-l"><span>preamble</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;You are helpful.&quot;</span><span style="color: #9399B2;font-style: italic;"> # optional provider preamble</span></span>
+<span class="giallo-l"><span>catalog</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai&quot;</span><span style="color: #9399B2;font-style: italic;">             # models.dev cache section (default: the block name)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai.models.gpt-4o</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># per-model overrides (temperature, limits, pricing, name, tool_call, preamble)</span></span></code></pre><h4 id="providerconfig-field-reference">ProviderConfig field reference</h4>
+<table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>api_key</code></td><td>String</td><td>A <code>store:</code>, <code>env:</code>, or <code>cmd:</code> reference (see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#2-secret-storage">Secret Storage</a>). Omit the field for the default vault lookup. A raw key literal is rejected at startup.</td></tr>
+<tr><td><code>base_url</code></td><td>String</td><td>Custom API endpoint URL</td></tr>
+<tr><td><code>provider</code></td><td>String</td><td>Provider implementation to use (e.g. <code>"openai"</code> for a <code>github-copilot</code> provider or any OpenAI-compatible endpoint)</td></tr>
+<tr><td><code>name</code></td><td>String</td><td>Provider display name</td></tr>
+<tr><td><code>preamble</code></td><td>String</td><td>Optional system preamble</td></tr>
+<tr><td><code>catalog</code></td><td>String</td><td>The models.dev cache section this block's endpoint serves. Defaults to the block name. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#the-models-cache">The models cache</a>.</td></tr>
+<tr><td><code>models</code></td><td>table</td><td>Per-model configuration keyed by model id</td></tr>
+</tbody></table>
+<h4 id="the-models-cache">The models cache</h4>
+<p>The local models cache (<code>agent models sync</code>) files each provider's models under
+its models.dev key. That key often differs from the name you give the block:
+models.dev files a local Ollama under <code>ollama-cloud</code>, and GitHub Copilot under
+<code>github-copilot</code>.</p>
+<p><code>catalog</code> is how a block reaches its section. There is no name mapping: a block
+named <code>ollama</code> reaches no section unless it declares one.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>provider</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ollama&quot;</span></span>
+<span class="giallo-l"><span>catalog</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ollama-cloud&quot;</span><span style="color: #9399B2;font-style: italic;">   # the block now serves the ollama-cloud section</span></span></code></pre>
+<p>A block that declares a section owns it: the model picker lists every row in
+that section, and the pricing ladder and the limits fill read the block's rows.
+A block with no declared section serves only the models it declares, and joins
+no cache metadata or price for them.</p>
+<p><code>agent models list --provider &lt;name&gt;</code> filters the cache by its own keys, not by
+config block names, so <code>agent models list --provider ollama</code> lists nothing —
+the cache has no <code>ollama</code> section. Use <code>--provider ollama-cloud</code>.</p>
+<blockquote>
+<p><strong>Note:</strong> The <code>[providers.&lt;name&gt;]</code> block is <strong>optional</strong>. If omitted, the model is resolved from <code>models.default.model</code> with environment variables as the fallback for API keys and base URLs. Providers that don't require authentication (like Ollama) can be used with just <code>models.default.model = "ollama-cloud/glm-5.2"</code> and no provider block at all.</p>
+</blockquote>
+<h4 id="model-format">Model format</h4>
+<p>All models use <code>provider/model</code> format:</p>
+<ul>
+<li><code>ollama/gemma4:31b</code></li>
+<li><code>openai/gpt-4o</code></li>
+<li><code>anthropic/claude-sonnet-4-6</code></li>
+<li><code>github-copilot/claude-sonnet-4.6</code></li>
+</ul>
+<h4 id="per-model-pricing">Per-model pricing</h4>
+<p>A model no shipped catalog prices — a local Ollama classic, a private
+gateway model — stays tokens-only unless you price it yourself. Set
+<code>pricing</code> on the model's block:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama.models.&quot;llama3.3&quot;.pricing</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>input</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.0</span><span style="color: #9399B2;font-style: italic;">        # required, USD per million input tokens</span></span>
+<span class="giallo-l"><span>output</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.0</span><span style="color: #9399B2;font-style: italic;">       # required, USD per million output tokens</span></span>
+<span class="giallo-l"><span>cache_read</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.0</span><span style="color: #9399B2;font-style: italic;">   # optional, USD per million cached input tokens</span></span>
+<span class="giallo-l"><span>cache_write</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.0</span><span style="color: #9399B2;font-style: italic;">  # optional, USD per million cache-write tokens</span></span></code></pre>
+<p>Quote a model id that contains a dot: TOML reads an unquoted
+<code>models.llama3.3</code> as the nested keys <code>llama3</code> → <code>3</code>.</p>
+<table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>input</code></td><td>Float</td><td>Required. USD per million uncached input tokens.</td></tr>
+<tr><td><code>output</code></td><td>Float</td><td>Required. USD per million output tokens, reasoning included.</td></tr>
+<tr><td><code>cache_read</code></td><td>Float</td><td>Optional. USD per million input tokens read from the cache. Omit it and a call that reads the cache reports a lower-bound cost.</td></tr>
+<tr><td><code>cache_write</code></td><td>Float</td><td>Optional. USD per million input tokens written to the cache. Omit it and a call that writes the cache reports a lower-bound cost.</td></tr>
+</tbody></table>
+<p>This is the pricing ladder's config outcome, and it <strong>wins</strong>: a configured
+price re-prices the model even when its models.dev row lists a cost. The
+shipped row is the fallback. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#model-pricing">Model pricing</a> for
+the full ladder.</p>
+<h3 id="openai-compatible-providers">OpenAI-compatible providers</h3>
+<p>Any provider that implements the OpenAI Chat Completions API (<code>POST /chat/completions</code>) works with <code>provider = "openai"</code> and a custom <code>base_url</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;together/meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.together</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>provider</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai&quot;</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:together&quot;</span></span>
+<span class="giallo-l"><span>base_url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;https://api.together.xyz/v1&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.together.models.&quot;meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo&quot;</span><span style="color: #9399B2;">]</span></span></code></pre>
+<p>This works for Together AI, Groq, OpenRouter, vLLM, LiteLLM, and any other OpenAI-compatible endpoint.</p>
+<h3 id="session-store">Session store</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>session_store</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>store_type</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;sqlite&quot;</span><span style="color: #9399B2;font-style: italic;">    # &quot;sqlite&quot; (default) or &quot;memory&quot;</span></span></code></pre>
+<ul>
+<li><code>store_type</code> — <code>"sqlite"</code> (default) or <code>"memory"</code></li>
+</ul>
+<p>One backend writes the store: SQLite. It holds every session in
+<code>{cache}/{APP_DIR_NAME}/sessions.db</code>, or in an in-memory database when
+<code>"memory"</code> is selected — nothing persists after the process exits there, which
+is useful for ephemeral sessions and testing. The file has no key of its own:
+the cache ladder in <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a> moves it, and nothing else does.</p>
+<p>Precedence for store type: CLI <code>--store</code> flag &gt; <code>AGENT_SESSION_STORE_TYPE</code> env var &gt; config &gt; built-in default (SQLite).</p>
+<h3 id="compaction">Compaction</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>compaction</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;font-style: italic;">                   # compact on its own near the window, and after a request the provider refused as too long</span></span>
+<span class="giallo-l"><span>reserve_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 16384</span><span style="color: #9399B2;font-style: italic;">           # tokens of the model&#39;s input limit kept free for the reply</span></span>
+<span class="giallo-l"><span>keep_recent_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 20000</span><span style="color: #9399B2;font-style: italic;">       # about how many tokens of the newest messages stay as they are</span></span></code></pre>
+<p>Every key is optional: a key left out keeps the built-in default. The block accepts exactly
+these three keys, and a key it does not define fails the load as unknown.</p>
+<p>Compaction triggers when the tokens the next request would send exceed the model's input
+limit less <code>reserve_tokens</code>. A model whose input limit is unknown never trips it. A request
+the provider refuses as too long schedules a compaction for the next request without waiting
+for the threshold.</p>
+<ul>
+<li><code>enabled</code> (bool) — whether a conversation is compacted on its own: near the window, and
+after a request refused as too long. <code>/compact</code> works either way. Unset = <code>true</code>.</li>
+<li><code>reserve_tokens</code> (u64) — tokens of the model's input limit kept free below the trigger: the
+request fires compaction when it would leave less than this free. Unset = <code>16384</code>.</li>
+<li><code>keep_recent_tokens</code> (u64) — about how many tokens of the newest messages stay as they are;
+the older ones become the summary. Unset = <code>20000</code>.</li>
+</ul>
+<p>A <code>/compact</code> focus (<code>/compact</code> args) stays reserved: it has no config key and keeps the
+built-in default.</p>
+<p><code>max_context_tokens</code> lives on the active model role, not in the <code>[compaction]</code> block, but it
+is the window <code>reserve_tokens</code> is measured against. Set it to match your model's actual
+context window.</p>
+<p>The summarizer is the active model: every compaction call — the threshold schedule and
+the one <code>/compact</code> asks for — runs on the model the turn sends to, and follows a mid-session
+model switch. The call is priced at that model's rates.</p>
+<h3 id="agents">Agents</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>agents</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>planner_enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>maker_enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>default</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;planner&quot;</span><span style="color: #9399B2;font-style: italic;">       # default persona at startup</span></span>
+<span class="giallo-l"><span>fallback</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;coder&quot;</span><span style="color: #9399B2;font-style: italic;">       # optional .agents/&lt;name&gt;.md persona when default built-in is disabled</span></span></code></pre>
+<p>Defaults: planner enabled, maker enabled, <code>default</code> = <code>"planner"</code>, no fallback. <code>fallback</code> is used only when <code>default</code> names a disabled built-in persona and must reference a file under <code>.agents/</code> or <code>$XDG_CONFIG_HOME/nu-agent/agents/</code>.</p>
+<h3 id="a2a">A2A</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span>a2a_enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span></code></pre>
+<p>Enable A2A (agent-to-agent) JSON-RPC 2.0 over HTTP. Default is <code>false</code>.</p>
+<h3 id="hooks">Hooks</h3>
+<p>A <code>[[hooks]]</code> entry runs a Nushell script when the agent publishes a lifecycle event. Hooks are observe-only: they never change the turn, the tool result, or the agent output.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[[</span><span>hooks</span><span style="color: #9399B2;">]]</span></span>
+<span class="giallo-l"><span>name</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;herdr&quot;</span></span>
+<span class="giallo-l"><span>events</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;turn_started&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;turn_completed&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>script</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;hooks/herdr.nu&quot;</span></span>
+<span class="giallo-l"><span>timeout_ms</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 5000</span></span></code></pre>
+<p>Fields:</p>
+<ul>
+<li><code>name</code> — required, non-empty. Identifies the hook in log messages.</li>
+<li><code>events</code> — required array of event names. An empty array is valid and starts no runner. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#hook-events">Hook events</a>.</li>
+<li><code>script</code> — required, non-empty. Path to a Nushell script. A relative path resolves against the directory that holds <code>config.toml</code>; an absolute path is used as written.</li>
+<li><code>timeout_ms</code> — optional. Subprocess timeout in milliseconds. Default <code>10000</code>.</li>
+</ul>
+<h4 id="hook-events">Hook events</h4>
+<p>Nineteen event names are valid, in two classes.</p>
+<p>Session class — per-session events:</p>
+<ul>
+<li><code>turn_started</code></li>
+<li><code>turn_completed</code></li>
+<li><code>tool_started</code></li>
+<li><code>tool_completed</code></li>
+<li><code>session_started</code></li>
+<li><code>session_ended</code></li>
+<li><code>permission_requested</code></li>
+<li><code>permission_decision_timed_out</code></li>
+<li><code>permission_decision_submitted</code></li>
+<li><code>permission_decision_ignored</code></li>
+<li><code>permission_request_cancelled</code></li>
+<li><code>permission_auto_resolved</code></li>
+<li><code>compaction_started</code> — fires when a context compaction begins, with its source.</li>
+<li><code>compaction_completed</code> — fires when compaction finishes, with a summary preview.</li>
+<li><code>compaction_failed</code> — fires when compaction errors, with the message.</li>
+<li><code>agent_switched</code> — fires when a user switches the persona, with the slug it left and the slug now active.</li>
+<li><code>model_switched</code> — fires when a user switches the model, with the identity it left and the identity now active.</li>
+</ul>
+<p>Agent class — per-process events:</p>
+<ul>
+<li><code>agent_started</code></li>
+<li><code>agent_shutdown</code></li>
+</ul>
+<p>A hook that declares only session-class events runs on the session hook runner. A hook that declares only agent-class events runs on the process-wide agent hook runner. A hook that declares both runs on both runners. The class is not derivable from the name: <code>agent_switched</code> is session-class because a switch belongs to one session, while the <code>agent_</code> prefix marks per-process events only for <code>agent_started</code> and <code>agent_shutdown</code>.</p>
+<h4 id="the-permission-requested-event">The <code>permission_requested</code> event</h4>
+<p><code>permission_requested</code> fires when the agent asks the user to approve a tool call. It fires once per prompt, after the agent publishes the request and before the user answers.</p>
+<p>The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>request_id</code> — the prompt's identifier.</li>
+<li><code>tool</code> — the tool's display name.</li>
+<li><code>tool_key</code> — the exact call key, <code>{tool_name}\n{raw_arguments}</code>.</li>
+<li><code>source</code> — the tool's source.</li>
+<li><code>mode</code> — the call's <code>mode</code> argument, or null.</li>
+<li><code>matched_rule_identity</code> — the rule that produced the prompt.</li>
+<li><code>scope</code> — the rule's scope.</li>
+<li><code>target_field</code> — the argument field the rule matched, or null.</li>
+<li><code>pattern</code> — the rule's pattern.</li>
+<li><code>summary</code> — the one-line summary shown on the card.</li>
+</ul>
+<p>The payload carries no rendered preview. The card's diff preview is a UI artifact and is not part of the envelope.</p>
+<h4 id="the-switch-events">The switch events</h4>
+<p><code>agent_switched</code> fires when the user switches the persona. <code>model_switched</code> fires when the user switches the model. Both fire after the switch took effect, and both carry the session id they belong to.</p>
+<p>The events fire in TUI interactive mode, from the agent and model pickers, and in ACP mode, from the client's config options. They never fire in stderr mode, TUI single-turn, or the plugin: none of those has a switch path. In ACP the startup default-agent load is not a switch, and it publishes before the session hook runner subscribes, so no hook observes it.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>from</code> — the value in use before the switch. For <code>agent_switched</code> it is a persona slug, or null when the session had no persona. For <code>model_switched</code> it is a <code>provider/model</code> identity and is always present.</li>
+<li><code>to</code> — the value now active: the persona slug or the <code>provider/model</code> identity.</li>
+</ul>
+<p>Re-selecting the current value still counts as a switch, so the payload reports <code>from</code> equal to <code>to</code>. The envelope's <code>agent</code> and <code>model</code> fields report the post-switch state, because the runner stamps them after the switch.</p>
+<p>A persona switch whose model override takes effect emits <code>agent_switched</code> before <code>model_switched</code> on the same channel: two user-meaningful facts changed, so a hook sees two invocations.</p>
+<h4 id="the-permission-decision-timed-out-event">The <code>permission_decision_timed_out</code> event</h4>
+<p><code>permission_decision_timed_out</code> fires when an unanswered permission card reaches its decision timeout. The agent then auto-denies the call. See <code>decision_timeout_secs</code> under <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#permissions">Permissions</a>.</p>
+<p>The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>request_id</code> — the timed-out prompt's identifier. It matches the <code>request_id</code> of the earlier <code>permission_requested</code> event for the same card.</li>
+</ul>
+<p>The payload carries no tool identity. Correlate with the <code>permission_requested</code> event by <code>request_id</code>.</p>
+<h4 id="the-permission-decision-submitted-event">The <code>permission_decision_submitted</code> event</h4>
+<p><code>permission_decision_submitted</code> fires when a decision reaches the permission resolver for a prompted request. It fires once per answered card, before the agent applies the decision.</p>
+<p>The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.</p>
+<p>The event reports every decision that reaches the resolver, whatever its origin. The payload carries no origin field. These all arrive as a submitted decision:</p>
+<ul>
+<li>the TUI user's answer to the card</li>
+<li>the ACP client's answer to the <code>session/request_permission</code> prompt</li>
+<li>an ACP reject-always memory deny, which the bridge answers without prompting</li>
+<li>the ACP drain-end forced deny, which the bridge answers when the session drains</li>
+</ul>
+<p>A request that times out or is cancelled publishes no submitted event. Those paths return before the decision funnel, so <code>permission_decision_timed_out</code> owns the timeout moment and <code>permission_request_cancelled</code> owns the cancel moment.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>request_id</code> — the answered prompt's identifier. It matches the <code>request_id</code> of the earlier <code>permission_requested</code> event for the same card.</li>
+<li><code>decision</code> — <code>"allow_once"</code>, <code>"allow_always"</code>, or <code>"deny"</code>.</li>
+<li><code>matched_rule_identity</code> — the rule that produced the prompt. It matches the <code>matched_rule_identity</code> of the earlier <code>permission_requested</code> event for the same card.</li>
+</ul>
+<h4 id="the-permission-decision-ignored-event">The <code>permission_decision_ignored</code> event</h4>
+<p><code>permission_decision_ignored</code> fires when a decision is submitted for a request that is no longer pending. The request timed out, was cancelled, was already resolved, or its turn ended. The agent drops the decision, so the event makes the drop observable.</p>
+<p>The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy, never prompts, and so has no decision submission path.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>request_id</code> — the dropped decision's request identifier. It matches the <code>request_id</code> of the earlier <code>permission_requested</code> event for the same card.</li>
+<li><code>reason</code> — why the decision was dropped. The v1 reason set is closed: <code>"request_not_pending"</code> is the only value. Neither emission site can tell a timeout from a cancel from an already-resolved request, so the event states only that the request was not pending.</li>
+</ul>
+<p>The payload carries no decision and no tool identity. Correlate with the <code>permission_requested</code> event by <code>request_id</code>.</p>
+<h4 id="the-permission-request-cancelled-event">The <code>permission_request_cancelled</code> event</h4>
+<p><code>permission_request_cancelled</code> fires when the turn is cancelled while a permission prompt is open. The agent abandons the pending request and denies the call, so the event makes the abandoned prompt observable.</p>
+<p>The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>request_id</code> — the abandoned prompt's identifier. It matches the <code>request_id</code> of the earlier <code>permission_requested</code> event for the same card.</li>
+<li><code>matched_rule_identity</code> — the rule that produced the prompt. It matches the <code>matched_rule_identity</code> of the earlier <code>permission_requested</code> event for the same card.</li>
+</ul>
+<p>The payload carries no decision: no decision exists at the moment of the cancel. Correlate with the <code>permission_requested</code> event by <code>request_id</code>.</p>
+<h4 id="the-permission-auto-resolved-event">The <code>permission_auto_resolved</code> event</h4>
+<p><code>permission_auto_resolved</code> fires when the policy resolves a tool call without prompting the user. The agent then executes the call or blocks it, and the event makes that policy decision observable.</p>
+<p>The event fires in all three modes. It is the only permission event that fires in stderr mode: that mode resolves every call by policy and never prompts. In TUI and ACP mode it fires for every call the policy resolves without a prompt; a call the policy sends to the prompt publishes <code>permission_requested</code> instead.</p>
+<p>Payload fields:</p>
+<ul>
+<li><code>matched_rule_identity</code> — the rule that resolved the call.</li>
+<li><code>action</code> — <code>"allow"</code> or <code>"deny"</code>.</li>
+<li><code>reason</code> — the rule-derived denial reason, or null. It is set only when <code>action</code> is <code>"deny"</code>.</li>
+</ul>
+<p>The payload carries no tool identity. <code>tool_started</code> precedes this event on the same channel, so a hook correlates by order or subscribes to both events.</p>
+<p><strong>Volume and opt-in.</strong> The event fires once per policy-resolved tool call: every tool call in stderr mode, and every non-asked call in TUI and ACP mode. A hook that declares it runs a subprocess for each of those calls. The subprocess spawns only when the hook declares <code>permission_auto_resolved</code> in <code>events</code>, so a hook that does not declare it pays nothing. Declare it only for hooks that need the policy decision itself, and keep the handler short.</p>
+<h4 id="validation-errors">Validation errors</h4>
+<p>The agent rejects <code>config.toml</code> at load time when:</p>
+<ul>
+<li><code>hooks</code> is not an array of tables</li>
+<li>an entry has an empty or missing <code>name</code></li>
+<li>an entry has an empty or missing <code>script</code></li>
+<li>an entry has no <code>events</code> array</li>
+<li>an event name is not a string</li>
+<li>an event name is not one of the nineteen names above</li>
+</ul>
+<p>The error names the hook and the offending event, and lists the valid names. A hook that fails to resolve at runtime is logged and skipped. Hooks never block a turn.</p>
+<h2 id="permissions">Permissions</h2>
+<p>The <code>[permissions]</code> table controls tool execution policy.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span><span style="color: #9399B2;font-style: italic;">           # global default</span></span>
+<span class="giallo-l"><span>read</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>glob</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>grep</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>edit</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span>http</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span>skill</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span>decision_timeout_secs</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 60</span><span style="color: #9399B2;font-style: italic;">   # auto-deny an unanswered card after 60s; 0 waits forever</span></span></code></pre><h3 id="actions">Actions</h3>
+<ul>
+<li><code>"allow"</code> — execute without prompting</li>
+<li><code>"deny"</code> — block execution silently</li>
+<li><code>"ask"</code> — prompt the user for approval (TUI mode); deny in non-interactive mode</li>
+</ul>
+<h3 id="global-policy">Global policy</h3>
+<p><code>"*"</code> sets the default action for any tool not explicitly listed. Defaults to <code>"ask"</code> (TUI) or <code>"deny"</code> (pipeline) if omitted.</p>
+<h3 id="decision-timeout">Decision timeout</h3>
+<p><code>decision_timeout_secs</code> sets how long an interactive permission card waits for a decision before it auto-denies. The default is <code>60</code>. <code>0</code> waits forever.</p>
+<p>A timeout is a denial, not a turn failure: the tool is skipped, the turn continues, and an A2A caller receives a completed task whose answer explains the denial. The timeout applies to every card, including cards from user-submitted turns. Raise the value to read longer, or set <code>0</code> to restore wait-forever behavior.</p>
+<h3 id="nested-field-rules">Nested field rules</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions.nu.command</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;rm*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>&quot;git push*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span></code></pre><h3 id="precedence">Precedence</h3>
+<ol>
+<li>Base config (<code>[permissions]</code> in <code>config.toml</code>)</li>
+<li>Agent persona overlay (from persona front matter)</li>
+<li>CLI <code>--permissions</code> flag (highest priority)</li>
+</ol>
+<h3 id="safe-defaults">Safe defaults</h3>
+<p>When no <code>[permissions]</code> section exists: <code>read</code>, <code>glob</code>, <code>grep</code> → <code>allow</code>; <code>c5t_get*</code>, <code>c5t_list*</code> → <code>allow</code>; <code>ast_query</code>, <code>ast_nodes</code>, <code>ast_refs</code>, <code>ast_tree</code> → <code>allow</code>; <code>nu</code> → <code>ask</code>; the <code>tmux_*</code> tools → <code>ask</code>, except <code>tmux_session</code> with <code>action</code> <code>list</code> or <code>info</code> and <code>tmux_pane</code> with <code>action</code> <code>list</code>, <code>find</code>, <code>process</code>, or <code>capture</code> → <code>allow</code>; everything else → <code>ask</code> (TUI) or <code>deny</code> (pipeline).</p>
+<h2 id="tree-sitter-tools-code-analysis">Tree-sitter tools (code analysis)</h2>
+<p>The tree-sitter tools perform structural code analysis using tree-sitter grammars. They are language-generic — they work with any tree-sitter grammar you have installed. They are read-only and auto-allowed by default.</p>
+<h3 id="prerequisites">Prerequisites</h3>
+<p>The tree-sitter tools require the <code>tree-sitter</code> CLI to install and compile grammars. Install it with:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">cargo</span><span style="color: #A6E3A1;"> install tree-sitter-cli</span></span></code></pre>
+<p>Or via your package manager:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># macOS (Homebrew)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">brew</span><span style="color: #A6E3A1;"> install tree-sitter</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Debian/Ubuntu</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">apt</span><span style="color: #A6E3A1;"> install tree-sitter</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Arch</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">pacman</span><span style="color: #A6E3A1;"> -S tree-sitter</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Windows (scoop)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">scoop</span><span style="color: #A6E3A1;"> install tree-sitter</span></span></code></pre><h3 id="setup-steps">Setup steps</h3>
+<ol>
+<li>
+<p><strong>Create the config file</strong> (once):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">tree-sitter</span><span style="color: #A6E3A1;"> init-config</span></span></code></pre>
+<p>This creates <code>config.json</code> at the platform config location (see below).</p>
+</li>
+<li>
+<p><strong>Clone grammar repos</strong> into a directory you will list in <code>parser-directories</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">git</span><span style="color: #A6E3A1;"> clone https://github.com/tree-sitter/tree-sitter-rust ~/code/tree-sitter-rust</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">git</span><span style="color: #A6E3A1;"> clone https://github.com/tree-sitter/tree-sitter-python ~/code/tree-sitter-python</span></span></code></pre></li>
+<li>
+<p><strong>Add the directory to the config</strong> — edit <code>config.json</code> and add:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">parser-directories</span><span style="color: #9399B2;">&quot;: [</span><span style="color: #A6E3A1;">&quot;/Users/yourname/code&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre></li>
+<li>
+<p><strong>Build each grammar</strong>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #F38BA8;font-style: italic;">cd</span><span style="color: #A6E3A1;"> ~/code/tree-sitter-rust</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">tree-sitter</span><span style="color: #A6E3A1;"> build</span></span></code></pre>
+<p>This creates <code>build/rust.so</code> (or <code>.dylib</code> on macOS, <code>.dll</code> on Windows).</p>
+</li>
+</ol>
+<h3 id="config-file-location">Config file location</h3>
+<p>The config file is resolved in this order:</p>
+<table><thead><tr><th>OS</th><th>Path</th></tr></thead><tbody>
+<tr><td>Any</td><td><code>$TREE_SITTER_DIR/config.json</code> (env var override)</td></tr>
+<tr><td>Linux</td><td><code>$XDG_CONFIG_HOME/tree-sitter/config.json</code> or <code>~/.config/tree-sitter/config.json</code></td></tr>
+<tr><td>macOS</td><td><code>~/Library/Application Support/tree-sitter/config.json</code></td></tr>
+<tr><td>Windows</td><td><code>%APPDATA%/tree-sitter/config.json</code></td></tr>
+</tbody></table>
+<h3 id="config-format">Config format</h3>
+<p>The config is a JSON file with a <code>parser-directories</code> array:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">parser-directories</span><span style="color: #9399B2;">&quot;: [</span><span style="color: #A6E3A1;">&quot;/Users/yourname/code&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Any subdirectory of a listed directory whose name starts with <code>tree-sitter-</code> is recognized as a grammar repo. The language name is the suffix — <code>tree-sitter-rust</code> → language <code>rust</code>, <code>tree-sitter-python</code> → <code>python</code>.</p>
+<h3 id="grammar-discovery">Grammar discovery</h3>
+<p>The tools build a grammar cache on first use:</p>
+<ol>
+<li>Reads <code>parser-directories</code> from the config file.</li>
+<li>Scans each directory for <code>tree-sitter-*</code> subdirectories.</li>
+<li>For each grammar, looks for a compiled shared library in this order:
+<ol>
+<li><code>&lt;grammar_dir&gt;/build/&lt;language&gt;.&lt;ext&gt;</code> — if built in the <code>build/</code> subdir</li>
+<li><code>&lt;grammar_dir&gt;/&lt;language&gt;.&lt;ext&gt;</code> — grammar dir root (default <code>tree-sitter build</code> output)</li>
+<li><code>&lt;cache_dir&gt;/lib/&lt;language&gt;.&lt;ext&gt;</code> — XDG cache <code>lib/</code> subdirectory</li>
+</ol>
+</li>
+<li>Loads the symbol <code>tree_sitter_&lt;language&gt;</code> from the shared library.</li>
+</ol>
+<p>The cache is built once per process. If you install a new grammar, restart the agent.</p>
+<h3 id="cache-path">Cache path</h3>
+<p>Compiled grammars are read from the grammar cache at <code>{cache base}/tree-sitter/lib/</code>:</p>
+<table><thead><tr><th>Platform</th><th>Path</th></tr></thead><tbody>
+<tr><td>All platforms</td><td><code>{cache base}/tree-sitter/lib/</code> — <code>$XDG_CACHE_HOME/tree-sitter/lib/</code> or <code>~/.cache/tree-sitter/lib/</code> by default</td></tr>
+</tbody></table>
+<p>The cache base follows the cache ladder: <code>NU_AGENT_CACHE_HOME</code> &gt; <code>[paths].cache_home</code> &gt; <code>XDG_CACHE_HOME</code> &gt; <code>~/.cache</code> under <code>$HOME</code>. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a> for the ladder rules.</p>
+<p>The <code>tree-sitter/</code> directory keeps no app-dir segment and no <code>-dev</code> split: the grammar cache is deliberately shared with the <code>tree-sitter</code> CLI, which writes the same layout.</p>
+<h3 id="supported-languages">Supported languages</h3>
+<p>ANY language with a tree-sitter grammar. The tools are language-generic — Rust, Go, Python, TypeScript, Nix, TOML, JSON, YAML, and more. Search for grammars at <a rel="external" href="https://github.com/tree-sitter">https://github.com/tree-sitter</a> or clone the grammar repo and run <code>tree-sitter build</code>.</p>
+<h3 id="tools">Tools</h3>
+<p>There are four separate tools. Each is called directly with its own parameters — there is no shared <code>action</code> field.</p>
+<p><strong><code>ast_query</code></strong> — run an S-expression tree-sitter query against source code.</p>
+<ul>
+<li>Required: <code>path</code>, <code>language</code>, <code>query</code></li>
+<li>Optional: <code>captures</code> (array of strings), <code>max_matches</code> (int, default 100), <code>include_text</code> (bool, default true)</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">query</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;(function_item name: (identifier) @name)&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">query</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;(struct_item name: (type_identifier) @name)&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">captures</span><span style="color: #9399B2;">&quot;: [</span><span style="color: #A6E3A1;">&quot;name&quot;</span><span style="color: #9399B2;">], &quot;</span><span style="color: #89B4FA;">include_text</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> false</span><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong><code>ast_nodes</code></strong> — list AST nodes of a given type in source code.</p>
+<ul>
+<li>Required: <code>path</code>, <code>language</code>, <code>node_type</code></li>
+<li>Optional: <code>max_matches</code> (int, default 200), <code>include_text</code> (bool, default false)</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">node_type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;match_arm&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">node_type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;function_item&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">include_text</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong><code>ast_refs</code></strong> — find references to a named symbol in source code.</p>
+<ul>
+<li>Required: <code>path</code>, <code>language</code>, <code>name</code></li>
+<li>Optional: <code>max_matches</code> (int, default 100)</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;Config&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/lib.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;parse&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">max_matches</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 50</span><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong><code>ast_tree</code></strong> — dump the full S-expression parse tree of source code.</p>
+<ul>
+<li>Required: <code>path</code>, <code>language</code></li>
+<li>Optional: <code>max_depth</code> (int, default unlimited)</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">max_depth</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;main.py&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;python&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">max_depth</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 5</span><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Other languages:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;main.py&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;python&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">query</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;(function_definition name: (identifier) @name)&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;main.go&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;go&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">node_type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;function_declaration&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;default.nix&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;nix&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;buildInputs&quot;</span><span style="color: #9399B2;">}</span></span></code></pre><h3 id="error-messages">Error messages</h3>
+<table><thead><tr><th>Message</th><th>Cause</th><th>Fix</th></tr></thead><tbody>
+<tr><td><code>No tree-sitter config found. Run tree-sitter init-config to create one.</code></td><td>No config file exists at any platform location.</td><td>Run <code>tree-sitter init-config</code>.</td></tr>
+<tr><td><code>Failed to load tree-sitter config: ...</code></td><td>Config file exists but is unreadable (permissions, corrupt).</td><td>Check file permissions; delete and re-run <code>tree-sitter init-config</code>.</td></tr>
+<tr><td><code>Failed to parse tree-sitter config: ...</code></td><td>Config JSON is invalid or missing <code>parser-directories</code>.</td><td>Open the config and fix the JSON; ensure <code>parser-directories</code> is an array.</td></tr>
+<tr><td><code>No tree-sitter grammar found for language 'rust'. File: '...'. Install the rust grammar: clone the tree-sitter-rust repo and run tree-sitter build in it.</code></td><td>No grammar dir for the requested language was found in any <code>parser-directories</code>.</td><td>Clone the <code>tree-sitter-rust</code> repo and run <code>tree-sitter build</code> in it.</td></tr>
+<tr><td><code>Grammar for rust found at ... but not compiled. Run tree-sitter build in the grammar directory.</code></td><td>Grammar repo exists but has no compiled shared library in <code>build/</code>, the grammar root, or the cache <code>lib/</code> subdir.</td><td><code>cd &lt;grammar-dir&gt; &amp;&amp; tree-sitter build</code>.</td></tr>
+<tr><td><code>Failed to load grammar for rust: ...</code></td><td>Shared library found but could not be loaded (wrong architecture, missing deps).</td><td>Rebuild: <code>tree-sitter build</code> in the grammar dir.</td></tr>
+<tr><td><code>Failed to load grammar for rust: symbol 'tree_sitter_rust' not found: ...</code></td><td>Shared library loaded but does not export the expected symbol.</td><td>Delete and re-clone the grammar repo, then rebuild.</td></tr>
+<tr><td><code>File not found: ...</code></td><td>The <code>path</code> argument points to a non-existent file.</td><td>Verify the path relative to the working directory.</td></tr>
+<tr><td><code>Invalid tree-sitter query: ...</code></td><td>The <code>query</code> S-expression is malformed or uses an unknown node name.</td><td>Check node names via the <code>ast_tree</code> tool; fix the query.</td></tr>
+<tr><td><code>Invalid ast_query arguments: ...</code></td><td>Argument JSON does not match the <code>ast_query</code> schema.</td><td>Check required fields (<code>path</code>, <code>language</code>, <code>query</code>) and their types.</td></tr>
+<tr><td><code>Invalid ast_nodes arguments: ...</code></td><td>Argument JSON does not match the <code>ast_nodes</code> schema.</td><td>Check required fields (<code>path</code>, <code>language</code>, <code>node_type</code>) and their types.</td></tr>
+<tr><td><code>Invalid ast_refs arguments: ...</code></td><td>Argument JSON does not match the <code>ast_refs</code> schema.</td><td>Check required fields (<code>path</code>, <code>language</code>, <code>name</code>) and their types.</td></tr>
+<tr><td><code>Invalid ast_tree arguments: ...</code></td><td>Argument JSON does not match the <code>ast_tree</code> schema.</td><td>Check required fields (<code>path</code>, <code>language</code>) and their types.</td></tr>
+</tbody></table>
+<h3 id="permission">Permission</h3>
+<p>The tree-sitter tools (<code>ast_query</code>, <code>ast_nodes</code>, <code>ast_refs</code>, <code>ast_tree</code>) are read-only and auto-allowed in <code>safe_defaults</code>. They do not modify files.</p>
+<h2 id="mcp-servers">MCP Servers</h2>
+<p>The <code>[mcp]</code> table configures MCP servers. Each server is a sub-table keyed by name.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.context7</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>transport</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;http&quot;</span></span>
+<span class="giallo-l"><span>url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;https://mcp.context7.com/mcp&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.c5t</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>transport</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;sse&quot;</span></span>
+<span class="giallo-l"><span>url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;http://0.0.0.0:3737/mcp&quot;</span></span>
+<span class="giallo-l"><span>enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.nu</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>transport</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;stdio&quot;</span></span>
+<span class="giallo-l"><span>command</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;nu-mcp&quot;</span></span>
+<span class="giallo-l"><span>args</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;--add-path&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;/tmp&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>enabled</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.nu.env</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>GIT_PAGER</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;&quot;</span></span></code></pre><h3 id="transports">Transports</h3>
+<ul>
+<li><code>"stdio"</code> — spawns a local process, requires <code>command</code></li>
+<li><code>"sse"</code> — Server-Sent Events, requires <code>url</code></li>
+<li><code>"http"</code> — HTTP streaming, requires <code>url</code></li>
+</ul>
+<h3 id="fields">Fields</h3>
+<table><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>transport</code></td><td>String</td><td><strong>yes</strong></td><td><code>stdio</code>, <code>sse</code>, or <code>http</code></td></tr>
+<tr><td><code>url</code></td><td>String</td><td>for <code>sse</code>/<code>http</code></td><td>Server URL</td></tr>
+<tr><td><code>command</code></td><td>String</td><td>for <code>stdio</code></td><td>Command to launch</td></tr>
+<tr><td><code>args</code></td><td>Array</td><td>no</td><td>Command arguments</td></tr>
+<tr><td><code>cwd</code></td><td>String</td><td>no</td><td>Working directory for stdio</td></tr>
+<tr><td><code>env</code></td><td>Table</td><td>no</td><td>Extra environment variables</td></tr>
+<tr><td><code>headers</code></td><td>Table</td><td>no</td><td>Extra HTTP headers (sse/http)</td></tr>
+<tr><td><code>enabled</code></td><td>Bool</td><td>no</td><td>Default <code>true</code></td></tr>
+</tbody></table>
+<h3 id="auth-optional">Auth (optional)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.api</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>transport</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;http&quot;</span></span>
+<span class="giallo-l"><span>url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;https://api.example.com/mcp&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.api.auth</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>type</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;bearer&quot;</span></span>
+<span class="giallo-l"><span>token</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;your-token&quot;</span></span></code></pre>
+<p>Auth types: <code>none</code> (default), <code>bearer</code> (requires <code>token</code>), <code>oauth</code> (requires http/sse transport; supports <code>client-id</code>, <code>client-secret</code>, <code>scope</code>, <code>redirect-uri</code>).</p>
+<h3 id="auth-commands">Auth commands</h3>
+<ul>
+<li><code>agent mcp auth login &lt;server&gt;</code> — start OAuth flow</li>
+<li><code>agent mcp auth logout &lt;server&gt;</code> — clear credentials</li>
+<li><code>agent mcp auth status</code> — show auth status for all servers</li>
+</ul>
+<h2 id="2-secret-storage">2. Secret Storage</h2>
+<p>The Vault stores all secrets. The Vault is the only interface to secret storage. No other component reads a secret directly.</p>
+<h3 id="startup-hierarchy">Startup hierarchy</h3>
+<p>The Vault probes backends at startup. The first available backend wins. No config section is necessary.</p>
+<ol>
+<li><strong>OS keychain</strong> — macOS Keychain, Linux Secret Service, or Windows Credential Manager.</li>
+<li><strong>File store</strong> — a JSON file in <code>$XDG_DATA_HOME/nu-agent/</code> with <code>0600</code> permissions. The agent uses this backend when no keychain is available.</li>
+<li><strong>Environment only</strong> — no stored secrets. Lookups return nothing. The agent uses environment variables and <code>.env</code> files only.</li>
+</ol>
+<p>The Vault always selects a backend. The agent never fails because a keychain is absent.</p>
+<table><thead><tr><th>Backend</th><th>Storage</th><th>Use case</th></tr></thead><tbody>
+<tr><td>Keychain</td><td>OS credential store</td><td>Desktop systems with a keychain</td></tr>
+<tr><td>File</td><td>JSON file, mode <code>0600</code></td><td>Headless Linux, containers with a mounted data directory</td></tr>
+<tr><td>Environment only</td><td>Nothing</td><td>Docker and CI with environment variables only</td></tr>
+</tbody></table>
+<h3 id="agent-vault-backend-override"><code>AGENT_VAULT_BACKEND</code> override</h3>
+<p>Set <code>AGENT_VAULT_BACKEND</code> to select the backend explicitly. The override replaces the startup hierarchy.</p>
+<table><thead><tr><th>Value</th><th>Backend</th></tr></thead><tbody>
+<tr><td><code>env</code></td><td>Environment only. The agent probes nothing.</td></tr>
+<tr><td><code>file</code></td><td>File store. The agent falls back to environment only when the file store is unavailable.</td></tr>
+<tr><td><code>keychain</code></td><td>OS keychain. The agent falls back to the file store, then to environment only, when no keychain is present. A keychain that is present but cannot be opened stops startup with an error that names <code>AGENT_VAULT_BACKEND=file</code> as the escape.</td></tr>
+<tr><td><code>auto</code></td><td>The startup hierarchy. This is the default.</td></tr>
+</tbody></table>
+<p>An unknown value logs a warning and uses the startup hierarchy.</p>
+<p>Under nextest, the agent selects the environment-only backend when <code>AGENT_VAULT_BACKEND</code> is unset. nextest sets <code>NEXTEST=1</code> in every test process, and the agent reads that variable as a request for the environment-only backend. An explicit <code>AGENT_VAULT_BACKEND</code> value always wins. Plain <code>cargo test</code> does not set <code>NEXTEST</code> and still probes the keychain.</p>
+<h3 id="env-files"><code>.env</code> files</h3>
+<p>The agent loads two <code>.env</code> files at startup, before it reads any environment variable:</p>
+<ol>
+<li><code>$XDG_CONFIG_HOME/nu-agent/.env</code> — user-level, always loaded.</li>
+<li><code>./.env</code> — project-level, loaded when the file exists.</li>
+</ol>
+<p>The loader sets a variable only when the process environment does not already contain it. The loader skips malformed lines and continues.</p>
+<p>The order of the two files gives the user-level file priority. The loader reads the user-level file first. Because the loader never overwrites a variable, a key in both files takes the user-level value.</p>
+<p>Supported line forms:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># A comment line is skipped</span></span>
+<span class="giallo-l"><span>OPENAI_API_KEY</span><span style="color: #94E2D5;">=</span><span style="color: #A6E3A1;">sk-from-file</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">export</span><span> ANTHROPIC_API_KEY</span><span style="color: #94E2D5;">=</span><span>sk-ant</span></span>
+<span class="giallo-l"><span>QUOTED</span><span style="color: #94E2D5;">=</span><span style="color: #A6E3A1;">&quot;value with spaces&quot;</span></span>
+<span class="giallo-l"><span>SINGLE</span><span style="color: #94E2D5;">=</span><span style="color: #A6E3A1;">&#39;single quoted&#39;</span></span></code></pre>
+<p>The agent does not support multiline values, escape sequences, or variable interpolation.</p>
+<h3 id="store-reference-syntax"><code>store:</code> reference syntax</h3>
+<p>Reference a stored credential from <code>config.toml</code> with a <code>store:</code> prefix:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:openai&quot;</span></span></code></pre>
+<p>At runtime, the Vault resolves <code>store:openai</code> to the credential for <code>openai</code>. The credential is an API key or an OAuth access token. The syntax is identical for every backend.</p>
+<h3 id="env-reference-syntax"><code>env:</code> reference syntax</h3>
+<p>Reference an environment variable from <code>config.toml</code> with an <code>env:</code> prefix:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.my-gateway</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;env:MY_GATEWAY_KEY&quot;</span></span></code></pre>
+<p>At runtime, the resolver reads <code>MY_GATEWAY_KEY</code> from the environment. Use <code>env:</code> for a non-standard variable name. The automatic <code>{PROVIDER}_API_KEY</code> reading (for example <code>OPENAI_API_KEY</code>) needs no <code>env:</code> reference. When the named variable is absent, the resolver sets <code>api_key</code> to None and logs a warning. The resolver never uses the <code>env:VAR_NAME</code> string as a key.</p>
+<h3 id="cmd-reference-syntax"><code>cmd:</code> reference syntax</h3>
+<p>Run a command and use its stdout as the value. The <code>cmd:</code> prefix works in any string value in <code>config.toml</code>, not only <code>api_key</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;cmd:op read &#39;OpenAI API Key&#39;&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>mcp.gh.env</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>GITHUB_TOKEN</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;cmd:gh auth token&quot;</span></span></code></pre>
+<p>The loader splits the text after <code>cmd:</code> with POSIX word-splitting rules, so a quoted argument keeps its spaces. It runs the command once at load time and substitutes the trimmed stdout. A resolved value is never resolved again, so an output that starts with <code>cmd:</code> stays literal.</p>
+<p>The command must exit with status 0 and write a non-empty stdout. Any other result is a hard error at startup. The agent refuses to start and reports the key path, the command, the exit code or I/O error, and stderr. The error never contains the command's stdout.</p>
+<p>The default timeout is 30 seconds. Set <code>AGENT_CMD_TIMEOUT_SECS</code> in the environment, or <code>cmd_timeout_secs</code> in <code>config.toml</code>, to change it. The environment variable wins.</p>
+<p>The loader runs the command directly, without a shell. It does not interpret Windows shell syntax.</p>
+<h3 id="default-vault-lookup">Default vault lookup</h3>
+<p>Omit the <code>api_key</code> field to look up the credential by provider element name:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># no api_key field — the agent looks up provider:openai in the Vault</span></span></code></pre>
+<p>The resolver looks up <code>provider:&lt;name&gt;</code> in the Vault, where <code>&lt;name&gt;</code> is the <code>providers.&lt;name&gt;</code> element name. When the Vault holds no entry, the resolver leaves <code>api_key</code> as None.</p>
+<h3 id="raw-key-literals-are-rejected">Raw key literals are rejected</h3>
+<p>A raw key literal in <code>config.toml</code> is a hard error at startup:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;sk-raw-literal&quot;</span><span style="color: #9399B2;font-style: italic;">   # REJECTED: not a store:, env:, or cmd: reference</span></span></code></pre>
+<p>The agent refuses to start and reports: <code>api_key in [providers.openai] must be a store:, env:, or cmd: reference, not a raw value. Use: agent provider auth login openai</code>. Every <code>providers.&lt;name&gt;.api_key</code> value must start with <code>store:</code>, <code>env:</code>, or <code>cmd:</code>, or the field must be omitted.</p>
+<h3 id="precedence-1">Precedence</h3>
+<p>Highest priority first:</p>
+<table><thead><tr><th>Priority</th><th>Source</th><th>Notes</th></tr></thead><tbody>
+<tr><td>1</td><td>CLI flags</td><td><code>--api-key</code> overrides all other sources</td></tr>
+<tr><td>2</td><td>Environment variables</td><td>Set in the shell, or read from a <code>.env</code> file. Includes <code>{PROVIDER}_API_KEY</code> and <code>env:</code> references</td></tr>
+<tr><td>3</td><td><code>config.toml</code> <code>api_key</code></td><td>A <code>store:</code>, <code>env:</code>, or <code>cmd:</code> reference. A <code>cmd:</code> reference resolves at load</td></tr>
+<tr><td>4</td><td>Vault</td><td>Resolves a <code>store:</code> reference, or the default <code>provider:&lt;name&gt;</code> lookup when <code>api_key</code> is omitted</td></tr>
+<tr><td>5</td><td>Built-in defaults</td><td>Hardcoded fallbacks</td></tr>
+</tbody></table>
+<p>An environment variable always overrides a stored credential. For example, <code>OPENAI_API_KEY=sk-temp agent run</code> uses <code>sk-temp</code> even when the Vault holds a key for <code>openai</code>.</p>
+<p>The agent reads the <code>api_key</code> from <code>config.toml</code> only when no environment variable supplies a key. The Vault does not override an environment variable, because the Vault resolves only the <code>store:</code> reference that <code>config.toml</code> supplies, or the default lookup when <code>api_key</code> is omitted.</p>
+<h3 id="managing-credentials">Managing credentials</h3>
+<p>Use the <code>agent provider auth</code> commands:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Store an API key for a provider (interactive prompt, or via --api-key)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth login openai</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth login openai --api-key sk-...</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># GitHub Copilot uses the OAuth device-code flow</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth login github-copilot</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Clear stored credentials for a provider</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth logout openai</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Show stored credentials (provider, type, expiry)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth status</span></span></code></pre>
+<p><code>agent provider auth status</code> outputs one row per stored provider credential. Each row shows the credential type (<code>api_key</code> or <code>oauth</code>) and, for OAuth, the token expiry timestamp.</p>
+<h2 id="3-models-json">3. models.json</h2>
+<p><code>nu-agent</code> can cache the <code>models.dev</code> database locally to power model discovery, context-window metadata, and the model picker. The cache lives at <code>$XDG_DATA_HOME/nu-agent/models.json</code>.</p>
+<h3 id="syncing">Syncing</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models sync</span></span></code></pre>
+<p>Fetches the latest specs from <code>models.dev</code> and writes them to the local cache. Prints a summary such as <code>Synced 120 providers, 3000 models</code>.</p>
+<h3 id="listing">Listing</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models list</span><span style="color: #9399B2;font-style: italic;">                       # all models in the cache</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models list --provider openai</span><span style="color: #9399B2;font-style: italic;">     # only openai models</span></span></code></pre>
+<p>The plugin command returns one record per model with <code>provider</code>, <code>model</code>, <code>name</code>, <code>context</code>, <code>output</code>, <code>tool_call</code>, <code>input_cost</code>, and <code>output_cost</code>. The cost fields hold the price in USD per million tokens, or null when the cache has no price for the model. The CLI table prints the same rows with <code>PROVIDER</code>, <code>MODEL</code>, <code>CONTEXT</code>, <code>OUTPUT</code>, <code>TOOLS</code>, and <code>COST</code> columns, the price in <code>COST</code> formatted as <code>$3.00/$15.00</code> (input/output) or <code>-</code> when no price is cached. If the cache does not exist, it instructs you to run <code>agent models sync</code> first.</p>
+<p>When a models cache is present, the model picker and <code>resolve_model()</code> use its context/output limits to fill missing <code>max_context_tokens</code> / <code>max_output_tokens</code> values (see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#resolution-priority">resolution priority</a>).</p>
+<p>When a provider block's name equals its cache section key (for example <code>ollama-cloud</code>), the model picker lists that section's full model set, with rows the block does not declare rendered unmarked.</p>
+<h2 id="resolution-priority">Resolution priority</h2>
+<p>When resolving the runtime config for a model, values are filled from the highest-priority source that sets them, falling through to the next. Highest to lowest:</p>
+<ol>
+<li><strong>CLI flags</strong> — <code>--model</code>, <code>--api-key</code>, <code>--base-url</code>, <code>--temperature</code>, <code>--max-context-tokens</code>, <code>--max-output-tokens</code>, <code>--max-turns</code>, and <code>--repetition-guard</code> override all config</li>
+<li><strong>Persona front matter</strong> — a persona's <code>model:</code> field selects a role or literal model</li>
+<li><strong>Role-level config</strong> — the <code>[models.&lt;role&gt;]</code> record for the selected role (e.g. <code>models.heavy</code>)</li>
+<li><strong>Provider/model-level config</strong> — <code>[providers.&lt;name&gt;]</code> and <code>[providers.&lt;name&gt;.models.&lt;model&gt;]</code></li>
+<li><strong>models.json cache</strong> — fills <code>max_context_tokens</code>, <code>max_output_tokens</code>, and <code>model_context_tokens</code> when not already set by the levels above, and clamps a <code>max_output_tokens</code> above the cache's known output cap down to that cap</li>
+<li><strong>Environment variables</strong> — <code>AGENT_*</code> vars and <code>{PROVIDER}_API_KEY</code>. A provider or model block overrides an <code>AGENT_*</code> value. <code>{PROVIDER}_API_KEY</code> is the one inversion in this order: it outranks the <code>api_key</code> a provider or model block sets, and it outranks the Vault. Every other key follows the order above</li>
+<li><strong>Vault</strong> — resolves the <code>store:</code> reference <code>config.toml</code> supplies, or performs the <code>provider:&lt;name&gt;</code> lookup when <code>api_key</code> is omitted. It never overrides an environment variable</li>
+<li><strong>Built-in defaults</strong> — hardcoded fallbacks</li>
+</ol>
+<p>Except for <code>api_key</code>, a value set at a higher priority is never overridden by a lower one. For example, if a role sets <code>temperature</code>, provider-level or env values for <code>temperature</code> are ignored.</p>
+<h3 id="persona-model-resolution-rules">Persona <code>model:</code> resolution rules</h3>
+<ol>
+<li><code>model: heavy</code> (no slash, matches a role in <code>[models]</code>) → resolves to that role's <code>ModelRoleConfig</code></li>
+<li><code>model: provider/model</code> (contains a slash) → used as-is as a literal model identifier, with no role-level overrides; the provider block, the models cache, and the environment still apply</li>
+<li><code>model: foo</code> (no slash, not a role) → <strong>error</strong> at startup</li>
+<li>No <code>model:</code> field → falls back to <code>models.default</code></li>
+<li>CLI <code>--model provider/model</code> → overrides everything</li>
+</ol>
+<h2 id="environment-variable-fallback">Environment variable fallback</h2>
+<p>Environment variables still work as a fallback when <code>config.toml</code> and the Vault leave a value unset, with one inversion: a <code>{PROVIDER}_API_KEY</code> outranks the <code>api_key</code> a provider block sets.</p>
+<ul>
+<li><code>AGENT_BASE_URL</code></li>
+<li><code>AGENT_TEMPERATURE</code></li>
+<li><code>AGENT_MAX_TOKENS</code></li>
+<li><code>AGENT_MAX_CONTEXT_TOKENS</code></li>
+<li><code>AGENT_MAX_OUTPUT_TOKENS</code></li>
+<li><code>AGENT_MAX_TOOL_TURNS</code></li>
+<li><code>AGENT_MAX_TOOL_RESULT_BYTES</code> — max bytes per tool call before truncation (default 20000; <code>0</code> = unlimited)</li>
+<li><code>AGENT_MAX_TOOL_CALLS_PER_SUBTURN</code> — max tool calls in a single LLM response (default 25; <code>0</code> = unlimited)</li>
+<li><code>AGENT_MODEL_CONTEXT_TOKENS</code> — approximate context window for token warnings</li>
+<li><code>AGENT_CONTEXT_WARNING_THRESHOLD</code> — fraction at which to warn, above <code>0.0</code> and up to <code>1.0</code> (default <code>0.6</code>)</li>
+<li><code>AGENT_MAX_RETRIES</code> — retry attempts (default 3)</li>
+<li><code>AGENT_RETRY_BASE_DELAY_MS</code> — base backoff in ms, doubles each attempt, capped at 30s (default 1000)</li>
+<li><code>AGENT_OUTPUT_BUDGET_EMPTY_REMEDY</code> — custom empty-output OutputBudget remedy text (default: built-in empty-output steering)</li>
+<li><code>AGENT_OUTPUT_BUDGET_REMEDY_MODE</code> — OutputBudget remedy mode: <code>empty_output</code> or <code>shorter_response</code> (default <code>empty_output</code>)</li>
+<li><code>AGENT_OUTPUT_BUDGET_RAISE_ENABLED</code> — opt-in auto-raise of max_tokens on OutputBudget feedback retries (default <code>false</code>)</li>
+<li><code>AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER</code> — multiplier applied to the effective max_tokens for a raised retry (default <code>2.0</code>)</li>
+<li><code>AGENT_OUTPUT_BUDGET_RAISE_CAP</code> — absolute ceiling for the raised max_tokens (default <code>32768</code>)</li>
+<li><code>AGENT_REPETITION_GUARD</code> — enable repetition guard (tool-call + output repetition detection); <code>true</code>/<code>false</code> (default <code>true</code>)</li>
+<li><code>AGENT_READ_TIMEOUT_SECS</code> — HTTP read timeout in seconds (default 120). 0 disables.</li>
+<li><code>AGENT_A2A_ENABLED</code> — enable A2A (default <code>false</code>)</li>
+<li><code>AGENT_SESSION_STORE_TYPE</code> — <code>sqlite</code> or <code>memory</code></li>
+<li><code>{PROVIDER}_API_KEY</code> — e.g. <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code> (for providers with direct env naming)</li>
+</ul>
+<p>There is no <code>AGENT_MODEL</code> env override at runtime; set the default model in <code>config.toml</code>. (<code>agent config init</code> reads <code>AGENT_PROVIDER</code>/<code>AGENT_MODEL</code> when generating a starter config.)</p>
+<h2 id="fixed-retry-caps">Fixed retry caps</h2>
+<p>Three turn-executor retry budgets are fixed values. They have no <code>config.toml</code> key, CLI flag, or environment-variable override.</p>
+<table><thead><tr><th>Constant</th><th>Default</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>MAX_PROVIDER_FEEDBACK_RETRIES</code></td><td>3</td><td>Provider feedback retries per user turn for model-correctable failures. Each retry appends one model-facing feedback message to the session memory and re-runs the turn once.</td></tr>
+<tr><td><code>MAX_TURNS_FEEDBACK_RETRIES</code></td><td>1</td><td>Max-turns steering retries per user turn. On tool-call budget exhaustion, the executor appends a steering message and re-runs the turn once with a fresh budget before returning the hard error.</td></tr>
+<tr><td><code>MAX_REPETITION_STOP_RETRIES</code></td><td>3</td><td>Repetition-stop steering retries per user turn. When the output-repetition guard stops the stream mid-turn, the executor converts the stop into a steering retry (steering notice + steering message + escalation-ladder reset); a stop at the retry cap is terminal.</td></tr>
+</tbody></table>
+<h2 id="cli-commands-reference">CLI commands reference</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Configuration</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> config init</span><span> [--force]</span><span style="color: #9399B2;font-style: italic;">                     # generate starter config.toml from env vars</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Model discovery</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models sync</span><span style="color: #9399B2;font-style: italic;">                                # fetch models.dev into the local cache</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models list</span><span> [--provider</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #A6E3A1;">nam</span><span>e</span><span style="color: #94E2D5;">&gt;</span><span style="color: #A6E3A1;">]</span><span style="color: #9399B2;font-style: italic;">            # list models from the cache</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Provider auth (OS keychain)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth login</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #A6E3A1;">nam</span><span>e</span><span style="color: #94E2D5;">&gt;</span><span> [--api-key</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #A6E3A1;">ke</span><span>y</span><span style="color: #94E2D5;">&gt;</span><span style="color: #A6E3A1;">]</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth logout</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #A6E3A1;">nam</span><span>e</span><span style="color: #94E2D5;">&gt;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth status</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># MCP auth</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth login</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #A6E3A1;">serve</span><span>r</span><span style="color: #94E2D5;">&gt;</span><span style="color: #9399B2;font-style: italic;">                    # OAuth device flow</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth logout</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #A6E3A1;">serve</span><span>r</span><span style="color: #94E2D5;">&gt;</span><span style="color: #9399B2;font-style: italic;">                   # clear stored credentials</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth status</span><span style="color: #9399B2;font-style: italic;">                            # show auth status for all MCP servers</span></span></code></pre><h2 id="examples">Examples</h2>
+<h3 id="single-provider-openai">Single provider (OpenAI)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span></span>
+<span class="giallo-l"><span>temperature</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.3</span></span>
+<span class="giallo-l"><span>max_context_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 128000</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:openai&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai.models.gpt-4o</span><span style="color: #9399B2;">]</span></span></code></pre><h3 id="single-provider-anthropic">Single provider (Anthropic)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;anthropic/claude-sonnet-4-6&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.anthropic</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:anthropic&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.anthropic.models.claude-sonnet-4-6</span><span style="color: #9399B2;">]</span></span></code></pre><h3 id="local-ollama">Local Ollama</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ollama/gemma4:31b&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>base_url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;http://127.0.0.1:11434&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama.models.gemma4:31b</span><span style="color: #9399B2;">]</span></span></code></pre><h3 id="multi-provider">Multi-provider</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.heavy</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;anthropic/claude-sonnet-4-6&quot;</span></span>
+<span class="giallo-l"><span>max_context_tokens</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 200000</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:openai&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.openai.models.gpt-4o</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.anthropic</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>api_key</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;store:anthropic&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.anthropic.models.claude-sonnet-4-6</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>base_url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;http://127.0.0.1:11434&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.ollama.models.gemma4:31b</span><span style="color: #9399B2;">]</span></span></code></pre><h3 id="github-copilot">GitHub Copilot</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;github-copilot/claude-sonnet-4.6&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.github-copilot</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># No api_key needed — credentials resolve at runtime</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN is exchanged for a Copilot session key</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># A cached OAuth credential is reused, so the exchange runs only when none is stored</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># The runtime starts no device flow</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># (run: agent provider auth login github-copilot when no cached credential exists)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>providers.github-copilot.models.claude-sonnet-4.6</span><span style="color: #9399B2;">]</span></span></code></pre><h2 id="additional-parameters">Additional parameters</h2>
+<p><code>additional_params</code> forwards a table of provider-specific keys verbatim into the top-level HTTP request body. Set it per role in the model config:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;anthropic/claude-sonnet-4-6&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default.additional_params.output_config</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>effort</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;medium&quot;</span></span></code></pre><h3 id="gotchas">Gotchas</h3>
+<ul>
+<li><strong>Only a table carries keys</strong> — the value's keys are merged into the top-level request body, so a scalar, a string, or an array has no keys to merge.</li>
+<li><strong>Do not shadow typed fields</strong> — a <code>model</code>, <code>max_tokens</code>, or <code>temperature</code> key here overrides the typed field on the same request and logs a warning. Set the typed field instead.</li>
+<li><strong>Applied to every turn</strong> — the value is included in every completion request.</li>
+</ul>
+<h3 id="controlling-thinking-depth-on-anthropic-sonnet-4-6">Controlling thinking depth on Anthropic Sonnet 4.6</h3>
+<p>Sonnet 4.6 uses <strong>adaptive thinking</strong> — the model decides when to think. Control thinking depth via <code>output_config.effort</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;anthropic/claude-sonnet-4-6&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default.additional_params.output_config</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>effort</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;medium&quot;</span></span></code></pre>
+<p>Effort levels: <code>low</code> (fastest, fewest tokens) · <code>medium</code> (recommended for agents) · <code>high</code> (default if omitted) · <code>max</code> (highest capability)</p>
+
+        
+        
+<div class="docs-navigation d-flex justify-content-between">
+  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+          
+        
+      
+        
+        
+          
+        
+      
+        
+        
+          
+            
+              
+              <a href="https:&#x2F;&#x2F;ck3mp3r.github.io&#x2F;nu-agent&#x2F;docs&#x2F;getting-started&#x2F;quick-start&#x2F;">
+                <div class="card my-1">
+                  <div class="card-body py-2">
+                    &larr; Quick Start
+                  </div>
+                </div>
+              </a>
+            
+            
+            
+          
+        
+      
+    
+  
+
+  
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+      
+      
+        
+      
+    
+      
+      
+        
+          
+          
+          <a class="ms-auto" href="https:&#x2F;&#x2F;ck3mp3r.github.io&#x2F;nu-agent&#x2F;docs&#x2F;integration&#x2F;mcp&#x2F;">
+            <div class="card my-1">
+              <div class="card-body py-2">
+                MCP &rarr;
+              </div>
+            </div>
+          </a>
+          
+          
+          
+        
+      
+    
+  
+</div>
+
+      </main>
+    </div>
+  </div>
+</div>
+
+
+  
+    
+<footer class="footer text-muted">
+	<div class="container">
+		<div class="row">
+			<div class="col-lg-8 order-last order-lg-first">
+				<ul class="list-inline">
+					
+						<li class="list-inline-item"> </li>
+					
+				</ul>
+			</div>
+			<div class="col-lg-8 order-first order-lg-last text-lg-end">
+				<ul class="list-inline">
+					
+				</ul>
+			</div>
+		</div>
+	</div>
+</footer>
+
+  
+
+  
+<script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/js/main.js" defer></script>
+
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/plugins/elasticlunr.min.js" defer></script>
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/search_index.en.js" defer></script>
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/js/search.js" defer></script>
+
+  
+</body>
+</html>

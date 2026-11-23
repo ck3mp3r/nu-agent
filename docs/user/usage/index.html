@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <link rel="preload" as="font" href="https://ck3mp3r.github.io/nu-agent/fonts/vendor/jost/jost-v4-latin-regular.woff2" type="font/woff2" crossorigin>
+  <link rel="preload" as="font" href="https://ck3mp3r.github.io/nu-agent/fonts/vendor/jost/jost-v4-latin-700.woff2"  type="font/woff2" crossorigin>
+
+
+<link rel="stylesheet" href="https://ck3mp3r.github.io/nu-agent/main.css">
+
+
+
+  
+  
+    
+  
+
+  
+  
+    
+    
+  
+  
+  
+    
+  
+  
+  
+  
+    
+  
+  
+  
+
+
+  <meta name="robots" content="index, follow">
+  <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+  <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+
+
+	
+
+
+	
+
+<title>Usage | nu-agent</title>
+<meta name="description" content="Nushell plugin for running an LLM agent from pipelines.">
+<link rel="canonical" href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/">
+
+
+
+
+
+
+
+
+
+
+<script type="application/ld+json">
+  {
+    "@context": "http://schema.org",
+    "@type": "BreadcrumbList",
+    
+      
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          {
+            "@type": "ListItem",
+            "position":  1 ,
+            "name": "Home",
+            "item": "https://ck3mp3r.github.io/nu-agent/"
+          },
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  2 ,
+            "name": "Docs",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/"
+          },
+        
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  3 ,
+            "name": "User",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/user/"
+          },
+        
+      
+        
+        
+        
+        
+        
+        
+        
+        
+          
+          
+          {
+            "@type": "ListItem",
+            "position":  4 ,
+            "name": "Usage",
+            "item": "https://ck3mp3r.github.io/nu-agent/docs/user/usage/"
+          },
+        
+      
+    
+  }
+</script>
+
+
+
+
+
+
+  <meta name="theme-color" content="#fff">
+  <link rel="apple-touch-icon" sizes="180x180" href="https://ck3mp3r.github.io/nu-agent/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="https://ck3mp3r.github.io/nu-agent/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="https://ck3mp3r.github.io/nu-agent/favicon-16x16.png">
+  
+    <link rel="manifest" href="https://ck3mp3r.github.io/nu-agent/site.webmanifest" crossorigin>
+  
+
+
+  
+
+</head>
+
+  
+
+<body class="docs single">
+  
+  
+  
+  
+<div class="header-bar fixed-top"></div>
+<header class="navbar fixed-top navbar-expand-md navbar-light">
+	<div class="container">
+		<input class="menu-btn order-0" type="checkbox" id="menu-btn">
+		<label class="menu-icon d-md-none" for="menu-btn"><span class="navicon"></span></label>
+		<a class="navbar-brand order-1 order-md-0 me-auto" href="https://ck3mp3r.github.io/nu-agent/">nu-agent</a>
+		<button id="mode" class="btn btn-link order-2 order-md-4" type="button" aria-label="Toggle mode">
+			<span class="toggle-dark"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-moon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg></span>
+			<span class="toggle-light"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-sun"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></span>
+		</button>
+		<ul class="navbar-nav fork-me order-3 order-md-5">
+			
+				
+					<li class="nav-item">
+						<a class="nav-link" href="https://github.com/ck3mp3r/nu-agent"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg><span class="ms-2 visually-hidden">GitHub</span></a>
+					</li>
+				
+			
+		</ul>
+		<div class="collapse navbar-collapse order-4 order-md-1">
+			<ul class="navbar-nav main-nav me-auto order-5 order-md-2">
+				
+					
+				
+				
+				
+					
+						<li class="nav-item docs active">
+							<a class="nav-link" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">Docs</a>
+						</li>
+					
+				
+			</ul>
+			<div class="break order-6 d-md-none"></div>
+			
+				<form class="navbar-form flex-grow-1 order-7 order-md-3">
+					<input id="userinput" class="form-control is-search" type="search" placeholder="Search docs..."
+						aria-label="Search docs..." autocomplete="off">
+					<div id="suggestions" class="shadow bg-white rounded"></div>
+				</form>
+			
+		</div>
+	</div>
+</header>
+
+
+
+  
+<div class="wrap container" role="document">
+  <div class="content">
+    <div class="row flex-xl-nowrap">
+	  
+<div class="col-lg-5 col-xl-4 docs-sidebar">
+	<nav class="docs-links" aria-label="Main navigation">
+			
+			
+			
+			
+					
+					
+					
+							<h3>Getting Started</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/">Quick Start</a></li>
+							
+					</ul>
+					
+					
+					
+					
+							<h3>User guide</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link active" href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/">Usage</a></li>
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/">Configuration</a></li>
+							
+					</ul>
+					
+					
+					
+					
+							<h3>Integration</h3>
+							<ul class="list-unstyled">
+							                           
+									<li><a class="docs-link" href="https://ck3mp3r.github.io/nu-agent/docs/integration/mcp/">MCP</a></li>
+							
+					</ul>
+					
+					
+			
+	</nav>
+</div>
+
+	  
+  
+  <nav class="docs-toc d-none d-xl-block col-xl-3" aria-label="Secondary navigation">
+  	<div class="page-links">
+  			<h3>On this page</h3>
+  			<nav id="TableOfContents">
+  					<ul>
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#basic">Basic</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#common-flags">Common flags</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#tools">Tools</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#agent-personas">Agent personas</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#front-matter-keys-optional-yaml">Front matter keys (optional YAML)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#examples">Examples</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#model-roles">Model roles</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#model-pricing">Model pricing</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#provider-names-and-the-cache">Provider names and the cache</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#the-ollama-caveat">The Ollama caveat</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#the-residual">The residual</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#what-the-status-bar-s-figures-measure">What the status bar&#x27;s figures measure</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#syntax-highlighting">Syntax highlighting</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#tool-authorization-permissions-dsl">Tool authorization (permissions DSL)</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#supported-values">Supported values</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#deterministic-precedence">Deterministic precedence</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#cli-overlay-merge-semantics">CLI overlay merge semantics</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#ask-flow-and-session-grants">Ask flow and session grants</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#interactive-permission-prompt-behavior-tui">Interactive permission prompt behavior (TUI)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#non-interactive-ask-fallback">Non-interactive ask fallback</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#built-in-tools">Built-in tools</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#filesystem-tool-permission-gating">Filesystem tool permission gating</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#contracts">Contracts</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#read-example">read example</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#edit-canonical-contract-preview-apply">edit canonical contract (preview&#x2F;apply)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#edit-with-operation-type-create-new-file-creation">edit with operation.type: &quot;create&quot; (new file creation)</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#cas-conflict-recovery-flow-required">CAS conflict recovery flow (required)</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#sessions">Sessions</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#session-storage">Session storage</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#session-metadata">Session metadata</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#open-store-bound">Open-store bound</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#compaction-triggers-and-persistence">Compaction triggers and persistence</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#compaction-settings">Compaction settings</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#inline-slash-suggestions-and-slash-commands">Inline slash suggestions and slash commands</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#prompt-queue-and-cancel-on-empty-enter">Prompt queue and cancel-on-empty-Enter</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#ctrl-c-quit-guard">Ctrl-C quit guard</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#model-picker-and-switch-semantics">Model picker and switch semantics</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#consolidated-modal-system">Consolidated modal system</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#mcp-panel-error-presentation">MCP panel error presentation</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#hooks">Hooks</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#handler-convention">Handler convention</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#envelope">Envelope</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#session-id">Session id</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#ordering">Ordering</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#failure-behavior">Failure behavior</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#mode-coverage">Mode coverage</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#example-signal-an-external-app">Example: signal an external app</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#deferred">Deferred</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#permission-based-tool-visibility">Permission-based tool visibility</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#defaults">Defaults</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#tty-allowlist-example">TTY allowlist example</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#tui-denylist-example">TUI denylist example</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#flag-reference">Flag reference</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#log-file">Log file</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#subcommands">Subcommands</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#a2a-serve">A2A serve</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#mcp-authentication-commands">MCP Authentication Commands</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#agent-mcp-auth-login">agent mcp auth login</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#agent-mcp-auth-logout">agent mcp auth logout</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#agent-mcp-auth-status">agent mcp auth status</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#troubleshooting">Troubleshooting</a></li>
+  											
+  									</ul>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#output-contract">Output contract</a></li>
+  							
+  							
+  							<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#tui-transcript-markdown-and-fenced-code">TUI transcript markdown and fenced code</a></li>
+  							
+  									<ul>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#examples-1">Examples</a></li>
+  											
+  											<li><a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#busy-indicator-behavior">Busy indicator behavior</a></li>
+  											
+  									</ul>
+  							
+  							
+  					</ul>
+  			</nav>
+  	</div>
+  </nav>
+  
+
+      <main class="docs-content col-lg-11 col-xl-9">
+        <h1>Usage</h1>
+        
+        <h2 id="basic">Basic</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #A6E3A1;">&quot;What is Rust?&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span></span></code></pre>
+<p>Input can be:</p>
+<ul>
+<li>plain string</li>
+<li>record with <code>prompt</code> (and optional <code>context</code>)</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;">{</span><span> prompt</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;Summarize&quot;</span><span>, context</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;short bullets&quot;</span><span style="color: #9399B2;"> }</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span></span></code></pre><h2 id="common-flags">Common flags</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Override model for one call</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;quick answer&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">model</span><span style="color: #A6E3A1;"> &quot;ollama/gemma4:31b&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Quiet mode (suppress non-essential progress UX)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">quiet</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Progressive verbosity on stderr UX</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">v</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">vv</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;debug this&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">vvv</span></span></code></pre><h2 id="tools">Tools</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Closure tools</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> tools</span><span style="color: #CBA6F7;"> =</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>  now</span><span style="color: #CBA6F7;">:</span><span style="color: #9399B2;"> {</span><span>||</span><span style="color: #CBA6F7;"> date now | format date</span><span style="color: #A6E3A1;"> &quot;%Y-%m-%d %H:%M:%S&quot;</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;what time is it&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">tools</span><span> $tools</span></span></code></pre><h2 id="agent-personas">Agent personas</h2>
+<p>Load instructions and configuration from persona files using <code>--agent</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #A6E3A1;">&quot;implement the feature&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #A6E3A1;"> coder</span></span></code></pre>
+<p>Persona file resolution (first match wins):</p>
+<ul>
+<li><code>.agents/&lt;name&gt;.md</code> (project-local)</li>
+<li><code>$XDG_CONFIG_HOME/nu-agent/agents/&lt;name&gt;.md</code> (global, usually <code>~/.config/nu-agent/agents/</code>)</li>
+</ul>
+<p><code>NU_AGENT_CONFIG_HOME</code> re-roots the global candidate with the whole config tree; a debug build uses <code>nu-agent-dev</code> as the app directory. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a>.</p>
+<h3 id="front-matter-keys-optional-yaml">Front matter keys (optional YAML)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #F5C2E7;">---</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> coder</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">description</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> Development agent focused on implementing features</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">model</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> anthropic/claude-sonnet-4-20250514</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">temperature</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 0.2</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">max_tokens</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 8192</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">max_tool_turns</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 20</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">max_tool_calls_per_subturn</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 3</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">max_tool_result_bytes</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 50000</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">additional_params</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  thinking</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> disabled</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">permissions</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;*&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;read&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;c5t_get*&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span style="color: #F5C2E7;">---</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Your agent instructions here</span></span></code></pre>
+<p>All front matter keys are optional:</p>
+<ul>
+<li><code>name</code> — agent identity (overridden by <code>--name</code> flag)</li>
+<li><code>description</code> — persona summary shown in <code>agent list</code></li>
+<li><code>model</code> — model role name or literal <code>provider/model</code> (resolved via <code>models</code> map; overridden by <code>--model</code> flag)</li>
+<li><code>temperature</code> — response creativity, 0.0–2.0 (overridden by <code>--temperature</code> flag)</li>
+<li><code>max_tokens</code> — maximum tokens to generate</li>
+<li><code>max_tool_turns</code> — maximum tool execution turns per conversation turn</li>
+<li><code>max_tool_calls_per_subturn</code> — maximum tool calls per LLM sub-turn</li>
+<li><code>max_tool_result_bytes</code> — maximum bytes per tool result before truncation; 0 = unlimited</li>
+<li><code>additional_params</code> — provider-specific parameters (e.g. <code>thinking: disabled</code> for Anthropic)</li>
+<li><code>permissions</code> — authorization overlay (overridden by <code>--permissions</code> flag)</li>
+</ul>
+<p><strong>Precedence:</strong> CLI flags &gt; front matter &gt; config.toml</p>
+<h3 id="examples">Examples</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Use persona as-is</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #A6E3A1;"> researcher</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Override persona&#39;s model</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #A6E3A1;"> coder</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">model</span><span style="color: #A6E3A1;"> openai/gpt-4o</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Override persona&#39;s name</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #A6E3A1;"> coder</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #A6E3A1;"> &quot;bob&quot;</span></span>
+<span class="giallo-l"></span></code></pre><h2 id="model-roles">Model roles</h2>
+<p>Configure named model roles in config.toml:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.default</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>models.heavy</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>model</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;anthropic/claude-sonnet-4-6&quot;</span></span></code></pre>
+<p>Then reference roles by name in agent persona front matter:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #F5C2E7;">---</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">model</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> heavy</span></span>
+<span class="giallo-l"><span style="color: #F5C2E7;">---</span></span></code></pre>
+<p>When a persona's <code>model</code> names a role you defined (no slash), it resolves to that role's model from config.toml. If your persona needs a specific model that isn't in the map, use the full <code>provider/model</code> identifier instead:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #F5C2E7;">---</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">model</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> openai/gpt-4o-mini</span></span>
+<span class="giallo-l"><span style="color: #F5C2E7;">---</span></span></code></pre>
+<p>CLI <code>--model provider/model</code> overrides all resolution and is used as-is.</p>
+<p>Resolution rules:</p>
+<ol>
+<li><strong>Role name</strong> (e.g. <code>model: heavy</code>, no slash, matches a key in <code>models</code>) → resolves to that key's value</li>
+<li><strong>Literal</strong> (e.g. <code>model: provider/model</code>, contains slash) → used as-is</li>
+<li><strong>Unknown role</strong> (no slash, not in the map) → error at startup</li>
+<li><strong>No <code>model:</code> field</strong> → falls back to <code>models.default</code></li>
+</ol>
+<h2 id="model-pricing">Model pricing</h2>
+<p>Every model the runtime can serve resolves a price through one ladder. The
+ladder runs once, when the model binding is constructed, and the resolved
+prices ride the model's wire facts. The cost hook reads them; it holds no
+rung logic of its own.</p>
+<p>Outcomes, highest precedence first:</p>
+<ol>
+<li><strong>Endpoint-reported</strong> — the provider's own reply states the cost. This is
+authoritative and always wins.</li>
+<li><strong>User-configured pricing</strong> — a <code>pricing</code> block on the model's config
+record. The user stated what they pay, so it wins over the shipped rate.
+See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#per-model-pricing">Per-model pricing</a>.</li>
+<li><strong>Own cache row</strong> — the model's own row in the local models cache
+(<code>agent models sync</code>) lists a cost.</li>
+<li><strong>Residual</strong> — nothing prices the model. The call stays tokens-only.</li>
+</ol>
+<p>The cache row reads the same cache the model picker renders, so the price a
+session computes and the price the picker shows come from one source.</p>
+<p>There is no cross-vendor borrowing: a model id priced only under another
+section stays tokens-only unless the block declares that section as its
+<code>catalog</code>.</p>
+<p>Pricing is per <strong>model id</strong>, not per wire. The vendor whose wire serves the
+model scopes only the base spec's shape — the modalities and compatibility
+the built-in model catalog lists for that vendor. The price comes from the
+ladder over the models cache, keyed by the model id and the block's declared
+cache section. A provider block named for a reseller therefore prices from the
+section it declares: a block named <code>ollama-cloud</code> that serves through the
+openai wire (<code>provider = "openai"</code>, <code>base_url = "https://ollama.com/v1"</code>)
+prices its models from the <code>ollama-cloud</code> section, even though the wire
+reports <code>openai</code>.</p>
+<h3 id="provider-names-and-the-cache">Provider names and the cache</h3>
+<p>The cache stores models.dev provider keys. A config block reaches its section
+through <code>catalog</code>; without it, the block name is its own section key. There is
+no name mapping, so a block named <code>ollama</code> reaches no section unless it
+declares <code>catalog = "ollama-cloud"</code>. See
+<a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#the-models-cache">The models cache</a>.</p>
+<h3 id="the-ollama-caveat">The Ollama caveat</h3>
+<p><code>ollama</code> reaches no cache section, so its models stay tokens-only. Declare
+<code>catalog = "ollama-cloud"</code> and the block prices from that section, whose
+rates are Ollama Cloud list prices for those model ids. A local Ollama server
+is not billed those rates, so the session cost line then reads as if the
+tokens were billed at cloud list prices.</p>
+<h3 id="the-residual">The residual</h3>
+<p>A model no rung prices stays tokens-only. The existing signals say so
+explicitly: the model picker leaves its price column blank, and the session
+cost line shows tokens alone, or a figure ending in <code>+</code> while any call was
+unpriced. The residual classes are:</p>
+<ul>
+<li>a model id the cache lists with no cost — a local Ollama classic whose id
+no hosted vendor uses is the common case;</li>
+<li>a model the cache does not list at all, or one whose block declares no
+<code>catalog</code> and whose name is not a cache section key.</li>
+</ul>
+<p>A blank price is never invented. If a model you use lands in the residual,
+run <code>agent models sync</code> first — a newer cache may price it — or set a
+<code>pricing</code> block for it in config.toml.</p>
+<p>A reply that reports no input or output token count also stays tokens-only:
+the rates apply to those counters. A missing <code>total_tokens</code> never blocks a
+price — some endpoints omit it, and the total is not what the rates
+multiply.</p>
+<p>A session whose calls are only partly priced shows the summed price with a
+<code>+</code> suffix. That happens when a call reports cache tokens the model's row
+lists no rate for: the known parts are summed, and the <code>+</code> says the figure is
+a lower bound.</p>
+<h3 id="what-the-status-bar-s-figures-measure">What the status bar's figures measure</h3>
+<p>The two figures the status bar shows side by side carry different scopes. The
+token figure — <code>12.3k</code>, with a percent of the context window beside it when the
+model reports a window — is the arriving session's history: what that session's
+own turns reported, placed by the replay when the surface switches into it. The
+dollar figure after the <code>·</code> is cumulative across sessions on this surface: a
+session switch and <code>/new</code> both leave it alone, and only a live priced call adds
+to it. A replayed history's calls carry no price, so switching into one puts the
+<code>+</code> lower-bound marker on the figure; the marker adds no money. Switching into
+the same history repeatedly adds nothing to and removes nothing from either
+figure: the token figure re-places, the dollar figure holds.</p>
+<h2 id="syntax-highlighting">Syntax highlighting</h2>
+<p>Code fences, edit diffs, and code cards render token channels for the languages
+on the highlight list. A language outside the list renders plain tokens.</p>
+<p>The built-in list covers rust, python, go, js, ts, json, yaml, toml, bash, sql,
+c, cpp, ruby, diff, nu, and nix. Widen or narrow it in <code>config.toml</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Every language syntect carries.</span></span>
+<span class="giallo-l"><span>highlight_languages</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;all&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Or exactly these.</span></span>
+<span class="giallo-l"><span>highlight_languages</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;rust&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;python&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;markdown&quot;</span><span style="color: #9399B2;">]</span></span></code></pre>
+<p>See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#highlight-languages">Configuration</a> for the full rules.</p>
+<h2 id="tool-authorization-permissions-dsl">Tool authorization (permissions DSL)</h2>
+<p>Authorization uses a <strong>map-style</strong> <code>permissions</code> DSL (not a rules array).</p>
+<p>Only CLI surface for policy override is <code>--permissions</code> (structured record/object).</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Build per-run overlay in Nu and pass as a record</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> permissions</span><span style="color: #CBA6F7;"> =</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>  &quot;read&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>  &quot;nu&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    &quot;command&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>      &quot;kubectl delete *&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>      &quot;*&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;review this command&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">permissions</span><span> $permissions</span></span></code></pre>
+<p>Canonical shape:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span>read</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>&quot;c5t_get*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions.nu.command</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;kubectl delete *&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span></code></pre><h3 id="supported-values">Supported values</h3>
+<ul>
+<li>global baseline: <code>"*": "allow|ask|deny"</code></li>
+<li>tool pattern actions: <code>"read": "allow"</code>, <code>"c5t_get*": "allow"</code></li>
+<li>nested <code>nu</code> map with explicit <code>command</code> key only:
+<ul>
+<li><code>"nu": { "command": { "&lt;pattern&gt;": "allow|ask|deny" } }</code></li>
+</ul>
+</li>
+</ul>
+<p>Unknown nested fields under <code>nu</code> are rejected with deterministic diagnostics.</p>
+<h3 id="deterministic-precedence">Deterministic precedence</h3>
+<p>Decision order is fixed:</p>
+<ol>
+<li>global baseline</li>
+<li>tool override</li>
+<li>nested <code>nu.command</code> override</li>
+</ol>
+<p>For <code>nu.command</code> matching, runtime normalizes commands by:</p>
+<ul>
+<li>trimming leading/trailing whitespace</li>
+<li>collapsing internal whitespace runs to one space</li>
+</ul>
+<p>If <code>nu.command</code> is missing/unreadable, behavior deterministically falls back
+to inherited tool/global decision with diagnostic metadata.</p>
+<p>If nested <code>"*"</code> equals inherited decision, it is a valid no-op and reported via
+deterministic diagnostics metadata.</p>
+<h3 id="cli-overlay-merge-semantics">CLI overlay merge semantics</h3>
+<p>Effective policy is built once at startup using additive overlay:</p>
+<ol>
+<li>base: <code>config.agent.permissions</code></li>
+<li>overlay: CLI <code>--permissions</code></li>
+</ol>
+<p>Merge rules:</p>
+<ul>
+<li>overlapping leaf/action keys: CLI wins</li>
+<li>non-overlapping config keys: retained</li>
+<li>nested maps (for example <code>nu.command</code>): deterministic key merge</li>
+</ul>
+<p>Malformed CLI overlay fails fast with explicit key-path diagnostics.</p>
+<p>Startup emits a compact policy diagnostic summary:</p>
+<ul>
+<li><code>permissions policy: overlay_active=true|false global=&lt;action&gt; tool_rules=&lt;n&gt; nu.command_rules=&lt;n&gt;</code></li>
+</ul>
+<h3 id="ask-flow-and-session-grants">Ask flow and session grants</h3>
+<p>Ask hook choices are:</p>
+<ul>
+<li><code>allow_once</code></li>
+<li><code>allow_always</code> (session-only; reset on restart)</li>
+<li><code>deny</code></li>
+</ul>
+<p><code>allow_always</code> grants are <strong>session-only</strong> and scoped to the approving tool
+context (tool/source/mode scope), not global across unrelated tools.</p>
+<p>Within a running session, later calls in the same scoped tool context can reuse
+that grant. Restarting the plugin/session clears all <code>allow_always</code> grants.</p>
+<h3 id="interactive-permission-prompt-behavior-tui">Interactive permission prompt behavior (TUI)</h3>
+<p>When a tool call resolves to <code>ask</code> in TUI mode, execution pauses at the
+authorization boundary until a decision is submitted. The tool handler is not
+invoked while waiting.</p>
+<p>The permission ask UI is rendered as a compact <strong>inline permission card</strong>
+attached to the active tool call display in transcript space (not a large
+blocking modal).</p>
+<p>The card includes request context (<code>tool</code>, <code>source</code>, optional <code>mode</code>), matched
+rule metadata, summary, and <code>request_id</code>.</p>
+<p>Exact keybindings:</p>
+<ul>
+<li><code>a</code> =&gt; <code>allow_once</code></li>
+<li><code>A</code> =&gt; <code>allow_always</code> (session-only)</li>
+<li><code>d</code> =&gt; <code>deny</code></li>
+</ul>
+<p><code>Esc</code> is not a card key. With a card up, <code>Esc</code> behaves as usual: in insert
+mode it exits to normal mode, and in normal mode it arms the turn-cancel
+confirmation. The card stays up while the confirmation is armed; a confirmed
+cancel auto-denies the pending request and closes the card.</p>
+<p>Safety semantics:</p>
+<ul>
+<li>Decision timeout: an unanswered card auto-denies after <code>decision_timeout_secs</code> (default 60s, <code>0</code> waits forever); the tool is skipped and the turn continues</li>
+<li>Stale/unknown decision submissions =&gt; ignored</li>
+<li>Rule-identity mismatch submissions =&gt; ignored</li>
+<li>Prompt handling remains deterministic and non-blocking for overall UI loop</li>
+</ul>
+<p>TUI rendering guardrails:</p>
+<ul>
+<li>Prompt content is rendered as an <strong>inline transcript card</strong> anchored to the related tool row (not a blocking modal).</li>
+<li>Permission decision controls are rendered in a <strong>sticky footer row</strong> so controls remain visible independent of transcript window clipping.</li>
+<li>Viewport fitting preserves a required permission-context row while ask is active; manual user scroll override disables auto-recentering jitter but keeps required-row preservation state.</li>
+</ul>
+<p>Transcript gutters (columns are list-local; column 0 is the transcript list area's first column):</p>
+<ul>
+<li>User messages render a dotted <code>╎</code> rail at column 0 on the first row and on every wrapped row; the text starts at column 2 (the cog column).</li>
+<li>Assistant prose starts at column 2 and carries no rail.</li>
+<li>Tool, compaction, and system rows keep the two-column cursor slot: the marker glyph (<code>⚙</code>, <code>~</code>, <code>·</code>) sits at column 2 and the text starts at column 4, on the first row and on every wrapped row.</li>
+<li>The banner stays centered within the pane.</li>
+<li>Every entry keeps a two-column right margin: the wrap budget stops short of the list area's right edge, so no line writes into its last two columns. A painted surface — the user turn's background or a display's code surface — still spans the full list width.</li>
+</ul>
+<p>Nu command rendering:</p>
+<ul>
+<li>Each tool call row starts with the tool name (for example <code>edit</code>, <code>read</code>, <code>nu</code>) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The <code>nu</code> call line carries the applied timeout as <code>⏱ {timeout}s</code> (120s when the call omits <code>timeout_seconds</code>) — the command renders only in the entry's display body below it.</li>
+<li>A tool call is one transcript entry for its whole life. The entry holds a gate preview and a completion result, and the body renders whichever is present, <code>result.or(preview)</code>. A body carrying code or diff content paints on the code surface with one blank padding row above and below, inside the entry's own rect: the command or the diff is never a companion block, and the call row never carries a background or a margin row.</li>
+<li>When the agent calls the <code>nu</code> tool, the command renders as a syntax-highlighted block (language <code>nu</code>) under the tool row. While the call waits at the permission gate the body is the preview, built from the tool-call arguments alone — nothing executes before you approve. The preview arrives before the decision; at completion the result takes over the same slot, and the preview persists when the completion carries no display.</li>
+<li>The edit tool's diff display renders in the same code surface. Each diff body line carries a muted line-number gutter (old and new columns) followed by the syntax-highlighted code body, on a line-level tint: added lines get a dim green background, removed lines a dim red one, and context lines stay untinted. Hunk headers (<code>@@</code>), file headers (<code>---</code>/<code>+++</code>), and the no-newline marker render as plain meta rows.</li>
+<li>Consecutive tool entries carry no separator row: a tool entry is flush, so the displays' own padding rows supply the spacing. A tool entry next to assistant prose keeps one separator row, in either order. A padding row on the frame's first or last row is clipped, so the frame opens and closes on content rows.</li>
+<li>Other tools keep their existing previews (edit shows a diff, nu shows the command) or none.</li>
+<li>See <code>docs/contribution-guardrails.md</code> for the pre-authorize zero-write rules behind the edit preview.</li>
+</ul>
+<p>Lifecycle events emitted by runtime/UI path (all delivered on the single <code>ui_event</code> bus channel):</p>
+<ul>
+<li><code>PermissionRequested</code></li>
+<li><code>PermissionDecisionSubmitted</code></li>
+<li><code>PermissionDecisionTimedOut</code></li>
+<li><code>PermissionDecisionIgnored</code></li>
+<li><code>PermissionRequestCancelled</code></li>
+<li><code>PermissionAutoResolved</code></li>
+</ul>
+<h3 id="non-interactive-ask-fallback">Non-interactive ask fallback</h3>
+<p>In non-interactive mode (<code>stderr</code> mode), a tool call the policy marks <code>ask</code> resolves to deny. No prompt is shown, the tool is skipped, and the turn continues.</p>
+<p>There is no separate key for it: <code>ask</code> is a policy action everywhere, and the non-interactive resolver converts it to deny. To allow a call in that mode, allow it in the policy itself:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span></code></pre>
+<ul>
+<li>fallback (policy action <code>ask</code>): <code>deny</code></li>
+<li>to allow a call: an explicit <code>allow</code> on the tool, or on <code>"*"</code></li>
+<li>an invalid action value is reported as a diagnostic and ignored, so the rest of the policy stays in force</li>
+</ul>
+<h2 id="built-in-tools">Built-in tools</h2>
+<p>The agent exposes the following built-in tools (no MCP server required):</p>
+<p><strong>Filesystem (CAS-safe):</strong></p>
+<ul>
+<li><code>read</code> — read file content with optional line windowing</li>
+<li><code>edit</code> — search/replace or create files with CAS guard</li>
+</ul>
+<p><strong>Search:</strong></p>
+<ul>
+<li><code>grep</code> — recursive regex search (ripgrep-style)</li>
+<li><code>glob</code> — file glob matching</li>
+</ul>
+<p><strong>HTTP:</strong></p>
+<ul>
+<li><code>http</code> — fetch URLs, markdown extraction from HTML</li>
+</ul>
+<p><strong>Skills:</strong></p>
+<ul>
+<li><code>skill</code> — load skill content by name from local or home skill roots</li>
+</ul>
+<p><strong>Shell execution:</strong></p>
+<ul>
+<li><code>nu</code> — stateless Nushell command execution (NOT bash/sh/zsh)</li>
+</ul>
+<p><strong>Code analysis:</strong></p>
+<ul>
+<li>
+<p><code>ast_query</code> — run an S-expression tree-sitter query against source code</p>
+</li>
+<li>
+<p><code>ast_nodes</code> — list AST nodes of a given type in source code</p>
+</li>
+<li>
+<p><code>ast_refs</code> — find references to a named symbol in source code</p>
+</li>
+<li>
+<p><code>ast_tree</code> — dump the full S-expression parse tree of source code</p>
+<p>All four tools require <code>path</code> and <code>language</code> parameters. <code>language</code> must match an installed tree-sitter grammar (e.g. <code>rust</code>, <code>python</code>, <code>go</code>). See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/">Configuration</a> for full setup instructions.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">query</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;(function_item name: (identifier) @name)&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">node_type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;function_item&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;Config&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/main.rs&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;rust&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">max_depth</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">}</span></span></code></pre></li>
+</ul>
+<p><strong>tmux session management:</strong></p>
+<ul>
+<li><code>tmux_session</code> — list, info, create, kill sessions</li>
+<li><code>tmux_window</code> — create, kill windows</li>
+<li><code>tmux_pane</code> — list, find, capture, send, split, kill panes</li>
+<li><code>tmux_layout</code> — select layout</li>
+</ul>
+<p>Panes are addressed as <code>session:window.pane</code>. Prefer the <code>target</code> field returned by
+<code>tmux_pane</code> list/find; <code>pane: "2"</code> means pane index 2 of the given (or current)
+window, not window 2.</p>
+<p>These names are unprefixed and exact. There are no builtin aliases like
+<code>fs__read</code> or <code>tool__edit</code>.</p>
+<h3 id="filesystem-tool-permission-gating">Filesystem tool permission gating</h3>
+<p><code>read</code> is non-mutating and <strong>bypasses</strong> the permission system entirely — it is always allowed.</p>
+<p><code>edit</code> is filesystem-mutating and <strong>requires permission approval</strong>, exactly like MCP or closure tools. Use the permissions DSL to control its behavior per persona:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Developer persona — allow edit without prompting</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">permissions</span><span style="color: #A6E3A1;">:</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;*&quot;: &quot;ask&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;edit&quot;: &quot;allow&quot;</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Researcher persona — deny all writes</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">permissions</span><span style="color: #A6E3A1;">:</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;*&quot;: &quot;ask&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;edit&quot;: &quot;deny&quot;</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Default (safe) — prompt before every edit</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">permissions</span><span style="color: #A6E3A1;">:</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;*&quot;: &quot;ask&quot;</span></span></code></pre>
+<p>Via CLI:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Allow edit for this run</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> perms</span><span style="color: #CBA6F7;"> =</span><span style="color: #9399B2;"> {</span><span> &quot;*&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span><span>, &quot;edit&quot;</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;refactor the code&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">permissions</span><span> $perms</span></span></code></pre>
+<p>The default for unmatched tools is <code>ask</code> (interactive prompt in TUI, deny in non-interactive mode).</p>
+<h3 id="contracts">Contracts</h3>
+<ul>
+<li><code>read</code> is non-mutating and returns file content plus metadata, including
+<code>version</code> (content hash token).</li>
+<li><code>edit</code> is a mutating operation and <strong>requires</strong>
+<code>expected_version</code>.</li>
+<li><code>expected_version</code> is compared against the current file version (CAS guard)
+to prevent blind overwrites.</li>
+</ul>
+<h3 id="read-example"><code>read</code> example</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">tool</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;read&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">arguments</span><span style="color: #9399B2;">&quot;: {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/lib.rs&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">offset</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">limit</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 120</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Typical response fields:</p>
+<ul>
+<li><code>content</code></li>
+<li><code>total_lines</code></li>
+<li><code>offset</code></li>
+<li><code>limit</code></li>
+<li><code>version</code></li>
+</ul>
+<h3 id="edit-canonical-contract-preview-apply"><code>edit</code> canonical contract (preview/apply)</h3>
+<p><code>edit</code> uses a single stable contract with explicit mode:</p>
+<ul>
+<li><code>mode: "preview"</code> computes validation + planning + diff without writing.</li>
+<li><code>mode: "apply"</code> uses the exact same validation + planning semantics, then writes if allowed.</li>
+<li>The <code>operation</code> block is required and supports types <code>search_replace</code> or <code>create</code>.</li>
+</ul>
+<p>Canonical request shape:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">tool</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;edit&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">arguments</span><span style="color: #9399B2;">&quot;: {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/lib.rs&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">mode</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;preview&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">expected_version</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;&lt;version-from-read&gt;&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">operation</span><span style="color: #9399B2;">&quot;: {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;search_replace&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">search</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;old_name&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">replacement</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;new_name&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">match_mode</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;literal&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">occurrence</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;first&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Stable response envelope fields:</p>
+<ul>
+<li><code>proposal_id</code> (currently <code>null</code> in this slice)</li>
+<li><code>applied</code> (bool)</li>
+<li><code>would_change</code> (bool)</li>
+<li><code>diff</code> (deterministic diff text for this plan)</li>
+<li><code>stats</code> (deterministic counters)</li>
+<li><code>diagnostics</code> (deterministic class/message entries)</li>
+</ul>
+<p>Diff/newline semantics:</p>
+<ul>
+<li>Diff rendering is deterministic for identical input snapshots and operation plans.</li>
+<li>Paths in diff headers are stable (<code>--- a/file</code>, <code>+++ b/file</code>) for edit contract parity between preview/apply.</li>
+<li>Newline model preserves source line endings (LF/CRLF) in emitted line payloads.</li>
+<li>EOF newline transitions use unified-diff marker <code>\\ No newline at end of file</code>.</li>
+<li>Large diff output is bounded and can include a truncation marker with omitted-count metadata while preserving full summary stats.</li>
+</ul>
+<p>Deterministic diagnostic classes used by the edit contract:</p>
+<ul>
+<li><code>validation</code></li>
+<li><code>stale</code></li>
+<li><code>permission</code></li>
+<li><code>conflict</code></li>
+<li><code>internal</code></li>
+</ul>
+<p>No-op and conflict results:</p>
+<ul>
+<li>An apply-mode <code>edit</code> that would not change the file fails the tool call. The tool returns an error whose message names the reason (<code>no change</code> for an unmatched search or an identical replacement, <code>conflict</code> for a stale <code>expected_version</code> or an existing create target) and whose details carry the same contract envelope (<code>applied: false</code>, <code>would_change: false</code>, <code>noop</code> or <code>conflict: true</code>, <code>diff: ""</code>).</li>
+<li>The permission gate shows no diff block for these plans — there is nothing to approve, so the prompt renders bare.</li>
+<li>The failed disposition marks the tool row as failed in the TUI instead of done.</li>
+</ul>
+<h3 id="edit-with-operation-type-create-new-file-creation"><code>edit</code> with <code>operation.type: "create"</code> (new file creation)</h3>
+<p>To create a new file, use <code>operation.type: "create"</code> with a <code>content</code> field:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">tool</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;edit&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">arguments</span><span style="color: #9399B2;">&quot;: {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">path</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;src/new_module.rs&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">operation</span><span style="color: #9399B2;">&quot;: {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;create&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">      &quot;</span><span style="color: #89B4FA;">content</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;// New module</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">pub fn hello() {</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">    println!(</span><span style="color: #F5C2E7;">\&quot;</span><span style="color: #A6E3A1;">hello</span><span style="color: #F5C2E7;">\&quot;</span><span style="color: #A6E3A1;">);</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">}</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Notes:</p>
+<ul>
+<li><code>expected_version</code> is not needed for create operations.</li>
+<li>If the file already exists, the call fails with an <code>already exists</code> conflict error. Use <code>search_replace</code> instead.</li>
+<li>Parent directory must exist. The tool does not create intermediate directories.</li>
+</ul>
+<h3 id="cas-conflict-recovery-flow-required">CAS conflict recovery flow (required)</h3>
+<p>When <code>edit</code> detects a version mismatch, do not retry with stale args.
+Use this flow:</p>
+<ol>
+<li><code>read</code> the file again to get latest <code>content</code> and <code>version</code></li>
+<li>recompute your intended change against that latest content</li>
+<li>retry <code>edit</code> with the new <code>expected_version</code></li>
+</ol>
+<p>Short form: <strong>read -&gt; recompute change -&gt; retry with latest version</strong>.</p>
+<p>This is the required conflict recovery pattern for all mutating filesystem
+built-ins.</p>
+<h2 id="sessions">Sessions</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Continue session</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">&quot;continue&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">session</span><span style="color: #A6E3A1;"> &quot;session-id&quot;</span></span></code></pre><h3 id="session-storage">Session storage</h3>
+<p>A session's conversation lives in the session store. The <code>--store</code> flag picks
+the backend:</p>
+<table><thead><tr><th><code>--store</code></th><th>Where the session lives</th></tr></thead><tbody>
+<tr><td><code>sqlite</code> (default)</td><td><code>{cache}/{APP_DIR_NAME}/sessions.db</code> — one database holds every session</td></tr>
+<tr><td><code>memory</code></td><td>An in-memory database. Nothing survives the process, so it is for tests and one-shot runs</td></tr>
+</tbody></table>
+<p><code>APP_DIR_NAME</code> is <code>nu-agent-dev</code> in debug builds and <code>nu-agent</code> in release
+builds. One backend writes the store: SQLite, in a file or in memory. Pointing
+an unsupported store name yields an <code>Invalid --store value</code> error.</p>
+<p><strong>A stopped or failed turn keeps its completed work.</strong> A turn is saved only
+when it succeeds, so the host appends the interrupted turn's delta to the
+session log itself: the prompt, the tool exchanges that finished (with their
+real results), and the assistant text the turn streamed. A call killed
+mid-execution is closed as <code>[interrupted]</code>, so the log stays valid. The next
+turn continues from that log. A call the stop denied before it ran renders as a
+not-run (⊘) tool block with the args preview of what would have run under it,
+live and after a reload. No reason text renders. The batch's later calls the
+stop skipped without dispatching render the same ⊘ shape. A <code>nu</code> command the
+wall clock kills (<code>timeout_seconds</code> elapsed) or the turn's cancel stops renders
+that same ⊘ block with the command preview, live and after a reload; the model
+still receives the timeout or cancel as an error.</p>
+<p>The status of every call is stored with the session, as a variant: success,
+failure, or cancelled (the one class every non-completed call falls in). A
+reloaded row renders the status the store holds, not one re-read from the
+result text, so the timeout, the user's cancel, and a call the stop never
+dispatched all rehydrate as the same ⊘ block. Sessions saved before the status
+was stored keep the verdict their <code>is_error</code> flag carries — a failed call
+renders ✕, a successful one ✓.</p>
+<p><strong>Resuming replays the session.</strong> Attaching to a session projects its stored
+messages onto the same event log a live turn produces and folds them through
+the same reducer. The transcript rows, the tool statuses and their displays,
+the usage counters, and the compaction bookkeeping are therefore the state the
+live session ended in — a resumed session and a running one cannot disagree.
+The stored messages, not the rendered rows, are the source: the transcript is
+rebuilt, never re-parsed. A stored role outside the known set carries no
+transcript row and is skipped.</p>
+<p><strong>A warning appears when the turn's work could not be saved.</strong> If another
+writer moved the session log while the turn ran, the host leaves the log alone
+and shows <em>"Turn stopped: the session log moved mid-turn; this turn's work was
+not saved"</em> instead of writing a delta it cannot attribute.</p>
+<p><strong>Stopping may take up to ~2 s.</strong> After a cancel, the turn keeps draining the
+model stream for a bounded grace so in-flight tools finish and their results
+reach the session log.</p>
+<p><strong>Re-login when the Copilot credentials do not load.</strong> A stored Copilot login lives only in <code>copilot.json</code> in the Copilot credential directory. A login
+stored anywhere else is not picked up; run <code>agent provider auth login github-copilot</code> again.</p>
+<h3 id="session-metadata">Session metadata</h3>
+<p>The host writes the session's state records itself:</p>
+<ul>
+<li><code>rig::model</code> — the <code>provider/model</code> string the turn ran, taken from the
+resolved config rather than the wire descriptor (a custom provider on an
+OpenAI-shaped wire would otherwise be mislabelled).</li>
+<li><code>rig::title</code> — the start of the session's <strong>first</strong> user message, so a resumed
+session keeps its original title.</li>
+<li><code>meta.json</code> — the listing: title, labels, <code>updated</code>, model, message count, and
+plugins' listed values.</li>
+</ul>
+<p>A model switch rewrites the model record and relists; it passes no title, so the
+title is preserved.</p>
+<p><code>agent session list</code> and <code>agent session inspect</code> read these records. The plugin
+command shows all seven listing fields (<code>id</code>, <code>title</code>, <code>model</code>, <code>messages</code>,
+<code>updated</code>, <code>labels</code>, <code>listed</code> — <code>listed</code> as JSON text). The CLI's <code>agent session list</code> table shows five of them (<code>ID</code>, <code>TITLE</code>, <code>MODEL</code>, <code>MESSAGES</code>, <code>UPDATED</code>):
+<code>labels</code> and <code>listed</code> are plugin-owned metadata, so the CLI table leaves them
+out. Use the plugin command when you need them.</p>
+<p>A session whose store cannot be opened is skipped with a warning, so one
+unreadable log does not hide the others.</p>
+<h3 id="open-store-bound">Open-store bound</h3>
+<p>A session's store is opened on first use and kept. At most <strong>32</strong> stores stay
+open at once; the oldest is dropped when the bound is reached. A turn that still
+holds the store keeps it alive through its <code>Arc</code>, and the next access reopens it.</p>
+<p>On the <code>memory</code> backend nothing persists across opens, so an evicted session
+disappears from <code>agent session list</code> entirely — its conversation lived only in
+the store that was dropped.</p>
+<h3 id="compaction-triggers-and-persistence">Compaction triggers and persistence</h3>
+<ul>
+<li>Auto compaction fires when the next request would exceed the model's input limit less <code>reserve_tokens</code>: 16384 tokens (unset) or the count you set.</li>
+<li>A request the provider refuses as too long schedules a compaction for the next request, without waiting for the threshold.</li>
+<li>Manual slash trigger:
+<ul>
+<li><code>/compact</code> triggers force compaction immediately (bypasses the threshold gate)</li>
+<li><code>/uncompact</code> restores what the most recent compaction replaced (with nothing to undo it warns and changes nothing)</li>
+<li><code>/compact &lt;args&gt;</code> is treated as unknown for now</li>
+<li>unknown slash commands emit a warning and processing continues</li>
+</ul>
+</li>
+<li>Slash command text is runtime control input and is not forwarded as prompt text to the LLM.</li>
+<li>Manual and auto trigger sources share one execution path, and compaction persistence is durable:
+<ul>
+<li>the splice is written to the session's saved memory</li>
+<li>the compacted message set is what the next run loads</li>
+<li>transcript-visible compaction summary artifact includes source + summarized counts</li>
+<li>compaction summary artifact includes summary preview/body from the produced summary text</li>
+<li>the real token count resets after a compaction, so the next turn estimates from the summary until its first completion reports a counted total</li>
+</ul>
+</li>
+</ul>
+<h3 id="compaction-settings">Compaction settings</h3>
+<p>The <code>[compaction]</code> block has three keys. Every key is optional: a key left out keeps the built-in default.</p>
+<table><thead><tr><th>key</th><th>type</th><th>meaning</th><th>unset</th></tr></thead><tbody>
+<tr><td><code>enabled</code></td><td>bool</td><td>whether a conversation is compacted on its own: near the window, and after a request refused as too long; <code>/compact</code> works either way</td><td>built-in default: <code>true</code></td></tr>
+<tr><td><code>reserve_tokens</code></td><td>int</td><td>tokens of the model's input limit kept free below the trigger</td><td>built-in default: <code>16384</code></td></tr>
+<tr><td><code>keep_recent_tokens</code></td><td>int</td><td>about how many tokens of the newest messages stay as they are; the older ones become the summary</td><td>built-in default: <code>20000</code></td></tr>
+</tbody></table>
+<p>The behavior those keys shape:</p>
+<ul>
+<li>The newest messages stay as they are within the keep budget; the older ones become the summary.</li>
+<li>A short conversation is still summarized when <code>/compact</code> asks for it.</li>
+<li>A second compaction updates the previous summary rather than replacing it with an unrelated one.</li>
+</ul>
+<p>The block reference lives in <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#compaction">Configuration</a>.</p>
+<p>CLI flags override config.toml, which overrides built-in defaults.</p>
+<h3 id="inline-slash-suggestions-and-slash-commands">Inline slash suggestions and slash commands</h3>
+<ul>
+<li>Inline slash suggestions open immediately when input starts with <code>/</code>.</li>
+<li>Suggestions are non-modal and independent of command palette popup/table/state.</li>
+<li>Filtering is deterministic and incremental as input grows (<code>/c</code>, <code>/co</code>, ...).</li>
+<li>If slash prefix is removed, inline suggestions close cleanly and never fallback to command palette.</li>
+<li><code>Up</code> and <code>BackTab</code> move the suggestion highlight up, and <code>Down</code> moves it down.</li>
+<li><code>Tab</code> and <code>Enter</code> both accept the highlighted suggestion and submit it; the accepted command is not echoed into the transcript.</li>
+<li><code>Esc</code> closes the suggestion list.</li>
+<li>Supported slash commands:
+<ul>
+<li><code>/compact</code></li>
+<li><code>/uncompact</code></li>
+<li><code>/mcp</code></li>
+<li><code>/help</code></li>
+<li><code>/status</code></li>
+<li><code>/skills</code></li>
+<li><code>/models</code></li>
+<li><code>/agent</code></li>
+<li><code>/new</code></li>
+<li><code>/session</code></li>
+<li><code>/theme</code></li>
+<li><code>/stats</code></li>
+</ul>
+</li>
+<li><code>/help</code>, <code>/status</code>, <code>/mcp</code>, and <code>/skills</code> route to the same action handlers as Ctrl-P entries.</li>
+<li><code>/models</code> and Ctrl-P <code>Models</code> route to the same shared model-picker action handler.</li>
+<li><code>/stats</code> toggles the render-stats band: it sits under the status line at the screen bottom, two rows tall — a data row of counters plus a legend row decoding them — never covers the input box, the status line, or the transcript, and only <code>/stats</code> turns it on or off.</li>
+<li><code>/new</code> clears the transcript, starts a new session, and shows the startup logo.</li>
+<li><code>/new</code> and a session switch both settle the display the session that left was showing: the status line, an open permission card, the compaction display, and a stranded busy phase do not cross the boundary into the session that arrives. A turn still running keeps its own display.</li>
+<li>While a turn runs, <code>/new</code>, a model switch, and an agent switch apply when that turn finishes, and the status bar says so when the command arrives.</li>
+<li>Unknown slash commands emit deterministic warning text and the interactive loop continues.</li>
+<li>Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.</li>
+<li>Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).</li>
+<li>Input soft-wraps at word boundaries; the input box grows up to 6 rows, then scrolls internally keeping the caret visible.</li>
+<li>The input caret is a buffer cell, not the terminal cursor. Insert mode paints a <code>▏</code> bar in the input text style; normal/visual mode reverses the character under the caret. The terminal cursor stays hidden, so the caret does not flicker when the pane repaints.</li>
+<li>A modifier+letter key with no binding never inserts text: <code>Ctrl</code>/<code>Alt</code>/<code>Super</code>+letter (for example <code>Ctrl-F</code>, <code>Alt-B</code>) leaves the input unchanged, while <code>Shift</code>+letter still types the capital and the bound <code>Ctrl</code> letters (<code>Ctrl-C</code>, <code>Ctrl-U</code>, <code>Ctrl-D</code>, <code>Ctrl-P</code>, <code>Ctrl-N</code>, <code>Ctrl-J</code>, <code>Ctrl-K</code>) keep their actions.</li>
+</ul>
+<h3 id="prompt-queue-and-cancel-on-empty-enter">Prompt queue and cancel-on-empty-Enter</h3>
+<ul>
+<li>Submitting a prompt while a turn is busy queues it; the queued prompts run after the active turn completes.</li>
+<li>Typing while a turn is busy edits the draft: characters, <code>Backspace</code>, <code>Delete</code>, and <code>Alt-Enter</code>/<code>Shift-Enter</code> newlines reach the input box, and <code>Enter</code> queues the prompt instead of dropping it. A bracketed paste while a turn is busy is still dropped.</li>
+<li>Queued prompts render as one merged user-message block stacked directly above the input box: a tinted padding line above and below the text, a continuous <code>╎</code> gutter down every row with no separators between messages, and one blank row separating the block from the transcript. Text wraps at the transcript user-message width, so the stack's rail and text columns match the transcript user rows.</li>
+<li>The queue drains as one submission, and that submitted block renders the same one-row-per-message rhythm as the stack — no blank line between the coalesced prompts.</li>
+<li>Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.</li>
+<li>Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.</li>
+<li>Stopping a turn shows <code>Turn stopped</code> in the status bar until the next turn starts or the surface moves to another session, and keeps the turn's completed work in the session.</li>
+<li><code>Esc</code> while a turn runs arms the cancel confirmation (<code>Esc again to cancel</code>); a second <code>Esc</code> cancels the turn. While a picker or an info panel is open, <code>Esc</code> closes it and does nothing else: the next bare <code>Esc</code> arms the confirmation. The arm lives exactly as long as its message — once the message expires, the next <code>Esc</code> arms again instead of cancelling.</li>
+<li>If the turn finishes between the two presses, the next <code>Esc</code> shows <code>turn already finished — nothing to cancel</code> instead of silently toggling the input mode. The notice appears once and expires through its own TTL.</li>
+</ul>
+<h3 id="ctrl-c-quit-guard">Ctrl-C quit guard</h3>
+<ul>
+<li><code>Ctrl-C</code> is intercepted globally, before any popup or mode routing. Each press does exactly one thing.</li>
+<li>A permission prompt open: <code>Ctrl-C</code> arms the quit confirmation and leaves the prompt untouched. <code>d</code> owns <code>deny</code>; with a card up, <code>Esc</code> behaves as usual (mode exit, or arms the turn-cancel confirmation). A confirmed cancel auto-denies the pending request and closes the card.</li>
+<li>Any other popup open (picker, info panel, inline slash): <code>Ctrl-C</code> closes it without arming and without changing the draft.</li>
+<li>No popup and a non-empty draft: <code>Ctrl-C</code> clears the draft without arming. The turn state is unchanged, so a busy turn keeps running.</li>
+<li>No popup and an empty draft: <code>Ctrl-C</code> arms the quit confirmation and shows <code>Ctrl-C again to quit</code>.</li>
+<li>A second <code>Ctrl-C</code> within 5 seconds quits. While a turn is busy, quitting also requests cancel.</li>
+<li>Any other key or a paste disarms the confirmation. A resize leaves it armed.</li>
+<li>The confirmation expires after 5 seconds; the status message expires through its own 5 second TTL.</li>
+</ul>
+<h3 id="model-picker-and-switch-semantics">Model picker and switch semantics</h3>
+<ul>
+<li><code>/models</code> opens an inline model picker in TUI.</li>
+<li>Ctrl-P <code>Models</code> opens the same picker path (launcher parity with slash).</li>
+<li>Model switch resolution uses cached startup <code>PluginConfig</code> for session lifetime (no plugin-config re-read per switch).</li>
+<li>Successful switch applies full resolved model configuration for next turn execution.</li>
+<li>Footer/status active model identity updates immediately after successful switch.</li>
+</ul>
+<h3 id="consolidated-modal-system">Consolidated modal system</h3>
+<ul>
+<li>Modal layout uses one policy source keyed by panel kind.</li>
+<li>Help modal uses larger readable viewport.</li>
+<li>Status modal uses compact content-fit viewport.</li>
+<li>MCP/Skills/Models use balanced default modal layout.</li>
+<li>Modal containers use rounded borders with dimmed backdrop while modal/picker is open.</li>
+</ul>
+<h3 id="mcp-panel-error-presentation">MCP panel error presentation</h3>
+<ul>
+<li>MCP table stays compact: <code>Status</code>, <code>Name</code>, <code>Visible tools</code>.</li>
+<li><code>Status</code> is iconized with UTF-8 emoji for quick scan: <code>🟢</code> enabled, <code>⚪</code> disabled, <code>🔴</code> failed.</li>
+<li><code>Visible tools</code> is derived from live LLM-visible MCP tool mapping per server (not gated by row state text).</li>
+<li>Full error text is shown below the table for the currently selected MCP row.</li>
+<li>Selected-row details include compact <code>Tools: a, b, c</code> formatting with sorted visible tool names; fallback is <code>Tools: None</code>.</li>
+<li>MCP layout keeps table as primary pane in typical modal heights; details stay compact.</li>
+<li>When tool names exceed the details line budget, tools remain comma-separated and end with deterministic truncation cue: <code>+N more</code>.</li>
+<li>If selected row has no error reason, details pane shows <code>Error: None</code>.</li>
+<li>Keyboard selection behavior is unchanged; moving selection updates the details pane.</li>
+<li>Top legend line is removed; controls remain compact (<code>Session-only toggles | Enter/Space toggle | Esc close</code>).</li>
+</ul>
+<h2 id="hooks">Hooks</h2>
+<p>A hook is a Nushell script that runs when the agent publishes a lifecycle event. Hooks observe the agent. They never change a turn, a tool result, or the agent output.</p>
+<p>Configure hooks in <code>config.toml</code>. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#hooks">Configuration § Hooks</a> for the fields.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[[</span><span>hooks</span><span style="color: #9399B2;">]]</span></span>
+<span class="giallo-l"><span>name</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;herdr&quot;</span></span>
+<span class="giallo-l"><span>events</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;turn_started&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;turn_completed&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>script</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;hooks/herdr.nu&quot;</span></span></code></pre><h3 id="handler-convention">Handler convention</h3>
+<p>The agent runs one handler per event. The handler is a function named after the event. It takes one argument: the envelope as a record.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">def</span><span style="color: #F9E2AF;font-style: italic;"> turn_started</span><span style="color: #EBA0AC;font-style: italic;"> [event: </span><span style="color: #F9E2AF;font-style: italic;">record</span><span style="color: #EBA0AC;font-style: italic;">]</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    print</span><span style="color: #A6E3A1;"> $&quot;turn started in session (</span><span>$event.session_id</span><span style="color: #A6E3A1;">)&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The agent invokes the handler with this command:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">nu</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">stdin</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">c</span><span style="color: #A6E3A1;"> &quot;source &#39;&lt;script&gt;&#39;; &lt;event&gt; ($in | from json)&quot;</span></span></code></pre>
+<p>The agent writes the JSON envelope to the child process stdin. <code>--stdin</code> binds that input to <code>$in</code>, and <code>from json</code> turns it into the record the handler receives. The handler runs in the session working directory and inherits the environment.</p>
+<h3 id="envelope">Envelope</h3>
+<p>Every invocation receives one JSON envelope:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">version</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">event</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;turn_started&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">timestamp</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;2026-10-25T14:32:07.481920+00:00&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">session_id</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;9dad1e4e08b0b11c-main&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">agent</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;planner&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">model</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;openai/gpt-4o&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  &quot;</span><span style="color: #89B4FA;">payload</span><span style="color: #9399B2;">&quot;: {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">prompt</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;list the rust files&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    &quot;</span><span style="color: #89B4FA;">task_id</span><span style="color: #9399B2;">&quot;:</span><span style="color: #FAB387;"> null</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><code>version</code> — envelope schema version. Current value is <code>1</code>.</li>
+<li><code>event</code> — the event name.</li>
+<li><code>timestamp</code> — RFC 3339 UTC time of the invocation.</li>
+<li><code>session_id</code> — the session the event belongs to. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#session-id">Session id</a>.</li>
+<li><code>agent</code> — the persona slug in effect when the invocation was built. A string, or <code>null</code> when no persona is loaded. A handler reads it as <code>$event.agent</code>.</li>
+<li><code>model</code> — the active model identity, as <code>provider/model</code>.</li>
+<li><code>payload</code> — event-specific fields.</li>
+</ul>
+<p><code>agent</code> and <code>model</code> are additive observability fields. <code>version</code> remains <code>1</code>, so a handler that reads only the five original keys keeps working.</p>
+<p>The runner stamps both values when it builds the invocation, not when the event was published. A persona or model switch that lands between publish and stamping stamps the newer value on the earlier event. The values also reflect the most recently constructed or switched runtime, which matches the best-effort cross-channel attribution of <code>session_id</code>.</p>
+<p>Agent-class events report the process-level resolved model, which may differ from a session's switched model: an ACP session that switches model or persona updates only its own per-session context.</p>
+<p>Payload fields per event:</p>
+<table><thead><tr><th>Event</th><th>Payload fields</th></tr></thead><tbody>
+<tr><td><code>turn_started</code></td><td><code>prompt</code> (string), <code>task_id</code> (string or null)</td></tr>
+<tr><td><code>turn_completed</code></td><td><code>tool_calls</code> (integer), <code>input_tokens</code> (integer), <code>output_tokens</code> (integer), <code>total_tokens</code> (integer or null), <code>cost</code> (number or null), <code>cost_complete</code> (bool), <code>duration_ms</code> (integer)</td></tr>
+<tr><td><code>tool_started</code></td><td><code>name</code>, <code>source</code>, <code>arguments</code> (raw JSON string)</td></tr>
+<tr><td><code>tool_completed</code></td><td><code>name</code>, <code>source</code>, <code>arguments</code>, <code>success</code> (bool), <code>error_kind</code> (string or null), <code>message</code> (string or null)</td></tr>
+<tr><td><code>session_started</code></td><td><code>session_id</code> (string), <code>hydrated</code> (bool)</td></tr>
+<tr><td><code>session_ended</code></td><td><code>session_id</code> (string), <code>input_tokens</code> (integer), <code>output_tokens</code> (integer), <code>total_tokens</code> (integer or null), <code>cost</code> (number or null), <code>cost_complete</code> (bool)</td></tr>
+<tr><td><code>permission_requested</code></td><td><code>request_id</code>, <code>tool</code>, <code>tool_key</code>, <code>source</code>, <code>mode</code> (string or null), <code>matched_rule_identity</code>, <code>scope</code>, <code>target_field</code> (string or null), <code>pattern</code>, <code>summary</code></td></tr>
+<tr><td><code>permission_decision_timed_out</code></td><td><code>request_id</code></td></tr>
+<tr><td><code>permission_decision_submitted</code></td><td><code>request_id</code>, <code>decision</code> (<code>"allow_once"</code>, <code>"allow_always"</code>, or <code>"deny"</code>), <code>matched_rule_identity</code></td></tr>
+<tr><td><code>permission_decision_ignored</code></td><td><code>request_id</code>, <code>reason</code> (<code>"request_not_pending"</code>)</td></tr>
+<tr><td><code>permission_request_cancelled</code></td><td><code>request_id</code>, <code>matched_rule_identity</code></td></tr>
+<tr><td><code>permission_auto_resolved</code></td><td><code>matched_rule_identity</code>, <code>action</code> (<code>"allow"</code> or <code>"deny"</code>), <code>reason</code> (string or null)</td></tr>
+<tr><td><code>compaction_started</code></td><td><code>source</code> (string)</td></tr>
+<tr><td><code>compaction_completed</code></td><td><code>source</code> (string), <code>summary_preview</code> (string)</td></tr>
+<tr><td><code>compaction_failed</code></td><td><code>source</code> (string), <code>message</code> (string)</td></tr>
+<tr><td><code>agent_switched</code></td><td><code>from</code> (string or null), <code>to</code> (string)</td></tr>
+<tr><td><code>model_switched</code></td><td><code>from</code> (string), <code>to</code> (string)</td></tr>
+<tr><td><code>agent_started</code></td><td><code>mode</code> (<code>"tui"</code>, <code>"stderr"</code>, or <code>"acp"</code>)</td></tr>
+<tr><td><code>agent_shutdown</code></td><td><code>reason</code> (<code>"completed"</code>, <code>"shutdown"</code>, or <code>"error"</code>)</td></tr>
+</tbody></table>
+<p><code>task_id</code> is set only when an A2A task drives the turn. The TUI single-turn path, the stderr path, and the ACP path publish no A2A attribution, so <code>task_id</code> is null there.</p>
+<p>The <code>turn_completed</code> usage fields are the turn's sums across its LLM calls, accumulated as each call completed. <code>total_tokens</code> is the sum of the per-call totals, each the wire's total or input + output when the wire omitted it; it is null only when no call reported a total. <code>cost</code> is the sum of the reported per-call costs and is null when none was priced. <code>cost_complete</code> is the AND of the per-call flags, so a sum with one incomplete component is a lower bound. <code>duration_ms</code> is the turn's wall-clock span.</p>
+<p>The <code>session_ended</code> usage fields are the session's cumulative sums across every turn it ran, with the same fallback and completeness conventions. They reset when the runtime switches sessions, so the totals cover the session that ended only. Compaction never resets them: it shrinks the context, not the billing total.</p>
+<p><code>agent_switched</code> and <code>model_switched</code> report a switch that already happened. Their payloads hold two values: <code>from</code> is the value in use before the switch, <code>to</code> is the value now active. <code>agent_switched</code> carries persona slugs, and its <code>from</code> is null when the session had no persona. <code>model_switched</code> carries <code>provider/model</code> identities, and its <code>from</code> is always present. Re-selecting the current value is still a switch, so it reports <code>from</code> equal to <code>to</code>. Both envelopes are stamped after the switch, so their <code>agent</code> and <code>model</code> fields report the new state.</p>
+<h3 id="session-id">Session id</h3>
+<p>The runner tracks the session id from <code>SessionEvent::Started</code> and <code>SessionEvent::Switched</code> on the session bus. The envelope carries the tracked id.</p>
+<p>The id is an empty string in two cases:</p>
+<ul>
+<li>The runtime published no session event. Stderr mode and TUI single-turn publish none, so their turn and tool envelopes carry <code>""</code>.</li>
+<li>The event is agent-class. Agent events are process-scoped, so <code>agent_started</code> and <code>agent_shutdown</code> always carry <code>""</code>. This is by design.</li>
+</ul>
+<p>The switch events are session-class, so <code>agent_switched</code> and <code>model_switched</code> carry the tracked session id like every other session event.</p>
+<h3 id="ordering">Ordering</h3>
+<p>The agent guarantees order in two scopes:</p>
+<ul>
+<li>Within one <code>[[hooks]]</code> entry on one runner. The entry has one subscriber task per runner. It runs one handler to completion before it takes the next event, so a hook never overlaps itself.</li>
+<li>Within one event channel. Events on one channel arrive in publish order. <code>turn_started</code> and <code>turn_completed</code> share the turn channel, so <code>turn_started</code> always precedes <code>turn_completed</code>.</li>
+</ul>
+<p>Order across channels is best-effort. A <code>tool_started</code> and a <code>turn_completed</code> that are both ready can arrive in either order. A hook that declares both session-class and agent-class events runs on two runners, so its <code>agent_started</code> and <code>turn_started</code> have no relative order.</p>
+<p>The switch events share the session channel with the session lifecycle events, so they are ordered against them. A persona switch whose model override takes effect emits <code>agent_switched</code> before <code>model_switched</code>: two user-meaningful facts changed, so a hook sees two invocations.</p>
+<h3 id="failure-behavior">Failure behavior</h3>
+<p>A hook failure never affects the agent run.</p>
+<ul>
+<li>A handler that exits non-zero, fails to spawn, or exceeds <code>timeout_ms</code> produces one warning log line: <code>hook '&lt;name&gt;' failed on &lt;event&gt;: &lt;error&gt;</code>.</li>
+<li>The warning goes to the agent log file in <code>{state base}/nu-agent/logs/</code> (see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#log-file">Log file</a>). The agent never writes log output to the terminal.</li>
+<li>A timeout kills the subprocess.</li>
+<li>The agent never retries a failed hook.</li>
+<li>The agent never publishes a hook result.</li>
+<li>The turn continues.</li>
+</ul>
+<p>At exit the agent gives a running handler limited grace:</p>
+<ul>
+<li>Agent-class runners: one 2 s budget shared by every runner, so a hook that hangs never holds exit past it.</li>
+<li>Session-class runner in stderr mode: one 250 ms pause in total, after the turn.</li>
+<li>Session-class runner in TUI and ACP: no exit wait. A handler still running when the process exits is abandoned.</li>
+</ul>
+<h3 id="mode-coverage">Mode coverage</h3>
+<table><thead><tr><th>Event</th><th>TUI interactive</th><th>TUI single-turn</th><th>stderr</th><th>ACP</th></tr></thead><tbody>
+<tr><td><code>turn_started</code>, <code>turn_completed</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td><code>tool_started</code>, <code>tool_completed</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td><code>session_started</code>, <code>session_ended</code></td><td>yes</td><td>no</td><td>no</td><td>yes</td></tr>
+<tr><td><code>permission_requested</code></td><td>yes</td><td>yes</td><td>no</td><td>yes</td></tr>
+<tr><td><code>permission_decision_timed_out</code></td><td>yes</td><td>yes</td><td>no</td><td>yes</td></tr>
+<tr><td><code>permission_decision_submitted</code></td><td>yes</td><td>no</td><td>no</td><td>yes</td></tr>
+<tr><td><code>permission_decision_ignored</code></td><td>yes</td><td>no</td><td>no</td><td>yes</td></tr>
+<tr><td><code>permission_request_cancelled</code></td><td>yes</td><td>no</td><td>no</td><td>yes</td></tr>
+<tr><td><code>permission_auto_resolved</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td><code>compaction_started</code>, <code>compaction_completed</code></td><td>yes</td><td>no</td><td>no</td><td>yes</td></tr>
+<tr><td><code>compaction_failed</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td><code>agent_switched</code>, <code>model_switched</code></td><td>yes</td><td>no</td><td>no</td><td>yes</td></tr>
+<tr><td><code>agent_started</code>, <code>agent_shutdown</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+</tbody></table>
+<p><code>session_started</code> and <code>session_ended</code> are per-session events. They fire where a session lifecycle exists: the TUI interactive loop and ACP sessions. Stderr mode and TUI single-turn run one turn and publish no session lifecycle event.</p>
+<p><code>permission_requested</code> fires where the agent prompts the user: TUI and ACP. Stderr mode resolves permissions by policy and never prompts, so it never fires there.</p>
+<p><code>permission_decision_timed_out</code> fires where a permission card can time out. In TUI single-turn the request is published but no card consumer runs, so the request waits out its decision timeout and the event fires there too. Stderr mode never prompts, so it never fires there.</p>
+<p><code>permission_decision_submitted</code> fires where a decision reaches the permission resolver. In TUI single-turn the resolver is installed but no card consumer runs, so no decision is ever submitted and the event never fires there. Stderr mode never prompts, so it never fires there either.</p>
+<p><code>permission_decision_ignored</code> fires where a submitted decision can outlive its request. In TUI single-turn the resolver is installed but no card consumer runs, so no decision is ever submitted and the event never fires there. Stderr mode never prompts, so it has no decision submission path and the event never fires there either.</p>
+<p><code>permission_request_cancelled</code> fires where a permission prompt can be open when the turn is cancelled. In TUI single-turn the resolver is installed but no card consumer runs and no cancel handling exists, so no cancel reaches the resolver while a request is pending and the event never fires there. Stderr mode never prompts, so it never fires there either.</p>
+<p><code>permission_auto_resolved</code> fires where the policy resolves a tool call without prompting. That is every tool call in stderr mode, and every non-asked call in TUI interactive, TUI single-turn, and ACP mode. It is the only permission event that fires in stderr mode. The event fires once per policy-resolved call, so a hook that declares it runs one subprocess per call; the subprocess spawns only when the hook declares the event.</p>
+<p><code>compaction_started</code> and <code>compaction_completed</code> fire where compaction runs. The chain's threshold decision fires in every mode, but only two modes consume the request: the TUI interactive loop dispatches it through the orchestrator, for both auto threshold compaction and <code>/compact</code>, and an ACP session runs it post-turn, after the turn's drain ends and inside a second drain, so the client sees the events. Stderr mode and TUI single-turn run <code>run_single_turn</code>, which bypasses the orchestrator loop: the turn pipeline still publishes the compaction request, but nothing dispatches it, so no compaction runs there. <code>compaction_failed</code> is the exception: the turn pipeline's store-open failure and its session-load failure emit it in every mode, even where no compaction attempt runs.</p>
+<p><code>compaction_completed</code> carries the summary preview only: the full summary body is unbounded and stays out of the envelope. The streamed <code>CompactionSummaryChunk</code> is not a hook event, because one subprocess per streamed chunk is unbounded volume.</p>
+<p><code>agent_started</code> and <code>agent_shutdown</code> are per-process events. They fire exactly once per process in all three modes. The pair is best-effort on signals: no SIGTERM handler exists, so SIGTERM and SIGKILL produce no <code>agent_shutdown</code>.</p>
+<p><code>agent_switched</code> fires on a user-initiated agent switch: the TUI agent picker and the ACP agent config option. <code>model_switched</code> fires on a user-initiated model switch: the TUI model picker and the ACP model config option. Neither fires in stderr mode, TUI single-turn, or the plugin, because none of them has a switch path. A persona switch whose model override takes effect emits <code>agent_switched</code> before <code>model_switched</code> on the same channel, because two user-meaningful facts changed. In ACP the startup default-agent load is not a switch, and it publishes before the session hook runner subscribes, so no hook observes it.</p>
+<p>The plugin <code>agent</code> command runs turns but starts no hook runner. Hooks never fire there. The <code>agent</code> binary does start the runners. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#example-signal-an-external-app">Example: signal an external app</a>.</p>
+<h3 id="example-signal-an-external-app">Example: signal an external app</h3>
+<p>This script posts each turn boundary to a local HTTP endpoint. Save it as <code>$XDG_CONFIG_HOME/nu-agent/hooks/herdr.nu</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># ~/.config/nu-agent/hooks/herdr.nu</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span> HERDR_URL</span><span style="color: #CBA6F7;"> =</span><span style="color: #A6E3A1;"> &quot;http://127.0.0.1:7777/events&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">def</span><span style="color: #F9E2AF;font-style: italic;"> turn_started</span><span style="color: #EBA0AC;font-style: italic;"> [event: </span><span style="color: #F9E2AF;font-style: italic;">record</span><span style="color: #EBA0AC;font-style: italic;">]</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> body</span><span style="color: #CBA6F7;"> =</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        kind</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;turn_started&quot;</span></span>
+<span class="giallo-l"><span>        session</span><span style="color: #CBA6F7;">:</span><span> $event.session_id</span></span>
+<span class="giallo-l"><span>        prompt</span><span style="color: #CBA6F7;">:</span><span> $event.payload.prompt</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    http post --</span><span style="color: #EBA0AC;font-style: italic;">content-type</span><span style="color: #A6E3A1;"> application/json</span><span> $HERDR_URL ($body</span><span style="color: #CBA6F7;"> | to json</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">def</span><span style="color: #F9E2AF;font-style: italic;"> turn_completed</span><span style="color: #EBA0AC;font-style: italic;"> [event: </span><span style="color: #F9E2AF;font-style: italic;">record</span><span style="color: #EBA0AC;font-style: italic;">]</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> body</span><span style="color: #CBA6F7;"> =</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        kind</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> &quot;turn_completed&quot;</span></span>
+<span class="giallo-l"><span>        session</span><span style="color: #CBA6F7;">:</span><span> $event.session_id</span></span>
+<span class="giallo-l"><span>        tool_calls</span><span style="color: #CBA6F7;">:</span><span> $event.payload.tool_calls</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    http post --</span><span style="color: #EBA0AC;font-style: italic;">content-type</span><span style="color: #A6E3A1;"> application/json</span><span> $HERDR_URL ($body</span><span style="color: #CBA6F7;"> | to json</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Register it in <code>config.toml</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[[</span><span>hooks</span><span style="color: #9399B2;">]]</span></span>
+<span class="giallo-l"><span>name</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;herdr&quot;</span></span>
+<span class="giallo-l"><span>events</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;turn_started&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;turn_completed&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>script</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;hooks/herdr.nu&quot;</span></span>
+<span class="giallo-l"><span>timeout_ms</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 5000</span></span></code></pre>
+<p>Run one turn with the <code>agent</code> binary:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #94E2D5;">^</span><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> &quot;list the rust files&quot;</span></span></code></pre>
+<p>The caret forces the external <code>agent</code> binary. With the plugin registered, <code>agent</code> alone calls the plugin command, which starts no hook runner. The binary runs one turn in stderr mode, where the runners are wired.</p>
+<p>The endpoint receives one <code>turn_started</code> post and one <code>turn_completed</code> post. If the endpoint is down, <code>http post</code> fails, the handler exits non-zero, and the agent logs one warning. The turn still completes.</p>
+<h3 id="deferred">Deferred</h3>
+<p>Hooks cannot veto or modify an event. Hooks run without a sandbox. There is no <code>/hooks</code> panel. The agent spawns one process per event; a persistent-stdio mode is not implemented.</p>
+<h2 id="permission-based-tool-visibility">Permission-based tool visibility</h2>
+<p>Permissions control both <strong>visibility</strong> and <strong>authorization</strong>. Denied tools are
+hidden from the LLM entirely — they never appear in the tool list.</p>
+<table><thead><tr><th>Action</th><th>Visible to LLM</th><th>Behavior</th></tr></thead><tbody>
+<tr><td><code>allow</code></td><td>yes</td><td>Runs without prompting</td></tr>
+<tr><td><code>ask</code></td><td>yes</td><td>User prompted before each use</td></tr>
+<tr><td><code>deny</code> (tool-level)</td><td><strong>no</strong></td><td>Hidden from LLM tool list</td></tr>
+<tr><td><code>deny</code> (granular, e.g. <code>nu.command</code>)</td><td>yes</td><td>Tool visible; specific commands blocked at runtime</td></tr>
+</tbody></table>
+<h3 id="defaults">Defaults</h3>
+<table><thead><tr><th>Mode</th><th>Default when no <code>permissions</code> configured</th></tr></thead><tbody>
+<tr><td>TUI (interactive)</td><td><code>"*": "ask"</code> — all tools visible, user prompted</td></tr>
+<tr><td>TTY (non-interactive)</td><td><code>"*": "deny"</code> — all tools hidden; must allowlist</td></tr>
+</tbody></table>
+<h3 id="tty-allowlist-example">TTY allowlist example</h3>
+<p>In non-interactive (TTY/pipe) mode, deny everything by default and allow only
+the tools you need:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>read</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>grep</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>glob</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>&quot;c5t_get*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span>
+<span class="giallo-l"><span>&quot;c5t_list*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;allow&quot;</span></span></code></pre><h3 id="tui-denylist-example">TUI denylist example</h3>
+<p>In interactive (TUI) mode, ask for everything by default and deny tools that
+should never be available:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>permissions</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>&quot;*&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ask&quot;</span></span>
+<span class="giallo-l"><span>&quot;nu&quot;</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span>
+<span class="giallo-l"><span>edit</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;deny&quot;</span></span></code></pre><h2 id="flag-reference">Flag reference</h2>
+<p><code>agent</code> (TUI mode when no input is piped):</p>
+<ul>
+<li><code>--model &lt;provider/model&gt;</code> / <code>-m</code> — model to use in <code>provider/model</code> format</li>
+<li><code>--api-key &lt;string&gt;</code> — API key override for the provider</li>
+<li><code>--base-url &lt;string&gt;</code> — custom API endpoint URL</li>
+<li><code>--temperature &lt;number&gt;</code> — sampling temperature (0.0 to 2.0)</li>
+<li><code>--max-context-tokens &lt;int&gt;</code> — maximum context window size (input + output)</li>
+<li><code>--max-output-tokens &lt;int&gt;</code> — maximum output tokens</li>
+<li><code>--max-turns &lt;int&gt;</code> — maximum tool calling turns</li>
+<li><code>--tools &lt;record&gt;</code> — record of tool closures <code>{name: closure, ...}</code></li>
+<li><code>--permissions &lt;record&gt;</code> — structured permissions overlay for this run</li>
+<li><code>--tool-timeout &lt;duration&gt;</code> / <code>-t</code> — tool execution timeout (default: 30s)</li>
+<li><code>--session &lt;id&gt;</code> — session ID to resume (auto-creates if missing)</li>
+<li><code>--repetition-guard &lt;string&gt;</code> — enable or disable the repetition guard (<code>on|off</code>); unset keeps the configured value (enabled by default)</li>
+<li><code>--verbose</code> / <code>-v</code> — increase UX detail; repeat (<code>-v</code>, <code>-vv</code>, <code>-vvv</code>)</li>
+<li><code>--quiet</code> / <code>-q</code> — suppress non-essential UX progress output</li>
+<li><code>--log-level &lt;string&gt;</code> — file log level (<code>error|warn|info|debug|trace</code>); writes to this instance's file in <code>{state base}/nu-agent/logs/</code> (see <a href="https://ck3mp3r.github.io/nu-agent/docs/user/usage/#log-file">Log file</a>)</li>
+<li><code>--agent &lt;name&gt;</code> — load an agent persona from <code>.agents/&lt;name&gt;.md</code></li>
+<li><code>--name &lt;string&gt;</code> — agent instance identity for multi-agent messaging</li>
+<li><code>--parent-name &lt;string&gt;</code> — parent agent name for sub-agent reporting (internal)</li>
+<li><code>--store &lt;string&gt;</code> — session store backend: <code>sqlite|memory</code></li>
+</ul>
+<h2 id="log-file">Log file</h2>
+<p>The agent logs to a file only; it never writes log output to the terminal.</p>
+<ul>
+<li>The target is this instance's own file in <code>{state base}/nu-agent/logs/</code> — <code>$XDG_STATE_HOME/nu-agent/logs/</code> by default, and <code>nu-agent-dev</code> instead of <code>nu-agent</code> in a debug build. See <a href="https://ck3mp3r.github.io/nu-agent/docs/user/configuration/#paths">Paths</a> for the full ladder.</li>
+<li>The file name names the instance: <code>agent-{name}-{pid}.log</code>, and <code>agent-{pid}.log</code> without a name. <code>{name}</code> is the <code>--name</code> value. The pid is always part of the name, so two same-named instances never interleave into one file. A name becomes a file name part, so characters outside <code>A-Z a-z 0-9 . _ -</code> become <code>-</code>.</li>
+<li>The role is recorded in the file's header lines, never in its file name: <code>tui</code> for the default route (TUI, TTY, and single-prompt runs), <code>a2a</code> for the A2A server, <code>acp</code> for the ACP server, and <code>run</code> for the one-shot subcommands and the plugin's pipeline runs. The header also carries the name when the run has one, the pid, and the RFC 3339 start time.</li>
+<li>The TUI shows the full path of its own instance file in the Status panel (<code>/status</code>), as a <code>Log:</code> row. That path is the file the run writes, so no directory listing is needed to find it.</li>
+<li><code>NU_AGENT_STATE_HOME</code> applies from process start: the environment is readable before <code>config.toml</code> loads, so the log directory is correct from the first line, with no re-initialization.</li>
+<li>A <code>[paths].state_home</code> value in <code>config.toml</code> applies only after the config file is loaded: the sink swaps to <code>{value}/nu-agent/logs/</code> at that point and keeps the instance's own file name.</li>
+<li>In the pre-load window — the first few startup lines — the log goes to the derived default, i.e. <code>$XDG_STATE_HOME</code>'s tree or <code>~/.local/state</code>.</li>
+<li>Logging is always on: no flag is required, and the file is the only target.</li>
+<li><code>RUST_LOG</code> and <code>--log-level</code> set the filter; the default is <code>info</code>. <code>warn</code> and above always reaches the file, whatever the filter asks for.</li>
+<li>Each instance keeps its own file, appended run after run. A second instance starting never rotates, truncates, or collects the file another instance is writing.</li>
+<li>At open the store keeps the newest 20 instance files. Three files are never collected: the opening instance's own file, a file modified within the last hour, and a file the platform refuses to remove. A writer that froze still leaves a recent trail, so that trail survives.</li>
+<li>When the state ladder does not resolve or the instance's file cannot open, the log goes to <code>{temp dir}/nu-agent-log-{pid}.log</code> with the reason as its first line, and the run continues.</li>
+<li>On quit and on a panic, the last 500 lines are appended to the file as a <code>ring dump</code> block.</li>
+</ul>
+<h2 id="subcommands">Subcommands</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Configuration</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> config init</span><span> [</span><span style="color: #A6E3A1;">--force</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Model discovery</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models sync</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> models list</span><span> [</span><span style="color: #A6E3A1;">--provider &lt;name&gt;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Provider auth (OS keychain)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth login &lt;name&gt;</span><span> [</span><span style="color: #A6E3A1;">--api-key &lt;key&gt;</span><span>]</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth logout &lt;name&gt;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> provider auth status</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># MCP auth</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth login &lt;server&gt;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth logout &lt;server&gt;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth status</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Sessions</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> session list</span><span> [</span><span style="color: #A6E3A1;">--store &lt;type&gt;</span><span>]</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> session clear &lt;id&gt;</span><span> [</span><span style="color: #A6E3A1;">--store &lt;type&gt;</span><span>]</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> session inspect &lt;id&gt;</span><span> [</span><span style="color: #A6E3A1;">--store &lt;type&gt;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># A2A mesh peer (--agent is required)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> a2a</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #A6E3A1;"> &lt;name&gt;</span><span> [</span><span style="color: #A6E3A1;">--port &lt;port&gt;</span><span>] [</span><span style="color: #A6E3A1;">--mesh-key &lt;key&gt;</span><span>]</span></span></code></pre><h3 id="a2a-serve">A2A serve</h3>
+<p><code>agent a2a</code> serves this agent on the mesh. A mesh peer must be launched with <code>--agent &lt;name&gt;</code>; without it the peer refuses to serve, because its identity, hook envelopes, facts, and agent card all stamp from the persona.</p>
+<ul>
+<li><code>--mesh-key &lt;string&gt;</code> — mesh isolation key; agents only discover peers with the same key (default: SHA-256 of cwd)</li>
+</ul>
+<h2 id="mcp-authentication-commands">MCP Authentication Commands</h2>
+<p>Manage OAuth credentials for MCP servers. These commands operate on the credential store (not config.toml).</p>
+<h3 id="agent-mcp-auth-login"><code>agent mcp auth login</code></h3>
+<p>Triggers the OAuth authorization-code flow with PKCE for a configured MCP server. Opens a browser to the server's authorization URL and waits for the callback.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth login my-server</span></span></code></pre>
+<p>The MCP server must be configured with <code>auth.type = "oauth"</code> in config.toml. On success, tokens are saved to the credential store and automatically refreshed on expiry.</p>
+<p>Example output (stderr):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Opening browser to authenticate with MCP server &#39;my-server&#39;...</span></span>
+<span class="giallo-l"><span>If the browser doesn&#39;t open, visit:</span></span>
+<span class="giallo-l"><span>  http://auth-server.example.com/authorize?response_type=code&amp;client_id=...</span></span>
+<span class="giallo-l"><span>Successfully authenticated with MCP server &#39;my-server&#39;</span></span></code></pre><h4 id="what-happens-during-login">What happens during login</h4>
+<p>The OAuth authorization-code flow with PKCE proceeds as follows:</p>
+<ol>
+<li><strong>Load config</strong> — reads the MCP server configuration from config.toml.</li>
+<li><strong>Start callback server</strong> — binds a local HTTP server to <code>127.0.0.1</code> on a random port to receive the OAuth redirect.</li>
+<li><strong>Discover OAuth metadata</strong> — fetches <code>/.well-known/oauth-authorization-server</code> from the server URL to find authorization, token, and registration endpoints.</li>
+<li><strong>Register client</strong> — if no <code>client-id</code> is configured, performs dynamic client registration via the discovered registration endpoint. If <code>client-id</code> is configured, uses it directly.</li>
+<li><strong>Generate PKCE challenge</strong> — creates a cryptographically random <code>code_verifier</code> and <code>code_challenge</code> (SHA-256 hashed) for the authorization request.</li>
+<li><strong>Build authorization URL</strong> — constructs the URL with <code>response_type=code</code>, <code>client_id</code>, <code>redirect_uri</code>, <code>scope</code>, <code>state</code> (CSRF token), and <code>code_challenge</code>.</li>
+<li><strong>Open browser</strong> — launches the system browser to the authorization URL.</li>
+<li><strong>User authenticates</strong> — the user logs in and grants consent in the browser.</li>
+<li><strong>Browser redirects</strong> — the authorization server redirects to the callback server at <code>http://127.0.0.1:&lt;random-port&gt;/mcp/oauth/callback?code=...&amp;state=...</code>.</li>
+<li><strong>Validate state</strong> — the callback server verifies the <code>state</code> parameter matches the one sent (CSRF protection).</li>
+<li><strong>Exchange code for tokens</strong> — sends the authorization code, <code>code_verifier</code>, and <code>redirect_uri</code> to the token endpoint. Receives <code>access_token</code>, <code>refresh_token</code>, and <code>expires_in</code>.</li>
+<li><strong>Save credentials</strong> — stores the tokens in the OS keychain. When no keychain is available, the agent uses its file store instead.</li>
+<li><strong>Stop callback server</strong> — shuts down the local HTTP server.</li>
+</ol>
+<p>On subsequent agent runs, the stored access token is used automatically. If expired, the refresh token is used to obtain a new access token without user interaction.</p>
+<h3 id="agent-mcp-auth-logout"><code>agent mcp auth logout</code></h3>
+<p>Clears stored OAuth tokens and client registration data for a server. Does not modify config.toml.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth logout my-server</span></span></code></pre>
+<p>Example output:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Cleared credentials for &#39;my-server&#39;</span></span></code></pre>
+<p>If no credentials are stored for the server:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>No stored credentials for &#39;my-server&#39;</span></span></code></pre><h3 id="agent-mcp-auth-status"><code>agent mcp auth status</code></h3>
+<p>Shows authentication status for all configured MCP servers as a table.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">agent</span><span style="color: #A6E3A1;"> mcp auth status</span></span></code></pre>
+<p>Example output:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>╭───────┬───────────┬──────────────────────────────────────────╮</span></span>
+<span class="giallo-l"><span>│ server│ auth_type │ status                                   │</span></span>
+<span class="giallo-l"><span>├───────┼───────────┼──────────────────────────────────────────┤</span></span>
+<span class="giallo-l"><span>│ c5t   │ none      │ no auth required                         │</span></span>
+<span class="giallo-l"><span>│ nu    │ bearer    │ static token (from config)                │</span></span>
+<span class="giallo-l"><span>│ gh    │ oauth     │ authenticated (token valid)               │</span></span>
+<span class="giallo-l"><span>│ gitlab│ oauth     │ authenticated (token expired — will       │</span></span>
+<span class="giallo-l"><span>│       │           │ refresh)                                  │</span></span>
+<span class="giallo-l"><span>│ jira  │ oauth     │ not authenticated (run: agent mcp auth    │</span></span>
+<span class="giallo-l"><span>│       │           │ login jira)                                │</span></span>
+<span class="giallo-l"><span>╰───────┴───────────┴──────────────────────────────────────────╯</span></span></code></pre>
+<p>Status values:</p>
+<table><thead><tr><th>Status</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>no auth required</code></td><td>Server uses <code>auth: { type: "none" }</code></td></tr>
+<tr><td><code>static token (from config)</code></td><td>Server uses <code>auth: { type: "bearer" }</code></td></tr>
+<tr><td><code>authenticated (token valid)</code></td><td>OAuth token is stored and not expired</td></tr>
+<tr><td><code>authenticated (token expired — will refresh)</code></td><td>OAuth token is expired; auto-refresh on next use</td></tr>
+<tr><td><code>not authenticated (run: ...)</code></td><td>OAuth server with no stored credentials</td></tr>
+</tbody></table>
+<h3 id="troubleshooting">Troubleshooting</h3>
+<table><thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead><tbody>
+<tr><td><code>401 Unauthorized</code></td><td>Missing or invalid credentials</td><td>Run <code>agent mcp auth login &lt;name&gt;</code></td></tr>
+<tr><td><code>403 Forbidden</code></td><td>Insufficient OAuth scopes</td><td>Re-login with additional scopes in the <code>auth.scope</code> config field</td></tr>
+<tr><td><code>Callback port in use</code></td><td>Another process is using the callback port. Stop it or configure a different <code>redirect-uri</code>.</td><td></td></tr>
+<tr><td><code>Token expired</code></td><td>Refresh token also expired</td><td>Run <code>agent mcp auth login &lt;name&gt;</code> to re-authenticate</td></tr>
+<tr><td><code>OAuth requires HTTP or SSE transport</code></td><td>OAuth configured on stdio server</td><td>Change transport to <code>sse</code> or <code>http</code> in config.toml</td></tr>
+</tbody></table>
+<h2 id="output-contract">Output contract</h2>
+<ul>
+<li><code>stdout</code>: final machine-readable Nushell record output only.</li>
+<li><code>stderr</code>: interactive UX/progress output (spinner while busy, tool progress, warnings, completion).</li>
+</ul>
+<p>This keeps pipelines stable while preserving interactive feedback.</p>
+<h2 id="tui-transcript-markdown-and-fenced-code">TUI transcript markdown and fenced code</h2>
+<p>When running in TUI mode, assistant markdown is projected into transcript-friendly
+lines. Each markdown element maps to a dedicated style. Colors are named; the
+concrete RGB values come from the active theme (<code>--theme</code>, default
+<code>catppuccin-mocha</code>).</p>
+<table><thead><tr><th>Element</th><th>Style</th></tr></thead><tbody>
+<tr><td>Heading level 1-6</td><td>bold, one color per level: red, peach, yellow, green, sapphire, lavender</td></tr>
+<tr><td>Table header cells</td><td>bold blue (the generic heading style)</td></tr>
+<tr><td>Table data cells</td><td>default text color</td></tr>
+<tr><td>Bold / italic / bold italic</td><td>red, with the matching bold/italic modifier</td></tr>
+<tr><td>Block quote text and <code>│</code> prefix</td><td>pink</td></tr>
+<tr><td>Link label</td><td>lavender</td></tr>
+<tr><td>Link URL suffix</td><td>blue, italic, underline</td></tr>
+<tr><td>Inline code</td><td>green, no dim</td></tr>
+<tr><td>List markers (<code>•</code>, <code>1.</code>)</td><td>teal</td></tr>
+<tr><td>Code keyword / type / function</td><td>mauve / yellow / blue</td></tr>
+<tr><td>Code variable / constant</td><td>text / peach</td></tr>
+<tr><td>Code string / number / operator</td><td>green / peach / sky</td></tr>
+<tr><td>Code punctuation / comment</td><td>overlay2 / overlay2 italic</td></tr>
+</tbody></table>
+<ul>
+<li>Supported markdown constructs (for example headings, emphasis, lists,
+blockquotes, and code fences) are rendered with deterministic formatting.</li>
+<li>Fenced code blocks with recognized languages use token-level syntax styles in
+the transcript.</li>
+<li>Unknown or unsupported fence languages fall back to plain code rendering
+(stable, readable, and non-panicking).</li>
+</ul>
+<p>The fallback behavior keeps transcript output predictable even when model output
+contains malformed markdown or uncommon language identifiers.</p>
+<p>In TTY mode the same elements are approximated with ANSI-16 SGR codes, because
+truecolor is not guaranteed. The codes are:</p>
+<table><thead><tr><th>Element</th><th>SGR</th></tr></thead><tbody>
+<tr><td>Heading level 1-6</td><td><code>1;31</code>, <code>1;33</code>, <code>1;33</code>, <code>1;32</code>, <code>1;36</code>, <code>1;95</code></td></tr>
+<tr><td>Table header cells</td><td><code>1;34</code></td></tr>
+<tr><td>Bold / italic / bold italic</td><td><code>1;31</code> / <code>3;31</code> / <code>1;3;31</code></td></tr>
+<tr><td>Block quote</td><td><code>35</code></td></tr>
+<tr><td>Link label / URL suffix</td><td><code>95</code> / <code>3;4;34</code></td></tr>
+<tr><td>Inline code</td><td><code>32</code></td></tr>
+<tr><td>List markers</td><td><code>36</code></td></tr>
+<tr><td>Code keyword / type / function</td><td><code>35</code> / <code>33</code> / <code>34</code></td></tr>
+<tr><td>Code variable / constant</td><td><code>39</code> / <code>33</code></td></tr>
+<tr><td>Code string / number / operator</td><td><code>32</code> / <code>33</code> / <code>36</code></td></tr>
+<tr><td>Code punctuation / comment</td><td><code>90</code> / <code>3;90</code></td></tr>
+</tbody></table>
+<p>See also: <code>docs/contribution-guardrails.md</code> for contributor-facing invariants and test mapping.</p>
+<h3 id="examples-1">Examples</h3>
+<p>Pipeline-safe capture of final output:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> result</span><span style="color: #CBA6F7;"> =</span><span> (</span><span style="color: #A6E3A1;">&quot;Summarize repo&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> --</span><span style="color: #EBA0AC;font-style: italic;">quiet</span><span>)</span></span>
+<span class="giallo-l"><span>$result._meta.usage.total_tokens</span></span></code></pre>
+<p>Interactive debugging with detailed stderr UX:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="nushell"><span class="giallo-l"><span style="color: #A6E3A1;">&quot;Investigate failures&quot;</span><span style="color: #CBA6F7;"> |</span><span style="color: #F9E2AF;font-style: italic;"> agent</span><span style="color: #CBA6F7;"> -</span><span style="color: #EBA0AC;font-style: italic;">vv</span></span></code></pre><h3 id="busy-indicator-behavior">Busy indicator behavior</h3>
+<ul>
+<li>Busy state is shown via spinner on interactive TTY stderr.</li>
+<li>Default UX does <strong>not</strong> print redundant persistent busy lines like "thinking" or "response ready".</li>
+<li>Default tool lifecycle UX is concise and singular:
+<ul>
+<li>busy: <code>[spinner] tool &lt;tool_name&gt; args=&lt;truncated_args&gt;</code> while running</li>
+<li>completion: <code>✓ tool &lt;tool_name&gt; args=&lt;truncated_args&gt;</code> or <code>✗ tool &lt;tool_name&gt; args=&lt;truncated_args&gt;</code> exactly once</li>
+<li>result payload follows on next line(s) as a separate block when meaningful</li>
+</ul>
+</li>
+<li>Concise levels print non-empty payloads verbatim (including <code>null</code>, <code>[]</code>, and <code>{}</code>).</li>
+<li>In non-interactive stderr (non-TTY), spinner is disabled and only policy-driven persistent lines are shown.</li>
+</ul>
+
+        
+        
+<div class="docs-navigation d-flex justify-content-between">
+  
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+          
+        
+      
+        
+        
+          
+        
+      
+        
+        
+          
+            
+              
+              <a href="https:&#x2F;&#x2F;ck3mp3r.github.io&#x2F;nu-agent&#x2F;docs&#x2F;getting-started&#x2F;quick-start&#x2F;">
+                <div class="card my-1">
+                  <div class="card-body py-2">
+                    &larr; Quick Start
+                  </div>
+                </div>
+              </a>
+            
+            
+            
+          
+        
+      
+    
+  
+
+  
+  
+  
+  
+  
+    
+    
+    
+      
+      
+        
+      
+    
+      
+      
+        
+      
+    
+      
+      
+        
+          
+          
+          <a class="ms-auto" href="https:&#x2F;&#x2F;ck3mp3r.github.io&#x2F;nu-agent&#x2F;docs&#x2F;integration&#x2F;mcp&#x2F;">
+            <div class="card my-1">
+              <div class="card-body py-2">
+                MCP &rarr;
+              </div>
+            </div>
+          </a>
+          
+          
+          
+        
+      
+    
+  
+</div>
+
+      </main>
+    </div>
+  </div>
+</div>
+
+
+  
+    
+<footer class="footer text-muted">
+	<div class="container">
+		<div class="row">
+			<div class="col-lg-8 order-last order-lg-first">
+				<ul class="list-inline">
+					
+						<li class="list-inline-item"> </li>
+					
+				</ul>
+			</div>
+			<div class="col-lg-8 order-first order-lg-last text-lg-end">
+				<ul class="list-inline">
+					
+				</ul>
+			</div>
+		</div>
+	</div>
+</footer>
+
+  
+
+  
+<script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/js/main.js" defer></script>
+
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/plugins/elasticlunr.min.js" defer></script>
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/search_index.en.js" defer></script>
+  <script type="text/javascript" src="https://ck3mp3r.github.io/nu-agent/js/search.js" defer></script>
+
+  
+</body>
+</html>
