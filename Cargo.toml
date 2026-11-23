@@ -33,9 +33,9 @@ agnt-tui = { path = "crates/agnt-tui" }
 agnt-tty = { path = "crates/agnt-tty" }
 
 # Nu ecosystem
-nu-plugin = "0.116.1"
-nu-protocol = "0.116.1"
-nu-parser = "0.116.1"
+nu-plugin = "0.117.0"
+nu-protocol = "0.117.0"
+nu-parser = "0.117.0"
 
 # LLM / AI
 rig = { version = "0.47", default-features = false, features = ["agent", "derive", "reqwest", "test-utils"] }
@@ -93,10 +93,10 @@ similar = "3.1.1"
 libc = "0.2"
 pulldown-cmark = "0.13"
 unicodeit = "0.2.1"
-htmd = "0.5"
+htmd = "0.6"
 arboard = "3.6"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "regex-fancy", "yaml-load"] }
-noyalib = "0.0.17"
+noyalib = "0.0.63"
 oauth2 = "5.0"
 rand = "0.10.1"
 fs2 = "0.4"
@@ -108,6 +108,6 @@ serial_test = "4.0.1"
 # Architecture assertion suite: Rust sources are parsed, never line-scanned.
 # `printing` is what exposes `syn::spanned::Spanned`; `span-locations` is what
 # makes a parsed span report a real line number.
-syn = { version = "2.0.119", default-features = false, features = ["clone-impls", "full", "parsing", "printing", "visit"] }
+syn = { version = "3.0.10", default-features = false, features = ["clone-impls", "full", "parsing", "printing", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 
