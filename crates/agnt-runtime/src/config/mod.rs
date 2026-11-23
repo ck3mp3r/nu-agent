@@ -27,6 +27,7 @@ pub use models_cache::{ModelSpec, ModelsCache, ProviderSpec};
 pub use paths::{
     ENV_CACHE_HOME, ENV_CONFIG_HOME, ENV_DATA_HOME, ENV_STATE_HOME, Paths, PathsConfig, PathsError,
 };
+pub use rig_memory::CompactionSettings;
 pub use toml_config::{TomlConfigError, load, resolve_hooks};
 pub use types::*;
 pub use vault::{CredentialType, ProviderEntry, Vault, VaultBackendKind, VaultError};

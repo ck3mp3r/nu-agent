@@ -7,7 +7,7 @@
 use super::*;
 
 use crate::bus::Bus;
-use crate::conversation::builder::{AgentRuntimeBuilder, BuildArtifacts, BuildInput};
+use crate::conversation::builder::{AgentRuntimeBuilder, BuildInput};
 use crate::tools::closure::{ClosureParameter, ClosureRegistry, CwdEngine, ResolvedClosure};
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
@@ -79,20 +79,15 @@ fn builtin_names() -> Result<Vec<String>> {
         .collect())
 }
 
-/// Build a runtime with `registry` and `merged_compaction` over a tempdir.
+/// Build a runtime with `registry` over a tempdir.
 async fn build_with(
     registry: &ClosureRegistry,
-    merged_compaction: CompactionConfig,
-) -> Result<(
-    rig::tool::server::ToolServerHandle,
-    BuildArtifacts,
-    tempfile::TempDir,
-)> {
+) -> Result<(rig::tool::server::ToolServerHandle, tempfile::TempDir)> {
     let temp = tempfile::tempdir()?;
     let guard = DataHomeGuard::apply(temp.path());
     let handle = rig::tool::server::ToolServer::new().run();
     let cwd = temp.path().to_path_buf();
-    let artifacts = AgentRuntimeBuilder::new(BuildInput {
+    AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &handle,
         closure_registry: registry,
         cwd: cwd.clone(),
@@ -102,14 +97,13 @@ async fn build_with(
         session: None,
         max_tool_result_bytes: 20_000,
         bus: Bus::default(),
-        merged_compaction,
         audit_log_path: temp.path().join("tool_audit.log"),
     })
     .build()
     .await
     .map_err(|e| format!("build must succeed: {e}"))?;
     drop(guard);
-    Ok((handle, artifacts, temp))
+    Ok((handle, temp))
 }
 
 // endregion: --- Test Support
@@ -121,7 +115,7 @@ async fn build_with_empty_closure_registry_registers_only_builtins() -> Result<(
     let registry = ClosureRegistry::default();
 
     // -- Exec
-    let (handle, _artifacts, _temp) = build_with(&registry, CompactionConfig::default()).await?;
+    let (handle, _temp) = build_with(&registry).await?;
 
     // -- Check
     assert_eq!(
@@ -140,7 +134,7 @@ async fn build_with_one_closure_registers_the_closure_tool() -> Result<()> {
     registry.register("cov_closure".to_string(), resolved_closure());
 
     // -- Exec
-    let (handle, _artifacts, _temp) = build_with(&registry, CompactionConfig::default()).await?;
+    let (handle, _temp) = build_with(&registry).await?;
 
     // -- Check
     let names = registered_names(&handle);
@@ -153,23 +147,5 @@ async fn build_with_one_closure_registers_the_closure_tool() -> Result<()> {
         builtin_names()?.len() + 1,
         "exactly one closure tool must be added to the builtin set"
     );
-    Ok(())
-}
-
-#[tokio::test]
-#[serial_test::serial]
-async fn build_applies_the_merged_compaction_config() -> Result<()> {
-    // -- Setup & Fixtures
-    let registry = ClosureRegistry::default();
-    let merged = CompactionConfig {
-        reserve_pct: Some(40),
-        ..CompactionConfig::default()
-    };
-
-    // -- Exec
-    let (_handle, artifacts, _temp) = build_with(&registry, merged).await?;
-
-    // -- Check
-    assert_eq!(artifacts.merged_compaction.reserve_pct, Some(40));
     Ok(())
 }

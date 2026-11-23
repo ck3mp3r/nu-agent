@@ -70,7 +70,7 @@ impl PickerContainer {
         }
     }
 
-    pub fn open(&mut self, kind: ActivePicker) -> &mut PickerEntry {
+    pub(crate) fn open(&mut self, kind: ActivePicker) -> &mut PickerEntry {
         for e in &mut self.entries {
             e.state.open = false;
         }

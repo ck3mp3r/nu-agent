@@ -230,7 +230,7 @@ async fn test_tools_executor_invoke_closure_survives_audit_log_failure() -> Resu
 }
 
 #[tokio::test]
-async fn test_tools_executor_accessors_expose_engine_and_timeout() -> Result<()> {
+async fn test_tools_executor_accessor_exposes_engine() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
     let executor = executor(
@@ -240,7 +240,6 @@ async fn test_tools_executor_accessors_expose_engine_and_timeout() -> Result<()>
     );
 
     // -- Exec & Check
-    assert_eq!(executor.timeout(), Duration::from_secs(42));
     assert!(
         executor.engine().get_span_contents(Span::unknown()).is_ok(),
         "the engine accessor must expose the injected engine"

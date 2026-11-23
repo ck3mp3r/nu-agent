@@ -1,9 +1,9 @@
 //! The ARCH-6 rows recorded for `agnt-cli`.
 
 pub const ROWS: &[&str] = &[
-    "ARCH-6 agnt-cli/src/dispatch/a2a.rs:70: `run_a2a` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/a2a.rs:69: `run_a2a` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/acp.rs:11: `run_acp` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/agent.rs:63: `run_agent` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/agent.rs:62: `run_agent` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:27: `resolve_config_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:62: `apply_cli_flags_from_clap` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/config.rs:97: `resolve_ui_policy_from_clap` has no consumer outside `agnt-cli`",
@@ -18,7 +18,7 @@ pub const ROWS: &[&str] = &[
     "ARCH-6 agnt-cli/src/dispatch/utility/mcp.rs:23: `run_mcp_command` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/utility/models.rs:14: `run_models_command` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/dispatch/utility/provider.rs:19: `run_provider_command` has no consumer outside `agnt-cli`",
-    "ARCH-6 agnt-cli/src/dispatch/utility/session.rs:23: `run_session_command` has no consumer outside `agnt-cli`",
+    "ARCH-6 agnt-cli/src/dispatch/utility/session.rs:21: `run_session_command` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/error.rs:5: `Result` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/error.rs:9: `Error` has no consumer outside `agnt-cli`",
     "ARCH-6 agnt-cli/src/main.rs:32: `Cli` has no consumer outside `agnt-cli`",

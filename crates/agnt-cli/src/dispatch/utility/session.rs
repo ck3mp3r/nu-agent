@@ -2,9 +2,7 @@
 
 use std::path::PathBuf;
 
-use agnt_runtime::config::CompactionConfig;
-use agnt_runtime::conversation::runtime_build::build_compaction_policy;
-use agnt_runtime::rig_memory::CompactionPolicy;
+use agnt_runtime::config::CompactionSettings;
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::session::prefix::dir_prefix;
 use agnt_runtime::types::{AssistantContent, Message, UserContent};
@@ -118,11 +116,7 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
     println!("Title: {}", view.title.as_deref().unwrap_or(""));
     println!("Model: {}", view.model.as_deref().unwrap_or(""));
     println!("Messages: {}", view.messages.len());
-    let compaction = load_compaction_config();
-    let reserve_pct = compaction
-        .reserve_pct
-        .unwrap_or(agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT);
-    for line in compaction_display(&build_compaction_policy(&compaction), reserve_pct) {
+    for line in compaction_display(&load_compaction_settings()) {
         println!("{line}");
     }
     for repair in &view.repairs {
@@ -143,28 +137,23 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
 
 // region:    --- Support
 
-/// The compaction record lines for a resolved policy and the trigger's knob: the
-/// values the runtime compacts with, not a hardcoded default.
-///
-/// `reserve_pct` is reported instead of the policy's own reserve: the trigger
-/// derives its room from the percent and the turn's model, so the stored
-/// policy's reserve is not what the user configured.
-fn compaction_display(policy: &CompactionPolicy, reserve_pct: u32) -> Vec<String> {
+/// The compaction record lines for the resolved settings: the values the runtime
+/// compacts with, not a hardcoded default. The keys are rig's own, so the three
+/// rows are the whole surface.
+fn compaction_display(settings: &CompactionSettings) -> Vec<String> {
     vec![
-        format!("Compaction keep_recent: {}", policy.keep_recent),
-        format!("Compaction keep_asked: {}", policy.keep_asked),
-        format!("Compaction reserve_pct: {reserve_pct}"),
+        format!("Compaction enabled: {}", settings.enabled),
+        format!("Compaction reserve_tokens: {}", settings.reserve_tokens),
         format!(
-            "Compaction summary_tokens: {}",
-            policy.summarizer.limits.summary_tokens
+            "Compaction keep_recent_tokens: {}",
+            settings.keep_recent_tokens
         ),
-        format!("Compaction keep_tokens: {}", policy.clearing.keep_tokens),
-        format!("Compaction keep_under: {}", policy.clearing.keep_under),
     ]
 }
 
-/// The `[compaction]` block of the user's config, empty when it cannot be read.
-fn load_compaction_config() -> CompactionConfig {
+/// The `[compaction]` block of the user's config, rig's defaults when it cannot
+/// be read or is absent.
+fn load_compaction_settings() -> CompactionSettings {
     agnt_runtime::config::toml_config::load()
         .unwrap_or_default()
         .compaction

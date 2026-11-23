@@ -10,6 +10,7 @@ mod paths;
 mod provider_env;
 mod resolve_model;
 mod resolve_model_overrides;
+mod session_store_config;
 mod session_store_env;
 mod support;
 mod toml_config;

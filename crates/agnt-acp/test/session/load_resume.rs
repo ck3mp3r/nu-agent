@@ -50,12 +50,11 @@ async fn test_session_manager_load_session_registers_session() -> Result<()> {
 
     // -- Exec
     manager.load_session("sess-1", cwd.clone(), &sink).await?;
+
+    // -- Check
     let session = manager
         .get_session("sess-1")
         .ok_or("a loaded session must be live")?;
-
-    // -- Check
-    assert_eq!(session.id(), "sess-1");
     assert_eq!(session.cwd(), cwd.as_path());
     Ok(())
 }

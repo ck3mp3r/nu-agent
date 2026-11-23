@@ -28,12 +28,11 @@ async fn test_session_manager_new_session_registers_session() -> Result<()> {
 
     // -- Exec
     let session_id = manager.new_session(cwd.clone(), Vec::new()).await?;
-    let session = manager
-        .get_session(&session_id)
-        .ok_or("a new session must be retrievable")?;
 
     // -- Check
-    assert_eq!(session.id(), session_id);
+    let session = manager
+        .get_session(&session_id)
+        .ok_or("a new session must be registered under the id it returned")?;
     assert_eq!(session.cwd(), cwd.as_path());
     Ok(())
 }

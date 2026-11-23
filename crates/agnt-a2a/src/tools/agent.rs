@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::{A2aToolContext, ToolResult};
 
-pub async fn handle(ctx: A2aToolContext, _params: Value) -> ToolResult {
+pub(crate) async fn handle(ctx: A2aToolContext, _params: Value) -> ToolResult {
     let peers = ctx.cache.list();
     let own_url = &ctx.own_card.url;
     let result: Vec<Value> = peers

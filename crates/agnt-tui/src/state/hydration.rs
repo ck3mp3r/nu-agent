@@ -14,19 +14,11 @@ use agnt_render::tool_view::ToolView;
 use agnt_runtime::protocol::contracts::{UiMessageSnapshot, project_snapshots};
 use agnt_runtime::protocol::events::{CompactionRecord, SessionRecord, ToolRecord, TurnRecord};
 
-use super::{AppState, PromptFacts};
+use super::{AppState, HISTORY_SOURCE_LABEL, PromptFacts};
 use crate::interaction::cancel::CancelController;
 use crate::interaction::reducer::{Fold, RenderInput, prompt_facts, reduce, release_turn};
 
 // region:    --- Types
-
-/// The source label a rehydrated compaction row carries.
-///
-/// The store persists the summary, not where the sweep came from, so the replay
-/// is what names the row: a rehydrated row reads `history`, a live one reads
-/// `auto` or `slash`. The label belongs to the drawer, and this is the drawer's
-/// replay path saying which row it is drawing.
-const HISTORY_SOURCE_LABEL: &str = "history";
 
 /// A replayed compaction row, folded with the replay label.
 struct ReplayedCompaction<'a> {

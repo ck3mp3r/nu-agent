@@ -5,8 +5,6 @@
 use super::super::*;
 
 use rig::completion::Usage;
-use rig::conversation::Conversation;
-use rig_memory::Prepared;
 
 /// Seed the fixture's rig-memory store with `messages`.
 pub(super) async fn seed_rig(fx: &DecideFixture, messages: &[Message]) -> Result<()> {
@@ -19,16 +17,6 @@ pub(super) async fn seed_rig(fx: &DecideFixture, messages: &[Message]) -> Result
     conversation.extend(messages.iter().cloned());
     rig_memory::save(&*store, "conv-1", &mut conversation)?;
     Ok(())
-}
-
-/// A request as the decision meters it: a conversation's entries and their ids.
-pub(super) fn prepared(conversation: &Conversation) -> Prepared<'_> {
-    Prepared {
-        model: "gpt-4o",
-        prompt: None,
-        tools: &[],
-        history: conversation,
-    }
 }
 
 /// A usage reporting both counters and no total: `context_tokens` answers their

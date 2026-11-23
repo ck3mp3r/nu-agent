@@ -1,0 +1,31 @@
+# nu-agent documentation
+
+> Nushell plugin for running an LLM agent from pipelines — configuration, MCP tooling, hooks, and the architecture docs for contributors.
+
+## Getting started
+
+- [Quick Start](https://ck3mp3r.github.io/nu-agent/docs/getting-started/quick-start/): build the plugin, install it into Nushell, configure a model, and make a first run.
+
+## User guides
+
+- [Usage](https://ck3mp3r.github.io/nu-agent/docs/user/usage/): the `agent` command surface — flags, personas, model roles, pricing, permissions, hooks, and the TUI.
+- [Configuration](https://ck3mp3r.github.io/nu-agent/docs/user/configuration/): config.toml structure, the path ladders, secret storage, the models cache, compaction, and precedence.
+
+## Integration
+
+- [MCP](https://ck3mp3r.github.io/nu-agent/docs/integration/mcp/): MCP servers, transports, tool namespacing, failure recovery, and authentication.
+
+## Architecture
+
+- [Design Choices](https://ck3mp3r.github.io/nu-agent/docs/architecture/design-choices/): the per-change patterns — forbidden crate edges, the kernel as a data plane, producer-ships-data, and text parsed once at the boundary.
+- [Target Architecture](https://ck3mp3r.github.io/nu-agent/docs/architecture/target-architecture/): the ARCH-1 to ARCH-12 assertions a slice is accepted against, and the checks that enforce them.
+- [Bus Channels](https://ck3mp3r.github.io/nu-agent/docs/architecture/bus-channels/): the delivery contract — capacity, drop policy, ordering, and late-subscriber rule — of each kernel bus channel.
+- [Contribution guardrails](https://ck3mp3r.github.io/nu-agent/docs/architecture/contribution-guardrails/): checklists for tool handler, permission UX, and TUI transcript changes.
+
+## Reference
+
+- [Code Coverage](https://ck3mp3r.github.io/nu-agent/docs/reference/coverage/): the cargo-llvm-cov workflow, output formats, and the workspace's test profiles.
+
+## Agent guidance
+
+- [AGENTS.md](https://raw.githubusercontent.com/ck3mp3r/nu-agent/main/AGENTS.md): the repository's agent-facing conventions, commands, and testing law.

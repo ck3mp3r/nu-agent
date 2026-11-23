@@ -4,9 +4,8 @@ use crate::conversation::turn::TurnEnd;
 use crate::orchestrator::events::OrchestratorEvent;
 use crate::session::tool_status::ToolStatus;
 use agnt_kernel::{
-    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind, NoticeRecord,
-    PromptRecord, PromptStamps, SessionRecord, ToolCall, ToolOutcome, ToolRecord, ToolSource,
-    TurnRecord, Usage,
+    CompactionRecord, InferenceId, InferenceRecord, NoticeKind, NoticeRecord, PromptRecord,
+    PromptStamps, SessionRecord, ToolCall, ToolOutcome, ToolRecord, ToolSource, TurnRecord, Usage,
 };
 
 /// The panels every surface shares — the kernel's own closed set, re-exported
@@ -263,7 +262,9 @@ pub fn project_snapshots(
             "tool_display" => {}
             "compaction" => {
                 records.push(SessionRecord::Compaction(CompactionRecord::Completed {
-                    source: CompactionSource::Auto,
+                    // The store persists the summary, not where the sweep came
+                    // from: the replay names no source.
+                    source: None,
                     summary: message.content().to_string(),
                 }));
                 turn_open = true;

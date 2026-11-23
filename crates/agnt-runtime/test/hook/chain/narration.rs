@@ -96,9 +96,9 @@ async fn test_narration_chunks_match_the_events_the_hub_receives() -> Result<()>
     Ok(())
 }
 
-/// A tool turn narrates the call pair: one Started and one Completed record for
-/// the same call, carrying the call's identity and arguments as data — never a
-/// rendered line.
+/// A denied tool turn narrates the call once: one Started and exactly one
+/// Completed record for the same call, carrying the call's identity and
+/// arguments as data — never a rendered line.
 #[tokio::test]
 async fn test_narration_tool_call_narrates_the_started_completed_pair() -> Result<()> {
     // -- Setup & Fixtures
@@ -118,26 +118,26 @@ async fn test_narration_tool_call_narrates_the_started_completed_pair() -> Resul
     // -- Exec
     fixture.turn(true).await?;
 
-    // -- Check
+    // -- Check: the pair opens and closes the call, and closes it once.
     let tool = tool_records(&mut published);
-    let started = tool
-        .iter()
-        .find_map(|record| match record {
-            agnt_kernel::ToolRecord::Started { call } => Some(call),
-            _ => None,
-        })
-        .ok_or("the turn must narrate a started tool record")?;
-    let (call, outcome) = tool
-        .iter()
-        .find_map(|record| match record {
-            agnt_kernel::ToolRecord::Completed { call, outcome } => Some((call, outcome)),
-            _ => None,
-        })
-        .ok_or("the turn must narrate a completed tool record")?;
-    if call.id() != started.id() || call.name.0 != "add" {
-        return Err(
-            format!("the pair must name the same call, started {started:?}, got {call:?}").into(),
-        );
+    if tool.len() != 2 {
+        return Err(format!("a denied call must narrate exactly one pair, got {tool:?}").into());
+    }
+    let agnt_kernel::ToolRecord::Started { call: started } = &tool[0] else {
+        return Err(format!("the pair must open with Started, got {:?}", tool[0]).into());
+    };
+    let agnt_kernel::ToolRecord::Completed {
+        call: settled,
+        outcome,
+    } = &tool[1]
+    else {
+        return Err(format!("the pair must close with Completed, got {:?}", tool[1]).into());
+    };
+    if settled.id() != started.id() || settled.name.0 != "add" {
+        return Err(format!(
+            "the pair must name the same call, started {started:?}, got {settled:?}"
+        )
+        .into());
     }
     if started.arguments != r#"{"x":1,"y":2}"# {
         return Err(format!(
@@ -150,6 +150,17 @@ async fn test_narration_tool_call_narrates_the_started_completed_pair() -> Resul
     // call that never ran: the disposition is the enum, never the denial text.
     if outcome.status != agnt_kernel::ToolStatus::Cancelled {
         return Err(format!("a denied call settles as Cancelled, got {outcome:?}").into());
+    }
+    // The reason rig answered the model with is the row's result text, so the
+    // drawer renders it as the body without joining the gate card.
+    if !outcome.text.starts_with("Permission denied") {
+        return Err(format!(
+            "the completion must carry the denial reason as its result text, got {outcome:?}"
+        )
+        .into());
+    }
+    if outcome.message.is_some() {
+        return Err(format!("a skipped call carries no message, got {outcome:?}").into());
     }
     Ok(())
 }
@@ -238,44 +249,6 @@ async fn test_narration_not_run_dispatch_narrates_the_pair() -> Result<()> {
     }
     if outcome.kind != Some(agnt_kernel::ToolErrorKind::Cancelled) {
         return Err(format!("the completion classifies itself, got {outcome:?}").into());
-    }
-    Ok(())
-}
-
-/// A gate refusal is a different class from a turn stop: both produce no result,
-/// and the record tells them apart by its enumerated kind — never by the text.
-#[tokio::test]
-async fn test_narration_denied_dispatch_classifies_as_denied() -> Result<()> {
-    // -- Setup & Fixtures
-    let bus = Bus::default();
-    let mut published = bus.stream().subscribe();
-    let arguments = r#"{"x":1}"#;
-
-    // -- Exec
-    crate::hook::chain::emit_not_run_dispatch(
-        bus.stream(),
-        crate::hook::chain::NotRunCall {
-            tool_name: "add",
-            source: crate::tools::handler::ToolSource::Builtin,
-            arguments,
-            start: crate::hook::chain::NotRunStart::AlreadyPublished,
-        },
-        crate::hook::chain::NotRunOutcome::Denied { reason: "blocked" },
-    )
-    .await;
-
-    // -- Check
-    let tool = tool_records(&mut published);
-    if tool.len() != 1 {
-        return Err(
-            format!("an already-published start must not be narrated twice, got {tool:?}").into(),
-        );
-    }
-    let agnt_kernel::ToolRecord::Completed { outcome, .. } = &tool[0] else {
-        return Err(format!("the only record must be the completion, got {:?}", tool[0]).into());
-    };
-    if outcome.kind != Some(agnt_kernel::ToolErrorKind::Denied) {
-        return Err(format!("a gate refusal classifies as Denied, got {outcome:?}").into());
     }
     Ok(())
 }

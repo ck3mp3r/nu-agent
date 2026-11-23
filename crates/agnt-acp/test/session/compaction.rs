@@ -73,7 +73,7 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
         source: CompactionSource::Auto,
     }));
     let _ = compaction.publish(SessionRecord::Compaction(CompactionRecord::Completed {
-        source: CompactionSource::Auto,
+        source: Some(CompactionSource::Auto),
         summary: "the session covered the parser rewrite".to_string(),
     }));
     let _ = compaction.publish(SessionRecord::Compaction(CompactionRecord::Failed {

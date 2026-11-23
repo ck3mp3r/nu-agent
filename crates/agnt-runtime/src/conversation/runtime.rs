@@ -155,9 +155,9 @@ where
     /// startup; a switch marks it stale and the model builds at the slot's next
     /// use. The compactor shares this slot's cell by default.
     dyn_model: crate::conversation::state::provider::ModelSlot,
-    /// Hook-driven compaction machinery: the compactor and the percent of the
-    /// model's input limit a decision keeps free below the trigger.
-    compaction: crate::conversation::compaction::CompactionConfig,
+    /// Hook-driven compaction machinery: the compactor with rig's compaction
+    /// settings and the spec its summaries are fitted to.
+    compaction: crate::conversation::compaction::compactor::NuCompactor,
 }
 
 /// Concrete production runtime: all managers use their default state types.
@@ -193,8 +193,8 @@ where
         }
         let slot = self.dyn_model.clone();
         let model = slot.ensure(|| self.provider.build_dyn_model()).await?;
-        self.compaction.compactor.set_model(model);
-        self.compaction.compactor.set_spec(self.compaction_spec());
+        self.compaction.set_model(model);
+        self.compaction.set_spec(self.compaction_spec());
         Ok(())
     }
 
@@ -795,8 +795,8 @@ where
         };
 
         // The undo reads the session's own rig-memory log and writes the
-        // restored conversation back: the entries the newest compaction's aside
-        // names are what comes back. `undo::uncompact` publishes the outcome.
+        // restored conversation back: the entries the newest summary replaced
+        // are what comes back. `undo::uncompact` publishes the outcome.
         let result = crate::conversation::compaction::undo::uncompact(
             &session_id,
             self.session.inner_memory(),
@@ -1195,8 +1195,9 @@ where
 
     // ── Compaction and persona ───────────────────────────────────────
 
-    /// The hook-driven compaction machinery: compactor, policy and threshold.
-    pub fn compaction(&self) -> &crate::conversation::compaction::CompactionConfig {
+    /// The hook-driven compaction machinery: the compactor, carrying rig's
+    /// compaction settings and the spec it is fitted to.
+    pub fn compaction(&self) -> &crate::conversation::compaction::compactor::NuCompactor {
         &self.compaction
     }
 
@@ -1231,7 +1232,6 @@ impl AgentConversationRuntime {
         parts: RuntimeParts,
         config: RuntimeBuildParams,
     ) -> Result<Self, LabeledError> {
-        use super::runtime_build::build_compaction_policy;
         use super::state::mcp::McpState;
         use super::state::permission::PermissionState;
         use crate::config::defaults;
@@ -1268,10 +1268,9 @@ impl AgentConversationRuntime {
         let repetition_guard = active_config
             .repetition_guard
             .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
-        // The summarizer is the active model: the in-place summary, every
-        // side-call, and the notes call all run on it. The planning spec is the
-        // active model's too: rig-memory sizes each summarized portion to its
-        // context window.
+        // The summarizer is the active model: every compaction call and the notes
+        // call run on it. The planning spec is the active model's too: rig-memory
+        // sizes each summarized portion to its context window.
         let compaction_config = &active_config;
         log::info!(
             "compaction model: {}/{} (the active model)",
@@ -1282,16 +1281,14 @@ impl AgentConversationRuntime {
             compaction_config,
             config.plugin_config.as_ref(),
         );
-        // The compaction policy: rig-memory's default with the `[compaction]`
-        // block's overrides on top. The block's `reserve_pct` is not a policy
-        // field: the trigger derives the room it keeps free from the turn's own
-        // spec, so the stored policy keeps rig-memory's reserve.
-        let compaction_block = config
+        // The compaction settings ARE rig's `[compaction]` table: a missing block
+        // leaves rig's own defaults, and a key rig does not define was refused by
+        // the loader, not silently dropped here.
+        let compaction_settings = config
             .plugin_config
             .as_ref()
-            .and_then(|plugin_config| plugin_config.compaction.clone())
+            .and_then(|plugin_config| plugin_config.compaction)
             .unwrap_or_default();
-        let compaction_policy = build_compaction_policy(&compaction_block);
 
         // The shared model is the single point of model identity: the agent is
         // built from it on every turn. It is constructed eagerly at startup so it
@@ -1314,7 +1311,7 @@ impl AgentConversationRuntime {
         let compactor = NuCompactor::from_shared_model(
             compactor_model,
             bus.clone(),
-            compaction_policy,
+            compaction_settings,
             compaction_spec,
         );
 
@@ -1324,12 +1321,7 @@ impl AgentConversationRuntime {
             session.warn_repairs(session_id).await;
         }
 
-        let compaction = crate::conversation::compaction::CompactionConfig {
-            compactor,
-            reserve_pct: compaction_block
-                .reserve_pct
-                .unwrap_or(defaults::DEFAULT_RESERVE_PCT),
-        };
+        let compaction = compactor;
 
         Ok(Self {
             runtime: config.runtime,

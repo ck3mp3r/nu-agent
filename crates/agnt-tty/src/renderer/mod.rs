@@ -414,15 +414,20 @@ impl<W: Write> StderrUiRenderer<W> {
                 &StyleHint::Muted,
                 self.use_color,
             )),
-            CompactionRecord::Completed { source, summary } => Some(style_text(
-                &format!(
-                    "compaction: source={} preview={}",
-                    compaction_source_text(*source),
-                    summary_preview(summary)
-                ),
-                &StyleHint::Success,
-                self.use_color,
-            )),
+            CompactionRecord::Completed { source, summary } => {
+                // A record that names no source is a replayed one: the row shows
+                // its summary alone rather than guessing where the sweep came
+                // from.
+                let preview = summary_preview(summary);
+                let line = match source {
+                    Some(source) => format!(
+                        "compaction: source={} preview={preview}",
+                        compaction_source_text(*source)
+                    ),
+                    None => format!("compaction: preview={preview}"),
+                };
+                Some(style_text(&line, &StyleHint::Success, self.use_color))
+            }
             CompactionRecord::Failed { source, message } => Some(style_text(
                 &format!(
                     "compaction: source={} status=failed message={message}",

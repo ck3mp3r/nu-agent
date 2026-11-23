@@ -4,7 +4,6 @@ use std::sync::Arc;
 use nu_protocol::{LabeledError, Span};
 
 use crate::bus::Bus;
-use crate::config::CompactionConfig;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
@@ -12,33 +11,6 @@ use crate::tools::executor::ToolExecutor;
 use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
-
-// ── Compaction helpers (moved from binary runtime_build.rs) ─────────────────
-
-/// Merge two `CompactionConfig`s with `override_cfg` taking precedence.
-///
-/// For each field, if `override_cfg` has `Some`, use it; otherwise keep `base`.
-/// Both inputs are `Option<&CompactionConfig>` — `None` means "no config from this source".
-pub fn merge_compaction_configs(
-    base: Option<&CompactionConfig>,
-    override_cfg: &CompactionConfig,
-) -> CompactionConfig {
-    let base = base.cloned().unwrap_or_default();
-    CompactionConfig {
-        reserve_pct: override_cfg.reserve_pct.or(base.reserve_pct),
-        summary_tokens: override_cfg.summary_tokens.or(base.summary_tokens),
-        snippet_chars: override_cfg.snippet_chars.or(base.snippet_chars),
-        unknown_window_chars: override_cfg
-            .unknown_window_chars
-            .or(base.unknown_window_chars),
-        keep_recent: override_cfg.keep_recent.or(base.keep_recent),
-        keep_asked: override_cfg.keep_asked.or(base.keep_asked),
-        clearing: override_cfg.clearing.clone().or(base.clearing),
-        tracked: override_cfg.tracked.clone().or(base.tracked),
-        prompts: override_cfg.prompts.clone().or(base.prompts),
-        near_window: override_cfg.near_window.or(base.near_window),
-    }
-}
 
 // ── Tool definitions (moved from binary tool_defs.rs) ───────────────────────
 
@@ -533,16 +505,9 @@ pub struct BuildInput<'a> {
     pub max_tool_result_bytes: usize,
     /// Signal bus for tool cancellation and events.
     pub bus: Bus,
-    /// Already-merged compaction config (defaults ← plugin config ← CLI flags).
-    pub merged_compaction: CompactionConfig,
     /// The resolved tool audit log file
     /// ([`Paths::audit_log_path`](crate::config::Paths::audit_log_path)).
     pub audit_log_path: PathBuf,
-}
-
-/// Artifacts produced by the builder's `build()` call.
-pub struct BuildArtifacts {
-    pub merged_compaction: CompactionConfig,
 }
 
 /// Builder that registers all agent tools and wires multi-agent infrastructure.
@@ -560,10 +525,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
     }
 
     /// Register all tools and wire multi-agent infrastructure.
-    ///
-    /// Returns `BuildArtifacts` containing the merged compaction config and
-    /// the per-tool render registry.
-    pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
+    pub async fn build(self) -> Result<(), LabeledError> {
         use crate::hook::adapter::closure::adapt_closures;
 
         let BuildInput {
@@ -576,7 +538,6 @@ impl<'a> AgentRuntimeBuilder<'a> {
             session: _,
             max_tool_result_bytes,
             bus,
-            merged_compaction,
             audit_log_path,
         } = self.input;
 
@@ -610,11 +571,6 @@ impl<'a> AgentRuntimeBuilder<'a> {
             LabeledError::new("Invalid builtin tool name").with_label(e.to_string(), span)
         })?;
 
-        // Validate the merged compaction config
-        merged_compaction.validate().map_err(|msg| {
-            LabeledError::new("Compaction config validation failed").with_label(msg, span)
-        })?;
-
         for def in builtin_defs {
             crate::tools::handler::builtin_tool::register_builtin(
                 def,
@@ -626,7 +582,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
             .await;
         }
 
-        Ok(BuildArtifacts { merged_compaction })
+        Ok(())
     }
 }
 

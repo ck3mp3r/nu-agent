@@ -138,7 +138,7 @@ impl TokenUsage {
 }
 
 impl IdentityState {
-    pub fn active_agent_identity(&self) -> Option<&str> {
+    pub(crate) fn active_agent_identity(&self) -> Option<&str> {
         self.active_agent_identity.as_deref()
     }
 

@@ -31,6 +31,18 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         let bus = self.bus.clone();
 
         async move {
+            // An overflow refusal schedules the next request's compaction: the
+            // provider refused this request as too long, so the conversation no
+            // longer fits the model and the next request must be summarized
+            // first. Auto-resend is out of scope — the turn fails and the next
+            // turn fits.
+            if matches!(event.kind, rig::effect::EffectKind::Completion { .. })
+                && let Err(report) = event.outcome
+                && crate::conversation::turn::error::classify_report(report)
+                    == crate::conversation::turn::executor::CompletionErrorKind::ContextOverflow
+            {
+                self.compaction.mark_overflowed();
+            }
             // Tool branch: structural success, persisted verdict, transcript
             // event, and circuit-breaker tracking.
             if let Some(result) = event.tool_result() {
@@ -141,8 +153,9 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                     || usage.total_tokens.is_some();
                 if reports_usage {
                     // Store the meter's usage: the provider's own report, which
-                    // `next_request_tokens` reads through the entry the decision
-                    // metered. A usage with no context count anchors nothing.
+                    // the next decision reads as the anchor's reported input
+                    // tokens, through the entry the decision metered. A usage
+                    // with no context count anchors nothing.
                     if usage.context_tokens().is_some() {
                         self.meter.record_usage(usage);
                     }
@@ -221,28 +234,6 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                         },
                     ));
                 }
-                // The patched call's reply IS the summary this turn asked for.
-                // Validate it where the answer settles and leave the verdict
-                // for the executor's between-runs splice; a call the decision
-                // never patched is left alone. A reply that cannot be a summary
-                // is replaced by one asked on its own, so the turn's second pass
-                // still opens on a summarized conversation.
-                self.pending_summary.settle(response);
-                let path = super::CompactionPath::new(
-                    self.memory.as_ref(),
-                    &self.compaction,
-                    &self.meter,
-                    &self.store_latch,
-                    &self.model,
-                );
-                super::compaction::settle_fallback(
-                    &self.conversation_id,
-                    &path,
-                    &self.pending_summary,
-                    bus.stream(),
-                    bus.lifecycle(),
-                )
-                .await;
             }
 
             OutcomeAction::proceed()

@@ -75,7 +75,7 @@ impl CommandPaletteAction {
         Self::Theme,
     ];
 
-    pub fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Compact => "/compact",
             Self::Help => "Help",
@@ -89,7 +89,7 @@ impl CommandPaletteAction {
         }
     }
 
-    pub fn summary(&self) -> &'static str {
+    pub(crate) fn summary(&self) -> &'static str {
         match self {
             Self::Compact => "Run /compact now",
             Self::Help => "View key help",
@@ -154,7 +154,7 @@ pub enum McpServerUsabilityState {
 }
 
 impl McpServerUsabilityState {
-    pub fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Enabled => "enabled",
             Self::Disabled => "disabled",

@@ -1,4 +1,4 @@
-use super::*;
+use super::namespaced_support::NamespacedTool;
 use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
 use crate::types::{EmptyToolName, ToolName};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};

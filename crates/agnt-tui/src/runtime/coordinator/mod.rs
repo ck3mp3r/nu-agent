@@ -183,7 +183,11 @@ impl RuntimeCoordinator {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "../../../test/runtime/coordinator.rs"]
+#[path = "../../../test/runtime/coordinator/cancel_fold.rs"]
+mod cancel_fold_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/coordinator/test.rs"]
 mod coordinator_test;
 
 // endregion: --- Tests

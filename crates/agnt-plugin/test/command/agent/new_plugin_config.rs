@@ -371,7 +371,8 @@ GIT_PAGER = ""
 
 #[test]
 fn docs_usage_flag_reference_excludes_removed_flags() -> Result<()> {
-    let usage_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
+    let usage_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/content/docs/user/usage.md");
     let usage = std::fs::read_to_string(&usage_path).map_err(|e| format!("{e:?}"))?;
 
     // Extract the agent `## Flag reference` section only — subcommand flags

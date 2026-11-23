@@ -166,8 +166,11 @@ fn uncompacted_record_closes_the_block_and_reports_the_undo() {
         .map(entry_text)
         .collect();
     assert!(
-        texts.iter().any(|text| text.contains("Compaction undone")),
-        "the undo must leave a notice row, got: {texts:?}"
+        texts.contains(
+            &"Compaction undone: the restored messages are the context the next turn runs on"
+                .to_string()
+        ),
+        "the undo must leave the drawer's own notice row, got: {texts:?}"
     );
     assert!(
         !coordinator.state().compaction.in_progress(),
@@ -210,6 +213,37 @@ fn switch_settles_the_departed_sessions_compaction_indicator() {
 }
 
 #[test]
+fn completed_record_without_source_draws_the_replay_label() {
+    // -- Setup & Fixtures
+    let summary_body = "## Summary\n- alpha";
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
+    coordinator.fold_record(&SessionRecord::Compaction(CompactionRecord::Completed {
+        source: None,
+        summary: summary_body.to_string(),
+    }));
+
+    // -- Check: the record names no source, so the drawer labels the row the way
+    // it labels a replayed one, and the summary body stands.
+    let texts: Vec<String> = coordinator
+        .state()
+        .transcript
+        .entries()
+        .iter()
+        .map(entry_text)
+        .collect();
+    assert!(
+        texts.contains(&"Compaction · history".to_string()),
+        "a record that names no source draws as history: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("- alpha")),
+        "the summary body renders: {texts:?}"
+    );
+}
+
+#[test]
 fn hydration_compaction_matches_live_rendering() {
     let summary_body = "## Summary\n- alpha\n- beta";
 
@@ -219,7 +253,7 @@ fn hydration_compaction_matches_live_rendering() {
         source: CompactionSource::Auto,
     }));
     live.fold_record(&SessionRecord::Compaction(CompactionRecord::Completed {
-        source: CompactionSource::Auto,
+        source: Some(CompactionSource::Auto),
         summary: summary_body.to_string(),
     }));
 

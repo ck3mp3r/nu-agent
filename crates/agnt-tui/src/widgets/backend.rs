@@ -44,11 +44,6 @@ impl RatatuiBackend {
         &self.buffer
     }
 
-    /// Drop every painted cell, so the backend can paint a fresh frame.
-    pub fn clear(&mut self) {
-        self.buffer.reset();
-    }
-
     /// Set the frame's clock reading for the status spinner.
     pub fn set_now_millis(&mut self, now_millis: u128) {
         self.now_millis = now_millis;
@@ -136,3 +131,11 @@ fn reset_area(buf: &mut Buffer, area: Rect) {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/widgets/backend/support.rs"]
+mod support;
+
+// endregion: --- Tests

@@ -42,7 +42,7 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
         .map_err(|e| format!("publish chunk ab: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Compaction(CompactionRecord::Completed {
-            source: CompactionSource::Auto,
+            source: Some(CompactionSource::Auto),
             summary: "ab".to_string(),
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;

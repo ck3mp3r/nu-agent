@@ -35,7 +35,7 @@ pub struct IncomingTask {
 
 impl IncomingTask {
     /// Joins the `Part::Text` parts of the message with a single space.
-    pub fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         self.message
             .parts
             .iter()

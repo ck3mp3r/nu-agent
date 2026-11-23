@@ -314,7 +314,7 @@ impl AgentLifecycle {
     ///
     /// Takes ownership of `agent_tx` so [`drain`](Self::drain) can close the
     /// channel and let the runners finish.
-    pub async fn start<P>(
+    pub(crate) async fn start<P>(
         agent_tx: AgentTx,
         mode: &str,
         hooks: &[ResolvedHook],
@@ -359,7 +359,7 @@ impl AgentLifecycle {
     }
 
     /// Publish `AgentEvent::Shutdown` with `reason`.
-    pub async fn shutdown(&self, reason: &str) {
+    pub(crate) async fn shutdown(&self, reason: &str) {
         let _ = self
             .tx
             .send(AgentEvent::Shutdown {
@@ -374,7 +374,7 @@ impl AgentLifecycle {
     /// a runner still busy when its wait expires is abandoned. The wait is one
     /// deadline shared by every runner, so N runners never delay exit past
     /// [`HOOK_DRAIN_TIMEOUT`].
-    pub async fn drain(self) -> usize {
+    pub(crate) async fn drain(self) -> usize {
         let drained = self.handles.len();
         drop(self.tx);
         let deadline = tokio::time::Instant::now() + HOOK_DRAIN_TIMEOUT;

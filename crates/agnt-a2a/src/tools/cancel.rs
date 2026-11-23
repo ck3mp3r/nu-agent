@@ -3,7 +3,7 @@ use serde_json::Value;
 use super::{A2aToolContext, ToolResult};
 use crate::*;
 
-pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
+pub(crate) async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
     let task_id = params
         .get("taskId")
         .and_then(|v| v.as_str())

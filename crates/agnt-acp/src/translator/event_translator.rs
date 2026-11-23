@@ -107,7 +107,7 @@ impl EventTranslator {
             )),
             TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Started {
                 source,
-            })) => Some(compaction_update("started", *source, None)),
+            })) => Some(compaction_update("started", Some(*source), None)),
             TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Completed {
                 source,
                 summary,
@@ -119,10 +119,14 @@ impl EventTranslator {
             TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Failed {
                 source,
                 message,
-            })) => Some(compaction_update("failed", *source, Some(message.clone()))),
+            })) => Some(compaction_update(
+                "failed",
+                Some(*source),
+                Some(message.clone()),
+            )),
             TranslateInput::Record(SessionRecord::Compaction(CompactionRecord::Uncompacted {
                 source,
-            })) => Some(compaction_update("undone", *source, None)),
+            })) => Some(compaction_update("undone", Some(*source), None)),
             // Mid-turn notices (context-window pressure, repetition steering)
             // reach the client as assistant text. The texts are self-describing,
             // so no prefix is added. A turn error is not a client-facing fact in

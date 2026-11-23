@@ -5,7 +5,7 @@
 use crate::session::{RigStoreConfig, StoreType, create_rig_store_in};
 use crate::types::Message;
 use rig::completion::message::{DocumentSourceKind, ImageMediaType, UserContent};
-use rig_memory::{Files, load_images, store_images};
+use rig_memory::Files;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -17,22 +17,23 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// An image is saved as a blob named by its content and read back.
 #[tokio::test]
-async fn test_rig_store_images_round_trip_as_blobs() -> Result<()> {
+async fn test_rig_save_round_trips_an_image_as_a_blob() -> Result<()> {
     // -- Setup & Fixtures
     let store = RigStoreConfig::in_memory().open("session-blobs").await?;
     let bytes = b"hi";
-    let message = image_message(bytes);
     let name = format!("{}.png", hex(Sha256::digest(bytes).as_slice()));
+    let mut conversation = rig_memory::load(&*store, "session-blobs")?;
+    conversation.push(image_message(bytes));
 
-    // -- Exec: the saved message names the blob instead of holding the data
-    let saved = store_images(&message, &*store)?;
+    // -- Exec: the save writes the image's data as a blob
+    rig_memory::save(&*store, "session-blobs", &mut conversation)?;
 
-    // -- Check: the saved image names the blob
-    let saved_image = saved.images().next().ok_or("the image is there")?;
-    match &saved_image.data {
-        DocumentSourceKind::Url(url) => assert_eq!(url, &format!("blob:{name}")),
-        other => return Err(format!("expected a blob url, got {other:?}").into()),
-    }
+    // -- Check: the saved entry names the blob instead of holding the data
+    let log = String::from_utf8(store.read_log("session-blobs")?)?;
+    assert!(
+        log.contains(&format!("blob:{name}")),
+        "the saved entry must name the blob, got: {log}"
+    );
 
     // -- Check: the blob file is there, named by the content
     assert_eq!(store.read_file(&format!("blobs/{name}"))?, bytes);
@@ -41,12 +42,15 @@ async fn test_rig_store_images_round_trip_as_blobs() -> Result<()> {
         "the blob is one of the session's files"
     );
 
-    // -- Exec: reading the message puts the data back
-    let mut restored = saved.into_owned();
-    load_images(&mut restored, &*store)?;
+    // -- Exec: reading the log puts the data back
+    let restored = rig_memory::load(&*store, "session-blobs")?;
 
     // -- Check: the image holds the data again
-    let restored_image = restored.images().next().ok_or("the image is there")?;
+    let entry = restored
+        .entries()
+        .next()
+        .ok_or("the image message is in the conversation")?;
+    let restored_image = entry.message.images().next().ok_or("the image is there")?;
     match &restored_image.data {
         DocumentSourceKind::Base64(data) => assert_eq!(data, "aGk="),
         other => return Err(format!("expected base64 data, got {other:?}").into()),
@@ -64,7 +68,9 @@ async fn test_rig_store_blobs_survive_a_reopened_store() -> Result<()> {
     let rig = RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(temp.path());
     let written = {
         let store = rig.open("session-blobs-reopened").await?;
-        store_images(&image_message(bytes), &*store)?;
+        let mut conversation = rig_memory::load(&*store, "session-blobs-reopened")?;
+        conversation.push(image_message(bytes));
+        rig_memory::save(&*store, "session-blobs-reopened", &mut conversation)?;
         store.files()?
     };
 

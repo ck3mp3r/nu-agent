@@ -72,11 +72,6 @@ impl FileBackend {
 
     // --- Accessors ---
 
-    /// The file this backend reads and writes.
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
-
     /// Resolve `$XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json` from an explicit env
     /// map.
     ///

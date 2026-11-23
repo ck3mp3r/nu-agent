@@ -139,9 +139,11 @@ pub struct PluginConfig {
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
 
-    /// Compaction configuration (optional, uses defaults if not set)
+    /// Compaction configuration, rig-memory's own `[compaction]` table: a
+    /// serde passthrough, so the keys, the defaults and the refusal of
+    /// anything else are rig's.
     #[serde(default)]
-    pub compaction: Option<CompactionConfig>,
+    pub compaction: Option<rig_memory::CompactionSettings>,
 
     /// Agent persona configuration
     #[serde(default)]
@@ -190,45 +192,6 @@ pub struct PluginConfig {
     pub paths: Option<PathsConfig>,
 }
 
-/// All fields are `Option` — `None` means "use default".
-///
-/// The `[compaction]` keys mirror rig-memory's own compaction policy table, with
-/// one exception: `reserve_pct` is ours. It is the percent of the model's input
-/// limit the compaction trigger keeps free, range-checked here. Every other key
-/// is optional: a missing key is rig-memory's default, and rig owns the meaning
-/// of the value.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CompactionConfig {
-    /// Percent of the model's input limit kept free below the compaction
-    /// trigger, 0..=100. Unset keeps our default of 20.
-    pub reserve_pct: Option<u32>,
-    /// The longest summary asked for, in tokens (rig-memory default: 32000).
-    pub summary_tokens: Option<u64>,
-    /// Characters of a tool's output or arguments the summarizer sees
-    /// (rig-memory default: 2000).
-    pub snippet_chars: Option<usize>,
-    /// Characters of conversation sent when the window is unknown
-    /// (rig-memory default: 400000).
-    pub unknown_window_chars: Option<usize>,
-    /// Tokens of the newest messages an automatic compaction keeps verbatim
-    /// (rig-memory default: 20000).
-    pub keep_recent: Option<usize>,
-    /// Tokens of the newest messages a compaction the user asked for keeps
-    /// verbatim (rig-memory default: 0).
-    pub keep_asked: Option<usize>,
-    /// How old tool outputs are cleared before a summary is asked for.
-    pub clearing: Option<rig_memory::ClearToolOutputs>,
-    /// The tool arguments tracked across compactions.
-    pub tracked: Option<Vec<rig_memory::TrackArgument>>,
-    /// The summarizer's prompts.
-    pub prompts: Option<rig_memory::SummaryPrompts>,
-    /// What a near-window compaction does instead of summarizing: `summarize`
-    /// writes notes on the outputs it clears, `clear` clears them silently
-    /// (rig-memory default: summarize).
-    pub near_window: Option<rig_memory::NearWindow>,
-}
-
 /// The type of session store backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StoreType {
@@ -256,13 +219,15 @@ impl FromStr for StoreType {
 }
 
 /// Configuration for session store backend selection.
+///
+/// An unknown key is a hard error, not a silent no-op: a key this struct does
+/// not name would otherwise sit in `config.toml` and override nothing.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StoreTypeConfig {
     /// Session store backend type: sqlite or memory
     #[serde(default)]
     pub store_type: StoreType,
-    /// Optional custom path for the session store
-    pub path: Option<String>,
 }
 
 /// A lifecycle event a user hook can subscribe to.
@@ -438,22 +403,6 @@ pub struct ResolvedHook {
     pub events: Vec<HookEvent>,
     pub script: PathBuf,
     pub timeout: Duration,
-}
-
-impl CompactionConfig {
-    /// Validate the compaction configuration.
-    ///
-    /// Rules:
-    /// - `reserve_pct` must be in 0..=100 if set
-    pub fn validate(&self) -> Result<(), String> {
-        if let Some(pct) = self.reserve_pct
-            && pct > 100
-        {
-            return Err(format!("reserve_pct must be between 0 and 100, got {pct}"));
-        }
-
-        Ok(())
-    }
 }
 
 /// Runtime configuration for a specific invocation

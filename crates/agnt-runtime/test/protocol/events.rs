@@ -142,7 +142,7 @@ fn test_records_stream_vocabulary_covers_every_family() -> Result<()> {
             aggregated: "sum".to_string(),
         }),
         SessionRecord::Compaction(CompactionRecord::Completed {
-            source: CompactionSource::Auto,
+            source: Some(CompactionSource::Auto),
             summary: "sum".to_string(),
         }),
         SessionRecord::Compaction(CompactionRecord::Failed {

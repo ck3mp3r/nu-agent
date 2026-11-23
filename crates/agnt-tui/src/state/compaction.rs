@@ -10,6 +10,14 @@ use agnt_render::transcript::renderer::ItemStatus;
 /// The name the compaction task's call line carries.
 const COMPACTION_TASK: &str = "Compaction";
 
+/// The source label a compaction row carries when the record names no source.
+///
+/// A replayed completion is the case: the store persists the summary, not where
+/// the sweep came from, so the drawer names the row `history`. A live one reads
+/// `auto` or `slash`. The label belongs to the drawer, and this is the drawer
+/// saying which row it is drawing.
+pub(crate) const HISTORY_SOURCE_LABEL: &str = "history";
+
 /// Compaction-domain state extracted from `AppState`: the compaction block
 /// rows tracked per source.
 #[derive(Debug, Clone, Default)]

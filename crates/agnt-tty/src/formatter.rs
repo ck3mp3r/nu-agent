@@ -54,7 +54,7 @@ pub struct ToolEndView<'a> {
 }
 
 impl ToolEndView<'_> {
-    pub fn format(&self) -> String {
+    pub(crate) fn format(&self) -> String {
         let ToolEndView {
             verbosity,
             name,

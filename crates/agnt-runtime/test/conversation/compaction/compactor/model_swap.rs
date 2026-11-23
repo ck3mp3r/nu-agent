@@ -7,7 +7,7 @@ async fn set_model_swaps_the_model_used_by_the_next_compact_call() -> Result<()>
     seed(&*store)?;
     let bus = Bus::default();
     let old_model = stream_model(&["old summary"]);
-    let compactor = NuCompactor::new(old_model.erase(), bus, test_policy(), Some(test_spec()?));
+    let compactor = NuCompactor::new(old_model.erase(), bus, test_settings(), Some(test_spec()?));
 
     // The new model is scripted to produce a distinct summary; keep a clone to
     // inspect the recorded request after the swap.
@@ -16,12 +16,7 @@ async fn set_model_swaps_the_model_used_by_the_next_compact_call() -> Result<()>
 
     // -- Exec
     let outcome = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?
         .ok_or("compaction should have run")?;
 
@@ -59,19 +54,14 @@ async fn the_slot_holds_the_switched_model_at_the_next_compaction_call() -> Resu
     let compactor = NuCompactor::from_shared_model(
         Arc::clone(&shared_arc),
         bus,
-        test_policy(),
+        test_settings(),
         Some(test_spec()?),
     );
 
     // -- Exec: compact once, then switch the shared slot and grow the
     // conversation for a second compaction.
     let first = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?
         .ok_or("the first compaction should have run")?;
     seed(&*store)?;
@@ -80,12 +70,7 @@ async fn the_slot_holds_the_switched_model_at_the_next_compaction_call() -> Resu
         .lock()
         .map_err(|_| "shared model mutex not poisoned")? = new_model.clone().erase();
     let second = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?
         .ok_or("the second compaction should have run")?;
 
@@ -126,7 +111,7 @@ async fn from_shared_model_compactor_uses_model_swapped_on_the_shared_arc() -> R
     let compactor = NuCompactor::from_shared_model(
         Arc::clone(&shared_arc),
         bus,
-        test_policy(),
+        test_settings(),
         Some(test_spec()?),
     );
 
@@ -139,12 +124,7 @@ async fn from_shared_model_compactor_uses_model_swapped_on_the_shared_arc() -> R
 
     // -- Exec
     let outcome = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?
         .ok_or("compaction should have run")?;
 

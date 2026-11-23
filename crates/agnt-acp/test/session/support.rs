@@ -3,6 +3,22 @@
 //! Holds the imports and the helpers every topical session test file needs.
 //! Sub-files pull them in with `use super::*;`.
 
+// region:    --- Modules
+
+#[path = "support/accessors.rs"]
+mod accessors;
+
+#[path = "support/managers.rs"]
+mod managers;
+
+#[path = "support/sinks.rs"]
+mod sinks;
+
+pub(super) use managers::*;
+pub(super) use sinks::*;
+
+// endregion: --- Modules
+
 pub(super) use std::collections::HashMap;
 pub(super) use std::path::{Path, PathBuf};
 pub(super) use std::sync::{Arc, Mutex};
@@ -36,6 +52,7 @@ pub(super) use agnt_runtime::types::Message;
 pub(super) use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::*;
+use tokio::sync::Mutex as AsyncMutex;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -184,16 +201,19 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             ProviderState::with_client(config.clone(), CachedProviderClient::Mock(model));
         let engine: Arc<dyn agnt_runtime::tools::closure::EngineInterfaceLike> =
             Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string()));
-        // The composed runtime derives the compaction room from the block's
-        // `reserve_pct` and the turn's own spec, so the builder states its token
-        // count as the percent of that window the count leaves free.
-        let reserve_pct = self.threshold_tokens.map(|tokens| {
-            ((MOCK_CONTEXT_TOKENS.saturating_sub(tokens)) * 100 / MOCK_CONTEXT_TOKENS) as u32
-        });
+        // The composed runtime gates on rig's `reserve_tokens` and the turn's own
+        // spec, so the builder states how many tokens of that window the decision
+        // must leave free for the count it wants to trip it.
+        let reserve_tokens = self
+            .threshold_tokens
+            .map(|tokens| MOCK_CONTEXT_TOKENS.saturating_sub(tokens) as u64);
         let plugin_config = agnt_runtime::config::PluginConfig {
-            compaction: Some(agnt_runtime::config::CompactionConfig {
-                reserve_pct,
-                ..Default::default()
+            compaction: Some(agnt_runtime::config::CompactionSettings {
+                reserve_tokens: reserve_tokens.unwrap_or_default(),
+                enabled: reserve_tokens.is_some(),
+                // Keeps only the newest message — the turn's prompt — so the
+                // side-call summarizes rather than finding nothing to do.
+                keep_recent_tokens: 1,
             }),
             ..Default::default()
         };
@@ -277,279 +297,5 @@ impl RuntimeBuilder for FailingRuntimeBuilder {
         _params: AcpRuntimeParams,
     ) -> crate::error::Result<AgentConversationRuntime> {
         Err(AcpError::Config("no runtime for this test".to_string()))
-    }
-}
-
-/// The rig-memory store config the manager reads conversations from.
-///
-/// File-backed under `dir`, so every `open` reaches the same database.
-pub(super) fn rig_config(dir: &Path) -> RigStoreConfig {
-    RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(dir)
-}
-
-/// The application paths of a session test rooted at `dir`.
-///
-/// The config file and the persona dir sit under `dir`, so the manager never
-/// reads the user's real config or persona files.
-pub(super) fn test_paths(dir: &Path) -> agnt_runtime::config::Paths {
-    agnt_runtime::config::Paths {
-        config_path: dir.join("config.toml"),
-        dotenv_path: dir.join(".env"),
-        agents_dir: dir.join("agents"),
-        copilot_token_dir: dir.join("github_copilot"),
-        store_path: dir.join("sessions.db"),
-        log_dir: dir.join("logs"),
-        audit_log_path: dir.join("tool_audit.log"),
-        secrets_path: dir.join("secrets.json"),
-        models_cache_path: dir.join("models.json"),
-        theme_path: dir.join("theme.json"),
-        grammar_cache_dir: dir.join("tree-sitter"),
-    }
-}
-
-pub(super) async fn manager(dir: &Path) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
-    Ok(AcpSessionManager::with_runtime_builder(
-        rig_config(dir),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder::default(),
-    ))
-}
-
-/// A manager whose runtime builder is `builder`, so a test can configure the
-/// mock model's script and the chain's compaction threshold.
-pub(super) async fn manager_with_builder(
-    dir: &Path,
-    builder: MockRuntimeBuilder,
-) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
-    Ok(AcpSessionManager::with_runtime_builder(
-        rig_config(dir),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        builder,
-    ))
-}
-
-pub(super) fn session_cwd(dir: &Path, name: &str) -> Result<PathBuf> {
-    let cwd = dir.join(name);
-    std::fs::create_dir_all(&cwd)?;
-    Ok(cwd)
-}
-
-/// A manager whose runtime builder uses `bus` for every session it builds.
-///
-/// Lets a test subscribe to the session channel before a session is opened, so
-/// the `LifecycleEvent` the manager publishes is not missed.
-pub(super) async fn manager_with_bus(
-    dir: &Path,
-    bus: Bus,
-) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
-    Ok(AcpSessionManager::with_runtime_builder(
-        rig_config(dir),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder {
-            bus: Some(bus),
-            ..MockRuntimeBuilder::default()
-        },
-    ))
-}
-
-/// A manager whose runtime builder uses `bus`, plus the rig-memory store config
-/// it reads conversations from.
-pub(super) async fn manager_with_bus_and_rig_store(
-    dir: &Path,
-    bus: Bus,
-) -> Result<(AcpSessionManager<MockRuntimeBuilder>, RigStoreConfig)> {
-    let rig = rig_config(dir);
-    let manager = AcpSessionManager::with_runtime_builder(
-        rig.clone(),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder {
-            bus: Some(bus),
-            ..MockRuntimeBuilder::default()
-        },
-    );
-    Ok((manager, rig))
-}
-
-/// A manager whose builder seeds `input`/`output` tokens into the runtime of
-/// `session_id`, so two sessions can carry distinct cumulative totals.
-pub(super) async fn manager_with_usage_for_session(
-    dir: &Path,
-    bus: Bus,
-    session_id: &str,
-    input: u64,
-    output: u64,
-) -> Result<(AcpSessionManager<MockRuntimeBuilder>, RigStoreConfig)> {
-    let rig = rig_config(dir);
-    let manager = AcpSessionManager::with_runtime_builder(
-        rig.clone(),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder {
-            bus: Some(bus),
-            ..MockRuntimeBuilder::default()
-        }
-        .with_usage_for_session(session_id, input, output),
-    );
-    Ok((manager, rig))
-}
-
-/// A manager plus the rig-memory store config it reads conversations from, so a
-/// test can seed a persisted session.
-pub(super) async fn manager_with_rig_store(
-    dir: &Path,
-) -> Result<(AcpSessionManager<MockRuntimeBuilder>, RigStoreConfig)> {
-    let rig = rig_config(dir);
-    let manager = AcpSessionManager::with_runtime_builder(
-        rig.clone(),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder::default(),
-    );
-    Ok((manager, rig))
-}
-
-/// Persist a two-message conversation under `session_id` in the rig store.
-pub(super) async fn seed_session(rig: &RigStoreConfig, session_id: &str) -> Result<()> {
-    let store = rig
-        .open(session_id)
-        .await
-        .map_err(|e| format!("should open rig store: {e:?}"))?;
-    let mut conversation = rig_memory::load(&*store, session_id)
-        .map_err(|e| format!("should load rig conversation: {e:?}"))?;
-    conversation.extend([
-        Message::user("hello".to_string()),
-        Message::assistant("hi there".to_string()),
-    ]);
-    rig_memory::save(&*store, session_id, &mut conversation)
-        .map_err(|e| format!("should seed rig conversation: {e:?}"))?;
-    Ok(())
-}
-
-/// A live in-memory `ConnectionTo<Client>` for tests that need a client handle.
-///
-/// The connection runs over an in-memory channel: no transport, no network, no
-/// subprocess. The returned peer keeps the channel open for the test's lifetime.
-pub(super) async fn client_connection() -> Result<(ConnectionTo<Client>, Channel)> {
-    let (channel, peer) = Channel::duplex();
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let _ = Agent
-            .builder()
-            .connect_with(channel, async move |cx| {
-                let _ = tx.send(cx);
-                std::future::pending::<()>().await;
-                Ok(())
-            })
-            .await;
-    });
-    let connection = rx.await?;
-    Ok((connection, peer))
-}
-
-/// A manager whose runtime builder records the `client_fs` of every build.
-pub(super) async fn manager_capturing_client_fs(
-    dir: &Path,
-) -> Result<(
-    AcpSessionManager<MockRuntimeBuilder>,
-    Arc<Mutex<Vec<Option<ClientFsState>>>>,
-)> {
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let manager = AcpSessionManager::with_runtime_builder(
-        rig_config(dir),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder {
-            captured_client_fs: Some(Arc::clone(&captured)),
-            ..MockRuntimeBuilder::default()
-        },
-    );
-    Ok((manager, captured))
-}
-
-/// A manager whose runtime builder records the `agent_name` of every build.
-pub(super) async fn manager_capturing_agent_name(
-    dir: &Path,
-) -> Result<(
-    AcpSessionManager<MockRuntimeBuilder>,
-    Arc<Mutex<Vec<Option<String>>>>,
-)> {
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let manager = AcpSessionManager::with_runtime_builder(
-        rig_config(dir),
-        test_paths(dir),
-        tokio::runtime::Handle::current(),
-        MockRuntimeBuilder {
-            captured_agent_name: Some(Arc::clone(&captured)),
-            ..MockRuntimeBuilder::default()
-        },
-    );
-    Ok((manager, captured))
-}
-
-/// Test double for [`SessionUpdateSink`]: records every notification.
-#[derive(Default)]
-pub(super) struct RecordingSink {
-    updates: Mutex<Vec<SessionUpdate>>,
-    fail: bool,
-}
-
-impl RecordingSink {
-    pub(super) fn failing() -> Self {
-        Self {
-            updates: Mutex::new(Vec::new()),
-            fail: true,
-        }
-    }
-
-    pub(super) fn taken(&self) -> Vec<SessionUpdate> {
-        self.updates
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
-    }
-}
-
-impl SessionUpdateSink for RecordingSink {
-    fn send_update(
-        &self,
-        _session_id: &str,
-        update: SessionUpdate,
-    ) -> core::result::Result<(), AcpError> {
-        if self.fail {
-            return Err(AcpError::Runtime("transport closed".to_string()));
-        }
-        if let Ok(mut guard) = self.updates.lock() {
-            guard.push(update);
-        }
-        Ok(())
-    }
-}
-
-/// The text of a replayed message chunk, or `None` for any other update.
-pub(super) fn chunk_text(update: &SessionUpdate) -> Option<String> {
-    let chunk = match update {
-        SessionUpdate::UserMessageChunk(chunk) | SessionUpdate::AgentMessageChunk(chunk) => chunk,
-        _ => return None,
-    };
-    match &chunk.content {
-        ContentBlock::Text(text) => Some(text.text.clone()),
-        _ => None,
-    }
-}
-
-/// The prompt tests never reach a tool call, so this sink is never asked; it
-/// answers `Cancelled` if it ever is.
-impl PermissionRequestSink for RecordingSink {
-    async fn send_request(
-        &self,
-        _session_id: &str,
-        _tool_call: ToolCallUpdate,
-        _options: Vec<PermissionOption>,
-    ) -> RequestPermissionOutcome {
-        RequestPermissionOutcome::Cancelled
     }
 }

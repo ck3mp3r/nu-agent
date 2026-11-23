@@ -1,8 +1,8 @@
-//! The one model call every compaction path makes: stream a request, report the
-//! deltas its caller wants reported, and validate the answer as compaction text.
+//! The one model call every compaction path makes: stream a request, report its
+//! deltas, and validate the answer as compaction text.
 //!
-//! Three paths run a call — the manual compactor, the side-call fallback, and the
-//! notes call — so the streaming loop and its rejections live here once.
+//! Two paths run a call — the manual compactor and the side-call the threshold
+//! decision asks for — so the streaming loop and its rejections live here once.
 
 use futures::StreamExt;
 
@@ -12,25 +12,11 @@ use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
 use rig::DynModel;
 use rig::completion::CompletionRequest;
 use rig::operation::Completion;
-use rig_memory::Summarizer;
 
 use crate::bus::{CancelTx, LifecycleTx, NarrationTx, Stream};
 use crate::session::MemoryError;
 
 // region:    --- Types
-
-/// Whether a call's text deltas reach the surfaces.
-///
-/// A summary streams into the transcript's compaction block; the notes on
-/// cleared outputs do not — they are written to the store, and no block draws
-/// them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Chunks {
-    /// Publish `SummaryChunk` per text delta.
-    Publish,
-    /// Publish nothing per delta.
-    Silent,
-}
 
 /// The channels a compaction call publishes on, taken one by one: a component
 /// takes the channels it needs, never the whole hub.
@@ -48,16 +34,14 @@ pub(super) struct Wires<'a> {
 
 /// Stream `request` to `model` and return its validated text.
 ///
-/// `chunks` decides whether the text deltas reach the surfaces. Every failure —
-/// the stream does not open, a stream item fails, the user cancels, or the folded
-/// answer cannot be compaction text — publishes `CompactionRecord::Failed` and
-/// returns the error.
+/// Every failure — the stream does not open, a stream item fails, the user
+/// cancels, or the folded answer cannot be compaction text — publishes
+/// `CompactionRecord::Failed` and returns the error.
 pub(super) async fn stream_text(
     wires: Wires<'_>,
     model: &DynModel<Completion>,
     request: CompletionRequest,
     source: CompactionSource,
-    chunks: Chunks,
 ) -> Result<String, MemoryError> {
     // `DynModel::stream` opens the reply synchronously; a failure to open
     // (transport, auth, malformed request) surfaces here rather than as a
@@ -85,26 +69,24 @@ pub(super) async fn stream_text(
                             ..
                         }) => {
                             aggregated.push_str(&text);
-                            if chunks == Chunks::Publish {
-                                // The summary's deltas ride the text lane: they
-                                // are per-delta text, not a discrete event, and a
-                                // long summary must never displace an event
-                                // record from the event ring.
-                                let _ = wires.stream.publish_text(SessionRecord::Compaction(
-                                    CompactionRecord::SummaryChunk {
-                                        source,
-                                        delta: text.clone(),
-                                        aggregated: aggregated.clone(),
-                                    },
-                                ));
-                                let _ = wires.narration.publish(
-                                    NarrationEvent::CompactionSummaryChunk {
-                                        source,
-                                        delta: text,
-                                        aggregated: aggregated.clone(),
-                                    },
-                                );
-                            }
+                            // The summary's deltas ride the text lane: they are
+                            // per-delta text, not a discrete event, and a long
+                            // summary must never displace an event record from
+                            // the event ring.
+                            let _ = wires.stream.publish_text(SessionRecord::Compaction(
+                                CompactionRecord::SummaryChunk {
+                                    source,
+                                    delta: text.clone(),
+                                    aggregated: aggregated.clone(),
+                                },
+                            ));
+                            let _ = wires.narration.publish(
+                                NarrationEvent::CompactionSummaryChunk {
+                                    source,
+                                    delta: text,
+                                    aggregated: aggregated.clone(),
+                                },
+                            );
                         }
                         rig::streaming::Item::Event(rig::streaming::StreamEvent::Reasoning {
                             ..
@@ -160,9 +142,10 @@ pub(super) async fn stream_text(
     }
 
     // The provider's usage arrives on the folded response, which `partial()`
-    // exposes once the stream ended. `summary_text` validates the folded
-    // answer: a truncated, tool-calling, or empty answer is refused.
-    match Summarizer::summary_text(&stream.partial()) {
+    // exposes once the stream ended. rig's `summary_text` validates the folded
+    // answer: an errored, truncated, tool-calling, or empty answer is refused,
+    // with the reason named.
+    match rig_memory::summary_text(&stream.partial(), "compaction") {
         Ok(text) => Ok(text),
         Err(e) => {
             let message = format!("Compaction produced an unusable summary: {e}");
@@ -177,7 +160,7 @@ pub(super) async fn emit_completed(wires: Wires<'_>, summary: &str, source: Comp
     let _ = wires
         .stream
         .publish(SessionRecord::Compaction(CompactionRecord::Completed {
-            source,
+            source: Some(source),
             summary: summary.to_string(),
         }));
     let _ = wires

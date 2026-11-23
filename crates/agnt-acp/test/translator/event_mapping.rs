@@ -162,7 +162,7 @@ fn test_translator_compaction_started_labels_each_source() -> Result<()> {
 fn test_translator_compaction_completed_produces_session_info_update() -> Result<()> {
     // -- Setup & Fixtures
     let event = SessionRecord::Compaction(CompactionRecord::Completed {
-        source: CompactionSource::Auto,
+        source: Some(CompactionSource::Auto),
         summary: "summary".to_string(),
     });
 
@@ -180,6 +180,10 @@ fn test_translator_compaction_completed_produces_session_info_update() -> Result
     assert_eq!(
         compaction.get("detail").and_then(|value| value.as_str()),
         Some("summary")
+    );
+    assert_eq!(
+        compaction.get("source").and_then(|value| value.as_str()),
+        Some("auto")
     );
     Ok(())
 }
@@ -211,11 +215,42 @@ fn test_translator_uncompacted_produces_session_info_update() -> Result<()> {
 }
 
 #[test]
+fn test_translator_compaction_completed_without_source_omits_the_source_key() -> Result<()> {
+    // -- Setup & Fixtures: a replayed completion, which names no source.
+    let event = SessionRecord::Compaction(CompactionRecord::Completed {
+        source: None,
+        summary: "summary".to_string(),
+    });
+
+    // -- Exec
+    let update = translator()
+        .translate(TranslateInput::Record(&event))
+        .ok_or("compaction completed must translate")?;
+
+    // -- Check: the state and the preview stand; the missing source stays
+    // missing rather than being filled with a guess.
+    let compaction = compaction_meta(&update)?;
+    assert_eq!(
+        compaction.get("state").and_then(|value| value.as_str()),
+        Some("completed")
+    );
+    assert_eq!(
+        compaction.get("detail").and_then(|value| value.as_str()),
+        Some("summary")
+    );
+    assert!(
+        compaction.get("source").is_none(),
+        "a record that names no source carries no source key"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_translator_compaction_completed_detail_is_a_preview_not_the_body() -> Result<()> {
     // -- Setup & Fixtures: a summary longer than the preview window.
     let summary = "s".repeat(500);
     let event = SessionRecord::Compaction(CompactionRecord::Completed {
-        source: CompactionSource::Auto,
+        source: Some(CompactionSource::Auto),
         summary: summary.clone(),
     });
 

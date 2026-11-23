@@ -2,6 +2,7 @@
 //! permission checks a tool call passes before it runs.
 
 use rig::agent::{DispatchAction, DispatchEvent, HookContext};
+use rig::error::ErrorKind;
 use rig::wasm_compat::WasmCompatSend;
 
 use agnt_kernel::{SessionRecord, StopCause, ToolCall as StreamToolCall, ToolRecord};
@@ -12,9 +13,7 @@ use crate::hook::permission_resolver::{
 use crate::types::ToolName;
 
 use super::HookChain;
-use super::not_run::{
-    CANCELLED_STOP_REASON, NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch,
-};
+use super::not_run::CANCELLED_STOP_REASON;
 
 impl<P: AsyncPermissionResolver> HookChain<P> {
     /// Steer or refuse the pending tool call, in the documented gate order.
@@ -68,10 +67,22 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
 
             log::trace!("on_dispatch: tool={tool_name}");
 
+            // The record stream opens the pair with the call as data:
+            // identity, name, source, arguments — never the rendered line. It
+            // is published before every arm below: an arm that skips the call
+            // is settled by rig's own skipped outcome, which needs a started
+            // record to close, and an arm that stops the run pairs this record
+            // itself because the stop fails the dispatch before `on_outcome`.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Tool(ToolRecord::Started {
+                    call: StreamToolCall::new(tool_name.clone(), source, args.clone()),
+                }));
+
             if cancelled {
-                // The stop lands before the `ToolStarted` send below and rig
-                // fails the dispatch before `on_outcome`, so this pair is the
-                // only host event the denied call produces.
+                // The stop fails the dispatch before `on_outcome`, so the
+                // started record above has no outcome to settle it: this pair
+                // carries the completion the denied call would otherwise lack.
                 self.emit_cancelled_dispatch(&tool_name, source, &args)
                     .await;
                 stop.narrate(
@@ -92,19 +103,19 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 None
             };
             if let Some(action) = doom_action {
+                // A stop detection ends the run: the dispatch fails before
+                // `on_outcome`, so the started record above would never settle.
+                // The not-run completion pairs it, as the cancel arm's does. A
+                // steering detection is a skip rig settles itself.
+                if action.stops_the_run() {
+                    self.emit_cancelled_dispatch(&tool_name, source, &args)
+                        .await;
+                }
                 return action;
             }
             if let Some(action) = circuit_action {
                 return action;
             }
-
-            // The record stream opens the pair with the call as data:
-            // identity, name, source, arguments — never the rendered line.
-            let _ = bus
-                .stream()
-                .publish(SessionRecord::Tool(ToolRecord::Started {
-                    call: StreamToolCall::new(tool_name.clone(), source, args.clone()),
-                }));
 
             let decision = permission
                 .resolve(
@@ -118,25 +129,38 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 .await;
             match decision {
                 PermissionDecision::Allow => DispatchAction::proceed(),
-                PermissionDecision::Deny { reason } => {
-                    // The gate's own record carries the card: a policy denial
-                    // published `PermissionRecord::AutoResolved` before the
-                    // call settled, so the drawer joins the content by call
-                    // id and this pair carries no display data at all.
-                    emit_not_run_dispatch(
-                        bus.stream(),
-                        NotRunCall {
-                            tool_name: tool_name.as_str(),
-                            source,
-                            arguments: args.as_str(),
-                            start: NotRunStart::AlreadyPublished,
-                        },
-                        NotRunOutcome::Denied { reason: &reason },
-                    )
-                    .await;
-                    DispatchAction::skip(reason)
-                }
+                // A policy denial is a skip, and rig settles a skip itself: the
+                // gate published the started record above, so `on_outcome`
+                // closes it with the reason as the result text. This arm
+                // publishes no completion — one settle per call.
+                //
+                // The gate's own record carries the card: a policy denial
+                // published `PermissionRecord::AutoResolved` before the call
+                // settled, so the drawer joins the content by call id.
+                PermissionDecision::Deny { reason } => DispatchAction::skip(reason),
             }
         }
     }
 }
+
+// region:    --- Support
+
+/// Whether a gate action ends the run instead of skipping the call.
+///
+/// rig's contract: a tool-call denial of kind `Cancelled` cancels the run and
+/// never reaches a handler or an outcome; any other denial resolves as the
+/// skipped (or refused) result the model sees, which `on_outcome` settles. The
+/// distinction decides whether a started record needs a completion published
+/// beside it.
+trait GateAction {
+    /// Whether the action ends the run.
+    fn stops_the_run(&self) -> bool;
+}
+
+impl GateAction for DispatchAction {
+    fn stops_the_run(&self) -> bool {
+        matches!(self, Self::Deny(report) if report.kind == ErrorKind::Cancelled)
+    }
+}
+
+// endregion: --- Support

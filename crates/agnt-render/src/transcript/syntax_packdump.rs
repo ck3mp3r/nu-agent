@@ -18,7 +18,7 @@ use super::highlight::{SYNTAX_SET, resolve_syntax_hint};
 ///
 /// The asset carries every stock syntax; anything outside this list is marked
 /// hidden, so a `.md` or `.txt` hint renders plain tokens. Every entry resolves
-/// on the stock syntect set except `ts` and `toml`; see `docs/configuration.md`.
+/// on the stock syntect set except `ts` and `toml`; see `docs/content/docs/user/configuration.md`.
 pub(crate) const DEFAULT_LANGUAGES: &[&str] = &[
     "rust", "python", "go", "js", "ts", "json", "yaml", "toml", "bash", "sql", "c", "cpp", "ruby",
     "diff", "nu", "nix",

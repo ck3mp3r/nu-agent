@@ -51,24 +51,9 @@ impl TtyBackend {
 // region:    --- Accessors
 
 impl TtyBackend {
-    /// Rows written so far.
-    pub fn output(&self) -> &[String] {
-        &self.lines
-    }
-
     /// Number of rows written so far.
     pub fn line_count(&self) -> usize {
         self.lines.len()
-    }
-
-    /// The output as one newline-joined string.
-    pub fn to_text(&self) -> String {
-        self.lines.join("\n")
-    }
-
-    /// Drop every row, so the backend can paint a new frame.
-    pub fn clear(&mut self) {
-        self.lines.clear();
     }
 }
 
@@ -278,5 +263,9 @@ mod golden_test;
 #[cfg(test)]
 #[path = "../../test/renderer/parity.rs"]
 mod parity_test;
+
+#[cfg(test)]
+#[path = "../../test/renderer/support.rs"]
+mod support;
 
 // endregion: --- Tests

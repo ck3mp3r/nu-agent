@@ -30,7 +30,7 @@ use nu_protocol::{Span, Value};
 
 use crate::bus::Bus;
 use crate::config::Config;
-use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::managers::SessionManager;
 use crate::conversation::turn::TurnFailure;
 use crate::hook::agent_hook::DoomLoopState;
@@ -114,8 +114,8 @@ pub struct ToolInfra {
     /// once the session store could not be opened, `None` while it opens. The
     /// runtime clears it when the session changes.
     pub store_latch: crate::hook::StoreLatch,
-    /// The in-place summary this turn decided on, waiting for the patched call's
-    /// reply. Created per turn, so the executor can read it after the run and no
+    /// The summary this turn asked a side-call for, waiting for the between-runs
+    /// splice. Created per turn, so the executor can read it after the run and no
     /// other turn sees it.
     pub pending_summary: crate::hook::chain::PendingSummary,
 }
@@ -144,8 +144,9 @@ pub struct TurnExecutor<'a, S: SessionManager> {
     /// `TurnConversation`. It is constructed eagerly at startup and swapped by
     /// `switch_model()`.
     pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
-    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: CompactionConfig,
+    /// Hook-driven compaction machinery: the compactor with rig's compaction
+    /// settings and the spec its summaries are fitted to.
+    pub compaction: NuCompactor,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     pub(super) response_data: Option<TurnResponseData>,
     /// The persona slug the runtime had loaded, empty when none was loaded.
@@ -165,7 +166,7 @@ where
         memory_state: &'a mut S,
         tool_infra: ToolInfra,
         dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
-        compaction: CompactionConfig,
+        compaction: NuCompactor,
     ) -> Self {
         Self {
             config,
@@ -197,7 +198,7 @@ where
     /// on success (caller should then evaluate compaction and call `build_response`),
     /// or `ExecuteOutcome::EarlyReturn(value)` for cancellation paths, or the typed
     /// [`TurnFailure`] that classifies a failed turn.
-    pub async fn execute<P: AsyncPermissionResolver>(
+    pub(crate) async fn execute<P: AsyncPermissionResolver>(
         &mut self,
         input: ExecuteInput,
         permission_resolver: P,

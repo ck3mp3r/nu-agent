@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use agnt_kernel::bus::Stream;
 use agnt_kernel::{InferenceRecord, SessionRecord, StopCause};
 
-use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::anchor_meter::AnchorMeter;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -88,8 +88,9 @@ pub struct HookState {
     pub memory: MemoryOf,
     /// The session/conversation id this hook compacts.
     pub conversation_id: String,
-    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: CompactionConfig,
+    /// Hook-driven compaction machinery: the compactor with rig's compaction
+    /// settings and the spec its summaries are fitted to.
+    pub compaction: NuCompactor,
     /// The wire serving this turn's completions. The pricing fallback uses its
     /// spec, so a completion is priced at the rates of the model that served
     /// it — not at the compaction model's.
@@ -111,8 +112,8 @@ pub struct HookState {
     /// could not be opened, `None` while it opens. Shared with the turn's
     /// `ToolInfra` so a session change can clear it.
     pub store_latch: StoreLatch,
-    /// The in-place summary this turn decided on, waiting for the patched call's
-    /// reply. Created per turn with the turn's tool infrastructure, so the
+    /// The summary this turn asked a side-call for, waiting for the between-runs
+    /// splice. Created per turn with the turn's tool infrastructure, so the
     /// executor can read it after the run.
     pub pending_summary: crate::hook::chain::PendingSummary,
 }

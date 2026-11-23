@@ -10,9 +10,7 @@ use rig::agent::{
 use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 
-use agnt_kernel::{
-    CompactionRecord, InferenceId, InferenceRecord, NoticeKind, SessionRecord, StopCause,
-};
+use agnt_kernel::{InferenceId, InferenceRecord, NoticeKind, SessionRecord, StopCause};
 
 use crate::hook::output_repetition::{
     OUTPUT_REPETITION_NOTICE, OutputRepetitionDetector, RepetitionDetection,
@@ -22,7 +20,6 @@ use agnt_kernel::bus::NarrationEvent;
 
 use super::HookChain;
 use super::compaction::{CompactionPath, decide_compaction};
-use super::in_place::InPlace;
 use super::not_run::CANCELLED_STOP_REASON;
 
 impl<P: AsyncPermissionResolver> HookChain<P> {
@@ -97,20 +94,17 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                     inference,
                 }));
 
-            // Compaction decision: patch this request in place when the session's
-            // current conversation is over the threshold, and clear or summarize
-            // in place when it cannot be patched. The decision returns what this
-            // call sends; the executor persists whatever it stashed between the
-            // two runs.
+            // Compaction decision: schedule the summary on its own when the
+            // session's current conversation is over the threshold. The decision
+            // returns what this call sends; the executor persists whatever it
+            // stashed between the two runs.
             let path =
                 CompactionPath::new(memory.as_ref(), &compaction, &meter, &store_latch, &model);
             decide_compaction(
                 &prompt,
                 conversation_id.as_str(),
-                InPlace {
-                    spec: spec.as_ref(),
-                    pending: &pending,
-                },
+                spec.as_ref(),
+                &pending,
                 &path,
                 self.bus.stream(),
                 self.bus.lifecycle(),
@@ -132,9 +126,6 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         // Every delta of one call names that call: the id the call stamped when
         // it began, read here before the delta's future runs.
         let inference = self.inference.streaming();
-        // The summary this turn asked for streams from the patched call itself:
-        // its deltas are the compaction's, not an inference the transcript shows.
-        let summary_source = self.pending_summary.awaiting_reply();
         let delta = event.delta.to_string();
         let aggregated = event.aggregated.to_string();
         // Intra-stream repetition detection: check the full aggregated stream
@@ -176,47 +167,21 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 stop.narrate(bus.stream(), StopCause::OutputRepetition, &reason);
                 return ObservationAction::stop(reason);
             }
-            // A patched call streams the summary this turn asked for: its
-            // deltas are the compaction's, so the surfaces fold a compaction
-            // block instead of an inference. Every other call streams its own.
-            match summary_source {
-                Some(source) => {
-                    // The summary's deltas are per-delta text like an
-                    // inference's: they ride the text lane, so a long summary
-                    // never displaces an event record.
-                    let _ = bus.stream().publish_text(SessionRecord::Compaction(
-                        CompactionRecord::SummaryChunk {
-                            source,
-                            delta: delta.clone(),
-                            aggregated: aggregated.clone(),
-                        },
-                    ));
-                    let _ = bus
-                        .narration()
-                        .publish(NarrationEvent::CompactionSummaryChunk {
-                            source,
-                            delta,
-                            aggregated,
-                        });
-                }
-                None => {
-                    let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
-                        inference,
-                        delta: delta.clone(),
-                        aggregated: aggregated.clone(),
-                    });
-                    // Same deltas on the record stream: the hub event dies when
-                    // the surfaces fold records instead. They ride the text lane,
-                    // so a long response never displaces a tool event.
-                    let _ = bus.stream().publish_text(SessionRecord::Inference(
-                        InferenceRecord::Chunk {
-                            inference,
-                            delta,
-                            aggregated,
-                        },
-                    ));
-                }
-            }
+            let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
+                inference,
+                delta: delta.clone(),
+                aggregated: aggregated.clone(),
+            });
+            // Same deltas on the record stream: the hub event dies when the
+            // surfaces fold records instead. They ride the text lane, so a long
+            // response never displaces a tool event.
+            let _ = bus
+                .stream()
+                .publish_text(SessionRecord::Inference(InferenceRecord::Chunk {
+                    inference,
+                    delta,
+                    aggregated,
+                }));
             ObservationAction::continue_run()
         }
     }

@@ -9,17 +9,11 @@
 #[path = "decide.rs"]
 mod decide;
 
-#[path = "fallback.rs"]
-mod fallback;
-
-#[path = "ladder.rs"]
-mod ladder;
-
 #[path = "metering.rs"]
 mod metering;
 
-#[path = "reserve.rs"]
-mod reserve;
+#[path = "settings.rs"]
+mod settings;
 
 #[path = "store.rs"]
 mod store;

@@ -62,10 +62,6 @@ mod runtime_client_fs;
 mod runtime_compaction_spec;
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../test/runtime/compaction_policy.rs"]
-mod runtime_compaction_policy;
-
-#[cfg(all(test, feature = "integration"))]
 #[path = "../../test/runtime/config_errors.rs"]
 mod runtime_config_errors;
 

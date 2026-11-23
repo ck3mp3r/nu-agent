@@ -81,12 +81,13 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
     build_chain(bus, permission, session)
 }
 
-/// The cancel arm's emission publishes `ToolStarted` then
-/// `ToolCompleted(success=false)` on the ui_event channel, in that order, with
-/// the cancelled-dispatch message — the pair the live transcript needs to
-/// render the ⊘ block for a call the stop denied before it ran.
+/// The cancel arm's emission publishes only `ToolCompleted(success=false)` on
+/// the ui_event channel, with the cancelled-dispatch message — the started
+/// record is the dispatch gate's, published before any arm runs, so a second
+/// one here would open the same call twice. The completion is what settles the
+/// ⊘ block for a call the stop denied before it ran.
 #[tokio::test]
-async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Result<()> {
+async fn emit_cancelled_dispatch_publishes_only_the_failed_completed() -> Result<()> {
     // -- Setup & Fixtures
     let bus = Bus::default();
     // Build the hook first: it subscribes to the cancel channel in `new`, and
@@ -107,24 +108,9 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
     .await;
 
     // -- Check
-    let started = ui_rx
-        .try_recv()
-        .map_err(|_| "should receive ToolStarted first")?;
-    assert_eq!(
-        started,
-        SessionRecord::Tool(ToolRecord::Started {
-            call: ToolCall::new(
-                agnt_kernel::ToolName("read".to_string()),
-                crate::tools::handler::ToolSource::Builtin,
-                "{\"path\":\"/tmp/f\"}",
-            ),
-        }),
-        "the denied call must publish its started record carrying the call's own data"
-    );
-
     let completed = ui_rx
         .try_recv()
-        .map_err(|_| "should receive the completed record second")?;
+        .map_err(|_| "should receive the completed record")?;
     assert_eq!(
         completed,
         SessionRecord::Tool(ToolRecord::Completed {
@@ -142,6 +128,10 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
             },
         }),
         "the denied call must publish a cancelled completion carrying the cancelled-dispatch message"
+    );
+    assert!(
+        ui_rx.try_recv().is_err(),
+        "the emission must not publish a second record for the call"
     );
     Ok(())
 }

@@ -44,9 +44,3 @@ fn role_deserialize_legacy_format_fails() {
     let result: core::result::Result<Role, _> = serde_json::from_str("\"AGENT\"");
     assert!(result.is_err(), "legacy 'AGENT' must not deserialize");
 }
-
-#[test]
-fn role_label() {
-    assert_eq!(Role::User.label(), "user");
-    assert_eq!(Role::Agent.label(), "agent");
-}

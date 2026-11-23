@@ -33,7 +33,7 @@ impl A2aToolAdapter {
     /// # Errors
     ///
     /// Returns [`EmptyToolName`] when the tool definition carries an empty name.
-    pub fn into_dynamic_tool(self) -> Result<DynamicTool, EmptyToolName> {
+    pub(crate) fn into_dynamic_tool(self) -> Result<DynamicTool, EmptyToolName> {
         let name = ToolName::new(self.tool_def.name.clone())?;
         let description = self.tool_def.description.clone();
         let parameters = self.tool_def.parameters.clone();

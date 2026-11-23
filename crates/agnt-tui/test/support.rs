@@ -263,7 +263,7 @@ pub(crate) fn compaction_completed(
     summary: impl Into<String>,
 ) -> SessionRecord {
     SessionRecord::Compaction(CompactionRecord::Completed {
-        source,
+        source: Some(source),
         summary: summary.into(),
     })
 }

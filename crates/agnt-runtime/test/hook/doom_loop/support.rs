@@ -15,7 +15,6 @@ pub(super) type TestResult<T> = core::result::Result<T, Box<dyn std::error::Erro
 
 use std::sync::{Arc, Mutex};
 
-use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::HookChain;
 use crate::hook::agent_hook::HookState;
@@ -68,15 +67,12 @@ pub(super) fn doom_loop_chain(bus: &Bus) -> HookChain<AllowAllResolver> {
             repetition_guard: true,
             memory: Arc::new(CachedMemory::new(RigStoreConfig::in_memory())),
             conversation_id: "doom-loop-conv".to_string(),
-            compaction: CompactionConfig {
-                compactor: NuCompactor::new(
-                    MockCompletionModel::text("summary").erase(),
-                    Bus::default(),
-                    rig_memory::CompactionPolicy::default(),
-                    None,
-                ),
-                reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-            },
+            compaction: NuCompactor::new(
+                MockCompletionModel::text("summary").erase(),
+                Bus::default(),
+                rig_memory::CompactionSettings::default(),
+                None,
+            ),
             model: MockCompletionModel::default().erase(),
             meter: crate::hook::AnchorMeter::default(),
             turn_usage: crate::hook::TurnUsage::default(),

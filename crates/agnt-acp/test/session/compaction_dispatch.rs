@@ -26,8 +26,7 @@ fn recorded_compaction_states(sink: &RecordingSink) -> Vec<String> {
 }
 
 /// A prompt big enough that the conversation outgrows the fixture's 8k window on
-/// its own, leaving no room for an in-place summary — the chain asks the worker
-/// for the compaction instead, which is the path this test observes.
+/// its own, so the session manager dispatches the compaction this test observes.
 fn long_prompt() -> String {
     "lorem ipsum ".repeat(2_000)
 }

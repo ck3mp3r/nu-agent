@@ -129,8 +129,8 @@ async fn test_execute_drive_stream_completes_normally_during_the_grace() -> Resu
     // -- Setup & Fixtures
     let bus = crate::bus::Bus::default();
     let history = vec![Message::user("hi"), Message::assistant("done")];
-    let response =
-        rig::agent::PromptResponse::new("done", Usage::default()).with_messages(history.clone());
+    let mut response = rig::agent::PromptResponse::new("done", Usage::default());
+    response.messages = history.clone();
     let stream = ScriptedStream::new(
         bus.clone(),
         [

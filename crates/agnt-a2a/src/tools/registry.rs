@@ -24,7 +24,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Tool::Send => "tasks_send",
             Tool::Get => "tasks_get",
@@ -107,7 +107,7 @@ impl Tool {
         }
     }
 
-    pub async fn handle(&self, ctx: A2aToolContext, params: Value) -> ToolResult {
+    pub(crate) async fn handle(&self, ctx: A2aToolContext, params: Value) -> ToolResult {
         match self {
             Tool::Send => super::send::handle(ctx, params).await,
             Tool::Get => super::get::handle(ctx, params).await,

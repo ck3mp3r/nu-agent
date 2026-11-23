@@ -156,11 +156,6 @@ impl<T: PickerItem> Default for PickerState<T> {
 }
 
 impl<T: PickerItem> PickerState<T> {
-    pub fn open(&mut self) {
-        self.open = true;
-        self.query.clear();
-        self.selection = 0;
-    }
     pub fn close(&mut self) {
         self.open = false;
         self.query.clear();

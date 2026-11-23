@@ -29,6 +29,9 @@ mod output_repetition;
 #[path = "chain/permission_display.rs"]
 mod permission_display;
 
+#[path = "chain/skipped_dispatch.rs"]
+mod skipped_dispatch;
+
 #[path = "chain/support.rs"]
 mod support;
 
@@ -46,7 +49,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::bus::Bus;
-use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::chain::compaction::{CompactionPath, decide_compaction};
 use crate::hook::chain::run_compaction;

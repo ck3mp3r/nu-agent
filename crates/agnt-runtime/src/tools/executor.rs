@@ -163,10 +163,6 @@ impl ToolExecutor {
         return_value
     }
 
-    pub fn timeout(&self) -> Duration {
-        self.timeout
-    }
-
     pub fn engine(&self) -> &dyn EngineInterfaceLike {
         self.engine.as_ref()
     }

@@ -4,6 +4,7 @@ use rig::test_utils::MockCompletionModel;
 
 use super::super::*;
 use crate::config::Config;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
@@ -46,11 +47,9 @@ pub(super) fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf) {
     (temp_dir, memory)
 }
 
-/// Build a `CompactionConfig` (no marker store) with a deterministic streaming
-/// mock model so compaction never invokes a real LLM.
-pub(super) fn test_compaction_config(
-    bus: crate::bus::Bus,
-) -> crate::conversation::compaction::CompactionConfig {
+/// Build the session's compactor (no marker store) with a deterministic
+/// streaming mock model so compaction never invokes a real LLM.
+pub(super) fn test_compaction_config(bus: crate::bus::Bus) -> NuCompactor {
     use crate::conversation::compaction::compactor::NuCompactor;
     use rig::test_utils::MockCompletionModel;
 
@@ -63,21 +62,18 @@ pub(super) fn test_compaction_config(
         })
         .collect();
     let model = MockCompletionModel::from_stream_turns(turns);
-    crate::conversation::compaction::CompactionConfig {
-        compactor: NuCompactor::from_shared_model(
-            std::sync::Arc::new(std::sync::Mutex::new(model.erase())),
-            bus.clone(),
-            rig_memory::CompactionPolicy::default(),
-            crate::conversation::compaction::compactor::resolve_model_spec(
-                "openai",
-                "gpt-4o",
-                Some(8_000),
-                Some(1_024),
-                None,
-            ),
+    NuCompactor::from_shared_model(
+        std::sync::Arc::new(std::sync::Mutex::new(model.erase())),
+        bus.clone(),
+        rig_memory::CompactionSettings::default(),
+        crate::conversation::compaction::compactor::resolve_model_spec(
+            "openai",
+            "gpt-4o",
+            Some(8_000),
+            Some(1_024),
+            None,
         ),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    }
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ pub const ROWS: &[&str] = &[
     "ARCH-6 agnt-plugin/src/command/provider/auth/logout.rs:10: `AgentProviderAuthLogout` has no consumer outside `agnt-plugin`",
     "ARCH-6 agnt-plugin/src/command/provider/auth/status.rs:10: `AgentProviderAuthStatus` has no consumer outside `agnt-plugin`",
     "ARCH-6 agnt-plugin/src/command/session/clear.rs:23: `AgentSessionClear` has no consumer outside `agnt-plugin`",
-    "ARCH-6 agnt-plugin/src/command/session/inspect.rs:25: `AgentSessionInspect` has no consumer outside `agnt-plugin`",
+    "ARCH-6 agnt-plugin/src/command/session/inspect.rs:23: `AgentSessionInspect` has no consumer outside `agnt-plugin`",
     "ARCH-6 agnt-plugin/src/command/session/list.rs:23: `AgentSessionList` has no consumer outside `agnt-plugin`",
 ];
 

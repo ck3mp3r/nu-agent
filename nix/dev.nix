@@ -3,6 +3,7 @@
   pkgs,
   inputs,
   system,
+  zola,
 }: let
   toolchain = inputs.rustnix.lib.rust.mkToolchain {
     inherit system;
@@ -37,6 +38,7 @@ in
       pkgs.prek
       cargo-llvm-cov
       pkgs.cargo-nextest
+      zola
       # Nushell runtime: the suite spawns `nu` by bare name
       pkgs.nushell
 

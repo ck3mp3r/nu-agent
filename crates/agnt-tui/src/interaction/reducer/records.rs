@@ -1,7 +1,7 @@
 //! The record and control fold: what each bus datum does to the surface, and
 //! the notice rows and permission card that come out of it.
 
-use crate::state::{AppState, PromptFacts, UiPhase};
+use crate::state::{AppState, HISTORY_SOURCE_LABEL, PromptFacts, UiPhase};
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::entry::{NoticeEntry, TranscriptEntry};
 use agnt_render::transcript::ir::NoticeKind;
@@ -151,7 +151,7 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
         RenderInput::Record(SessionRecord::Compaction(CompactionRecord::Started { source })) => {
             state
                 .compaction
-                .started(&mut state.transcript, source_label(*source))
+                .started(&mut state.transcript, source_label(Some(*source)))
         }
         RenderInput::Record(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source,
@@ -160,7 +160,7 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
         })) => state.compaction.summary_chunk(
             &mut state.transcript,
             &mut state.scroll,
-            source_label(*source),
+            source_label(Some(*source)),
             aggregated,
         ),
         RenderInput::Record(SessionRecord::Compaction(CompactionRecord::Completed {
@@ -178,7 +178,7 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
         })) => state.compaction.failed(
             &mut state.transcript,
             &mut state.status,
-            source_label(*source),
+            source_label(Some(*source)),
             message,
         ),
         RenderInput::Record(SessionRecord::Compaction(CompactionRecord::Uncompacted {
@@ -186,7 +186,7 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
         })) => state.compaction.uncompacted(
             &mut state.transcript,
             &mut state.status,
-            source_label(*source),
+            source_label(Some(*source)),
         ),
         // The spine is the turn end's single observer: the executor publishes
         // this step on a successful turn and on a cancelled one, and the spine
@@ -264,11 +264,13 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
     }
 }
 
-/// The label this drawer puts on a compaction's source.
-fn source_label(source: CompactionSource) -> &'static str {
+/// The label this drawer puts on a compaction's source. A record that names no
+/// source is a replayed one, and the drawer names that row itself.
+fn source_label(source: Option<CompactionSource>) -> &'static str {
     match source {
-        CompactionSource::Auto => "auto",
-        CompactionSource::Manual => "slash",
+        Some(CompactionSource::Auto) => "auto",
+        Some(CompactionSource::Manual) => "slash",
+        None => HISTORY_SOURCE_LABEL,
     }
 }
 

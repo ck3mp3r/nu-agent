@@ -501,8 +501,11 @@ pub enum CompactionRecord {
         aggregated: String,
     },
     /// The sweep finished; `summary` is the text that replaced the region.
+    ///
+    /// A live sweep names its source. A replayed completion carries `None`: the
+    /// store persists the summary, not where the sweep came from.
     Completed {
-        source: CompactionSource,
+        source: Option<CompactionSource>,
         summary: String,
     },
     /// The sweep failed; the region is untouched and `message` says why.

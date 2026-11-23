@@ -9,12 +9,13 @@ fn read_help_markdown() -> Result<String> {
 }
 
 fn read_usage_docs() -> Result<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/content/docs/user/usage.md");
     Ok(fs::read_to_string(path)?)
 }
 
 fn read_configuration_docs() -> Result<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/configuration.md");
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/content/docs/user/configuration.md");
     Ok(fs::read_to_string(path)?)
 }
 
@@ -115,25 +116,18 @@ fn help_includes_compact_mcp_help_status_slash_commands() -> Result<()> {
 }
 
 #[test]
-fn help_lists_the_wired_compaction_policy_fields() -> Result<()> {
+fn help_lists_the_wired_compaction_settings_keys() -> Result<()> {
     let help = read_help_markdown()?;
-    for key in [
-        "`keep_recent`",
-        "`keep_asked`",
-        "`clearing.keep_tokens`",
-        "`clearing.keep_under`",
-        "`reserve_pct`",
-        "`summary_tokens`",
-        "`snippet_chars`",
-        "`unknown_window_chars`",
-        "`tracked`",
-        "`prompts`",
-    ] {
-        assert!(help.contains(key), "the help lists the {key} knob");
+    for key in ["`enabled`", "`reserve_tokens`", "`keep_recent_tokens`"] {
+        assert!(help.contains(key), "the help lists the {key} key");
     }
     assert!(
-        help.contains("unset = the rig default"),
-        "the help states that an unset knob keeps the rig default"
+        help.contains("unset = the built-in default"),
+        "the help states that an unset key keeps the built-in default"
+    );
+    assert!(
+        !help.contains("rig default"),
+        "the help names no rig default"
     );
     assert!(
         help.contains("reserved for a future focus option"),
@@ -143,52 +137,34 @@ fn help_lists_the_wired_compaction_policy_fields() -> Result<()> {
 }
 
 #[test]
-fn usage_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
+fn usage_docs_list_the_wired_compaction_settings_keys() -> Result<()> {
     let docs = read_usage_docs()?;
-    for key in [
-        "`reserve_pct`",
-        "`summary_tokens`",
-        "`snippet_chars`",
-        "`unknown_window_chars`",
-        "`keep_recent`",
-        "`keep_asked`",
-        "`clearing.keep_tokens`",
-        "`clearing.keep_under`",
-        "`tracked`",
-        "`prompts`",
-    ] {
-        assert!(docs.contains(key), "the usage docs list the {key} knob");
+    for key in ["`enabled`", "`reserve_tokens`", "`keep_recent_tokens`"] {
+        assert!(docs.contains(key), "the usage docs list the {key} key");
     }
     assert!(
-        docs.contains("a key left out keeps the rig default"),
-        "the usage docs state that an unset knob keeps the rig default"
+        docs.contains("a key left out keeps the built-in default"),
+        "the usage docs state that an unset key keeps the built-in default"
+    );
+    assert!(
+        !docs.contains("rig default"),
+        "the usage docs name no rig default"
     );
     Ok(())
 }
 
 #[test]
-fn configuration_docs_list_the_wired_compaction_policy_fields() -> Result<()> {
+fn configuration_docs_list_the_wired_compaction_settings_keys() -> Result<()> {
     let docs = read_configuration_docs()?;
-    for key in [
-        "`reserve_pct`",
-        "`summary_tokens`",
-        "`snippet_chars`",
-        "`unknown_window_chars`",
-        "`keep_recent`",
-        "`keep_asked`",
-        "`clearing`",
-        "`near_window`",
-        "`tracked`",
-        "`prompts`",
-    ] {
+    for key in ["`enabled`", "`reserve_tokens`", "`keep_recent_tokens`"] {
         assert!(
             docs.contains(key),
-            "the configuration docs list the {key} knob"
+            "the configuration docs list the {key} key"
         );
     }
     assert!(
-        docs.contains("Unset = the rig default"),
-        "the configuration docs state that an unset knob keeps the rig default"
+        docs.contains("keeps the built-in default"),
+        "the configuration docs state that an unset key keeps the built-in default"
     );
     assert!(
         docs.contains("`/compact` focus") && docs.contains("stays reserved"),
@@ -217,7 +193,10 @@ fn docs_do_not_claim_skills_listing_tool_for_slash_commands() -> Result<()> {
 #[test]
 fn docs_describe_session_memory_persistence_after_compaction() -> Result<()> {
     let docs = read_usage_docs()?;
-    assert!(docs.contains("rig-memory log"));
+    assert!(
+        docs.contains("the session's saved memory"),
+        "the docs state where the compaction splice is written"
+    );
     Ok(())
 }
 
@@ -391,8 +370,14 @@ fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() -> Re
 fn usage_docs_describe_non_interactive_ask_default_and_override() -> Result<()> {
     let docs = read_usage_docs()?;
     assert!(docs.contains("Non-interactive ask fallback"));
-    assert!(docs.contains("non_interactive_ask"));
-    assert!(docs.contains("default (missing): `deny`"));
-    assert!(docs.contains("supported values: `deny`, `allow`"));
+    assert!(docs.contains("resolves to deny"));
+    assert!(
+        docs.contains("no separate key for it"),
+        "the usage docs state that ask has no separate non-interactive key"
+    );
+    assert!(
+        docs.contains("fallback (policy action `ask`): `deny`"),
+        "the usage docs state the non-interactive fallback"
+    );
     Ok(())
 }

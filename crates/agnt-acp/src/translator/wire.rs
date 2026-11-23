@@ -55,9 +55,12 @@ pub(super) fn summary_preview(summary: &str) -> String {
 }
 
 /// Build a `session_info_update` carrying compaction state in `_meta`.
+///
+/// A record that names no source carries no `source` key: the client is told
+/// what the record says, and the absence stays an absence.
 pub(super) fn compaction_update(
     state: &str,
-    source: CompactionSource,
+    source: Option<CompactionSource>,
     detail: Option<String>,
 ) -> SessionUpdate {
     let mut compaction = serde_json::Map::new();
@@ -65,10 +68,12 @@ pub(super) fn compaction_update(
         "state".to_string(),
         serde_json::Value::String(state.to_string()),
     );
-    compaction.insert(
-        "source".to_string(),
-        serde_json::Value::String(source_label(source).to_string()),
-    );
+    if let Some(source) = source {
+        compaction.insert(
+            "source".to_string(),
+            serde_json::Value::String(source_label(source).to_string()),
+        );
+    }
     if let Some(detail) = detail {
         compaction.insert("detail".to_string(), serde_json::Value::String(detail));
     }

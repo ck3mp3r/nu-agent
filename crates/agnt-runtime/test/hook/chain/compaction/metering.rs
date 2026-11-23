@@ -1,16 +1,15 @@
-//! Anchor metering: the request the decision records and the tokens the next
+//! Anchor metering: the entry the decision records and the tokens the next
 //! decision reads back from it.
 
 use super::super::*;
 use super::*;
 
 use rig::conversation::Conversation;
-use rig_memory::{Anchor, MemoryStore, RequestStart, next_request_tokens};
+use rig_memory::request_tokens;
 
-use crate::hook::chain::in_place::InPlace;
-
-/// WHEN the decision meters, THE decision SHALL record the request it metered and
-/// the entry a completion's usage lands on, so the next decision can anchor.
+/// WHEN the decision meters, THE decision SHALL record the entry the request
+/// counts through, so the next decision can anchor on the usage a completion
+/// reports.
 #[tokio::test]
 async fn decide_compaction_records_the_request_and_the_metered_entry() -> Result<()> {
     // -- Setup & Fixtures: two stored entries, so the prompt becomes the third.
@@ -28,10 +27,8 @@ async fn decide_compaction_records_the_request_and_the_metered_entry() -> Result
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&fx.spec),
-            pending: &fx.pending,
-        },
+        Some(&fx.spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -44,17 +41,17 @@ async fn decide_compaction_records_the_request_and_the_metered_entry() -> Result
     )
     .await;
 
-    // -- Check: the request is recorded, and the completion that settles anchors
-    // on the prompt's entry — the store's two entries plus the prompt.
-    let (anchor, sent) = fx.meter.metering();
-    assert!(sent.is_some(), "the metered request must be recorded");
+    // -- Check: no usage has landed yet, so nothing is anchored; once one does, it
+    // anchors through the prompt's entry — the store's two entries plus the prompt.
     assert!(
-        anchor.is_none(),
+        fx.meter.anchor().is_none(),
         "no usage has been reported, so nothing is anchored yet"
     );
     fx.meter.record_usage(usage(1_000, 10));
-    let (anchor, _) = fx.meter.metering();
-    let anchor = anchor.ok_or("the recorded entry anchors the usage")?;
+    let anchor = fx
+        .meter
+        .anchor()
+        .ok_or("the recorded entry anchors the usage")?;
     let store = fx
         .memory
         .rig_store("conv-1")
@@ -74,66 +71,50 @@ async fn decide_compaction_records_the_request_and_the_metered_entry() -> Result
     Ok(())
 }
 
-/// WHEN the recorded request still describes the conversation, THE metering
-/// SHALL read the anchor's reported usage plus the estimate of what follows it.
-///
-/// The anchor holds while the request's fingerprint does — a check over the
-/// entries' own allocations, so it is pinned here against one conversation and a
-/// copy of it, which is the shape rig documents.
+/// WHEN an anchor names an entry in the conversation, THE count SHALL be the
+/// reported input tokens plus an estimate of the messages after that entry.
 #[test]
-fn metering_is_anchored_when_the_request_still_continues_the_anchor() -> Result<()> {
-    // -- Setup & Fixtures
+fn metering_anchors_on_the_reported_tokens_plus_what_follows() -> Result<()> {
+    // -- Setup & Fixtures: two entries, anchored through the first, so the second
+    // is what the anchor's estimate adds.
     let mut conversation = Conversation::new();
     conversation.extend([Message::user("older"), Message::assistant("reply")]);
-    let sent = prepared(&conversation).start();
-    let through = conversation.id(1).ok_or("the second entry has an id")?;
-    let anchor = Anchor {
-        usage: usage(5_000, 10),
-        through,
-    };
-    let copy = conversation.clone();
+    let at = conversation
+        .index_of(conversation.id(0).ok_or("the first entry has an id")?)
+        .ok_or("the first entry is in the conversation")?;
 
-    // -- Exec
-    let tokens = next_request_tokens(Some(&anchor), Some(sent), &prepared(&copy));
+    // -- Exec: anchored through the first entry, and through the last one.
+    let anchored = request_tokens((None, None), conversation.messages(), Some((5_000, at)));
+    let at_last = request_tokens(
+        (None, None),
+        conversation.messages(),
+        Some((5_000, conversation.messages().len() - 1)),
+    );
 
     // -- Check
-    assert_eq!(
-        tokens, 5_010,
-        "an anchor that still holds meters its reported usage with nothing after it"
+    assert!(
+        anchored > at_last,
+        "the estimate of the messages after the anchor is added: {anchored} vs {at_last}"
     );
     Ok(())
 }
 
-/// WHEN the request is a fresh load of the same conversation, THE metering SHALL
-/// fall back to `whole_tokens`: the entries are new allocations, so the
-/// fingerprint the anchor was made under no longer holds.
+/// WHEN the anchor names the last entry of the conversation, THE count SHALL be
+/// exactly the reported input tokens: nothing follows what the provider counted.
 #[test]
-fn metering_is_whole_tokens_when_the_request_is_a_fresh_load() -> Result<()> {
-    // -- Setup & Fixtures: a store holding the conversation, loaded twice.
-    let store = MemoryStore::default();
-    let mut conversation = rig_memory::load(&store, "conv-1")?;
+fn metering_anchored_at_the_last_entry_adds_nothing() -> Result<()> {
+    // -- Setup & Fixtures: two entries, anchored through the second.
+    let mut conversation = Conversation::new();
     conversation.extend([Message::user("older"), Message::assistant("reply")]);
-    rig_memory::save(&store, "conv-1", &mut conversation)?;
-    let sent: RequestStart = prepared(&conversation).start();
-    let through = conversation.id(1).ok_or("the second entry has an id")?;
-    let anchor = Anchor {
-        usage: usage(5_000, 10),
-        through,
-    };
-    let reloaded = rig_memory::load(&store, "conv-1")?;
+    let last = conversation.messages().len() - 1;
 
     // -- Exec
-    let tokens = next_request_tokens(Some(&anchor), Some(sent), &prepared(&reloaded));
+    let tokens = request_tokens((None, None), conversation.messages(), Some((5_000, last)));
 
     // -- Check
     assert_eq!(
-        tokens,
-        prepared(&reloaded).whole_tokens(),
-        "a request the anchor no longer describes is metered whole"
-    );
-    assert_ne!(
-        tokens, 5_010,
-        "the anchored usage must not be read across a fresh load"
+        tokens, 5_000,
+        "the reported count stands when nothing follows the anchored entry"
     );
     Ok(())
 }

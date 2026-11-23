@@ -1,8 +1,8 @@
 use super::*;
 
-/// Compact `store`, assert the splice landed under the `rig.compaction` author,
-/// then undo it and assert the original conversation is back.
-async fn assert_splice_and_undo(store: Arc<dyn Store>) -> Result<()> {
+/// Compact `store` and assert the splice landed under the `rig.compaction`
+/// author.
+async fn assert_splice(store: Arc<dyn Store>) -> Result<()> {
     // -- Setup & Fixtures
     seed(&*store)?;
     let bus = Bus::default();
@@ -10,12 +10,7 @@ async fn assert_splice_and_undo(store: Arc<dyn Store>) -> Result<()> {
 
     // -- Exec
     let outcome = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?
         .ok_or("compaction should have run")?;
 
@@ -34,7 +29,7 @@ async fn assert_splice_and_undo(store: Arc<dyn Store>) -> Result<()> {
         "the summary must carry the streamed text, got: {summary_text}"
     );
 
-    let mut conversation = rig_memory::load(&*store, CONV)?;
+    let conversation = rig_memory::load(&*store, CONV)?;
     let first = conversation
         .entries()
         .next()
@@ -44,32 +39,26 @@ async fn assert_splice_and_undo(store: Arc<dyn Store>) -> Result<()> {
         Some(&summary_author()),
         "the summary entry must be authored by rig.compaction"
     );
-    assert!(
-        conversation
-            .asides()
-            .any(|(_, aside)| aside.kind == rig_memory::COMPACTED),
-        "the splice must record a rig.compaction aside"
-    );
-
-    // -- Exec: undo the compaction.
-    let undone = rig_memory::undo_summary(&mut conversation, &*store, CONV, summary_author())?;
-
-    // -- Check: the replaced messages are back.
+    let recorded = summarized_in_log(&*store, CONV)?;
     assert_eq!(
-        undone.restored.len(),
-        3,
-        "undo must restore the three replaced messages"
+        recorded.len(),
+        1,
+        "the compaction must be the log's one summary, got {recorded:?}"
+    );
+    let (summary_id, replaced) = recorded
+        .iter()
+        .next()
+        .ok_or("the log holds the compaction's summary")?;
+    assert_eq!(
+        first.id, *summary_id,
+        "the log's summary must be the entry the conversation leads with"
     );
     assert_eq!(
-        conversation.messages().len(),
-        4,
-        "undo must leave the original four messages"
+        replaced.len(),
+        2,
+        "the summary must record the two seeded turns it replaced"
     );
-    let restored_first = conversation
-        .messages()
-        .first()
-        .ok_or("the restored conversation is non-empty")?;
-    assert_eq!(user_text(restored_first), "first question");
+
     Ok(())
 }
 
@@ -79,7 +68,7 @@ async fn compact_splices_under_the_summary_author_on_the_sqlite_backend() -> Res
     let store = memory_store().await?;
 
     // -- Exec & Check
-    assert_splice_and_undo(Arc::clone(&store)).await
+    assert_splice(Arc::clone(&store)).await
 }
 
 #[tokio::test]
@@ -89,7 +78,7 @@ async fn compact_splices_under_the_summary_author_on_the_file_backend() -> Resul
     let store = file_store(temp_dir.path()).await?;
 
     // -- Exec & Check
-    assert_splice_and_undo(Arc::clone(&store)).await
+    assert_splice(Arc::clone(&store)).await
 }
 
 #[tokio::test]
@@ -104,12 +93,7 @@ async fn compact_validates_the_summary_through_the_folded_partial_response() -> 
 
     // -- Exec
     let outcome = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?
         .ok_or("compaction should have run")?;
 
@@ -120,8 +104,8 @@ async fn compact_validates_the_summary_through_the_folded_partial_response() -> 
         .ok_or("the spliced conversation is non-empty")?;
     let text = user_text(summary);
     assert!(
-        text.contains("<summary>\npart one part two\n</summary>"),
-        "the folded summary must be trimmed and whole, got: {text}"
+        text.contains("part one part two"),
+        "the folded summary must be whole across its deltas, got: {text}"
     );
     Ok(())
 }
@@ -138,12 +122,7 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
 
     // -- Exec
     compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?;
 
     // -- Check
@@ -204,12 +183,7 @@ async fn compact_returns_none_when_nothing_would_be_summarized() -> Result<()> {
 
     // -- Exec
     let outcome = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await?;
 
     // -- Check
@@ -231,18 +205,13 @@ async fn compact_is_disabled_without_a_model_spec() -> Result<()> {
     let compactor = NuCompactor::new(
         stream_model(&["unused summary"]).erase(),
         bus,
-        test_policy(),
+        test_settings(),
         resolve_model_spec("no-such-vendor", "m", Some(8_000), None, None),
     );
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check

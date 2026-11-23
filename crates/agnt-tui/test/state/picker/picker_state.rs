@@ -13,9 +13,11 @@ fn picker_state_lifecycle() -> Result<()> {
     assert_eq!(state.selection, 0);
     assert!(state.options.is_empty());
 
-    // -- Exec & Check: open resets query and selection.
-    let mut state = PickerState::<PickerOption>::default();
-    state.open();
+    // -- Exec & Check: an opened picker starts empty.
+    let mut state = PickerState::<PickerOption> {
+        open: true,
+        ..PickerState::default()
+    };
     assert!(state.open);
     assert_eq!(state.query, "");
     assert_eq!(state.selection, 0);
@@ -56,8 +58,10 @@ fn picker_state_lifecycle() -> Result<()> {
     assert_eq!(down.selection, 0);
 
     // -- Exec & Check: move up on an empty list resets the selection.
-    let mut empty = PickerState::<PickerOption>::default();
-    empty.open();
+    let mut empty = PickerState::<PickerOption> {
+        open: true,
+        ..PickerState::default()
+    };
     empty.move_up();
     assert_eq!(empty.selection, 0);
 
@@ -73,8 +77,10 @@ fn picker_state_lifecycle() -> Result<()> {
     assert_eq!(query.selection, 0);
 
     // -- Exec & Check: backspace removes the last query char.
-    let mut backspace = PickerState::<PickerOption>::default();
-    backspace.open();
+    let mut backspace = PickerState::<PickerOption> {
+        open: true,
+        ..PickerState::default()
+    };
     backspace.append_query_char('a');
     backspace.append_query_char('b');
     backspace.backspace_query_char();

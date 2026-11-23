@@ -9,9 +9,13 @@
 //! `CompletionFailed::kind` is set at the `From<PromptError>` boundary by
 //! matching **structurally** on `rig::error::ProviderError` variants —
 //! no post-hoc string parsing.  String matching is used only as a last resort for
-//! `http_client::Error::Instance(Box<dyn Error>)` and for `ProviderError::Response` /
+//! `http_client::Error::Permanent(Box<dyn Error>)` and for `ProviderError::Response` /
 //! `ProviderError::Provider` payloads where the concrete type has been erased by the
 //! provider SDK.
+
+use std::time::{Duration, SystemTime};
+
+use rig::completion::FinishReason;
 
 use crate::conversation::turn::executor::CompletionErrorKind;
 use crate::hook::turn_tools::TurnToolRecord;
@@ -81,12 +85,16 @@ pub enum TurnError {
     /// HTTP / transport / decode failure from the LLM provider.
     ///
     /// `kind` is pre-classified at the `From<PromptError>` boundary by
-    /// matching on `rig::error::ProviderError` variants structurally.
+    /// matching on `rig::error::ProviderError` variants structurally, and on
+    /// the typed finish reason the failing completion reported.
     CompletionFailed {
         /// Display message from the underlying rig error.
         msg: String,
         /// Pre-classified error category (set structurally, not via string matching).
         kind: CompletionErrorKind,
+        /// The wait the provider asked for, read once at this boundary through
+        /// [`rig::error::ErrorReport::retry_after`].
+        retry_after: Option<Duration>,
         /// What the retry/steering loop exhausted before the failure became
         /// terminal. `None` when the first attempt was terminal.
         exhaustion: Option<TurnExhaustion>,
@@ -112,29 +120,19 @@ impl TurnError {
     pub fn is_cancelled(&self) -> bool {
         matches!(self, Self::Cancelled { .. })
     }
-}
 
-impl std::fmt::Display for TurnError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Cancelled { msg, .. } => write!(f, "Cancelled: {msg}"),
-            Self::MaxTurnsExceeded { msg, .. }
-            | Self::UnknownTool { msg, .. }
-            | Self::CompletionFailed { msg, .. }
-            | Self::ToolExecutionFailed { msg }
-            | Self::StoreRefused { msg } => write!(f, "{msg}"),
-        }
-    }
-}
-
-impl std::error::Error for TurnError {}
-
-// ---------------------------------------------------------------------------
-// From<PromptError>
-// ---------------------------------------------------------------------------
-
-impl From<rig::completion::PromptError> for TurnError {
-    fn from(err: rig::completion::PromptError) -> Self {
+    /// Convert the failure of a streamed run, reading the typed reason its last
+    /// completion stopped on.
+    ///
+    /// rig reports why a reply ended on the completion call it surfaced before
+    /// the failure; a reply the output limit cut produced no answer, so its
+    /// failure is the turn running out of output budget. `finish` is `None`
+    /// when the stream reported no such call, and every failure then reads its
+    /// own status and display text.
+    pub(crate) fn from_failure(
+        err: rig::completion::PromptError,
+        finish: Option<&FinishReason>,
+    ) -> Self {
         match err {
             rig::completion::PromptError::Cancelled {
                 reason,
@@ -161,55 +159,91 @@ impl From<rig::completion::PromptError> for TurnError {
                 tool_name,
                 messages: chat_history,
             },
-            rig::completion::PromptError::Provider(e) => completion_error_to_turn_error(e),
+            rig::completion::PromptError::Provider(e) => completion_error_to_turn_error(e, finish),
             // Conversation memory failed to load or persist history.
             rig::completion::PromptError::Memory { error, .. } => Self::CompletionFailed {
                 msg: error.to_string(),
                 kind: CompletionErrorKind::Unknown,
+                retry_after: None,
                 exhaustion: None,
             },
             // A relayed report preserves the origin's status and message.
-            rig::completion::PromptError::Report(report) => Self::CompletionFailed {
-                msg: report.message.clone(),
-                kind: match report.http_status {
-                    Some(status) => classify_by_status(status),
-                    None => classify_from_display(&report.message),
-                },
-                exhaustion: None,
-            },
+            rig::completion::PromptError::Report(report) => {
+                let kind = classify_report(&report);
+                let retry_after = retry_wait(&report);
+                Self::CompletionFailed {
+                    msg: report.message.clone(),
+                    kind,
+                    retry_after,
+                    exhaustion: None,
+                }
+            }
             other => Self::CompletionFailed {
                 msg: other.to_string(),
                 kind: CompletionErrorKind::Unknown,
+                retry_after: None,
                 exhaustion: None,
             },
         }
     }
 }
 
+impl std::fmt::Display for TurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled { msg, .. } => write!(f, "Cancelled: {msg}"),
+            Self::MaxTurnsExceeded { msg, .. }
+            | Self::UnknownTool { msg, .. }
+            | Self::CompletionFailed { msg, .. }
+            | Self::ToolExecutionFailed { msg }
+            | Self::StoreRefused { msg } => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for TurnError {}
+
+impl From<rig::completion::PromptError> for TurnError {
+    fn from(err: rig::completion::PromptError) -> Self {
+        Self::from_failure(err, None)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Classification
+// ---------------------------------------------------------------------------
+
 /// Classify a `rig::error::ProviderError` into a `TurnError::CompletionFailed`.
 ///
 /// Shared by the `From<PromptError>` boundary so provider failures wrapped as
 /// `PromptError::Provider` reach the same classification as the direct
-/// `PromptError::Report` path.
-fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
+/// `PromptError::Report` path. `finish` is the typed reason the turn's last
+/// completion stopped on, when the stream reported one: a reply the output
+/// limit cut is a cut-off reply, whatever its diagnostic says.
+fn completion_error_to_turn_error(
+    err: rig::error::ProviderError,
+    finish: Option<&FinishReason>,
+) -> TurnError {
     use rig::error::ProviderError;
     use rig::http_client;
 
     let msg = err.to_string();
+    let retry_after = retry_wait(&err.report());
     let kind = match err {
         ProviderError::Http(http_err) => match &*http_err {
             http_client::Error::InvalidStatusCodeWithDetails { status, .. } => {
                 classify_by_status(status.as_u16())
             }
             http_client::Error::StreamEnded => CompletionErrorKind::Network,
-            http_client::Error::Instance(_) => {
-                // reqwest::Error erased to Box<dyn Error> — use Display
-                classify_from_display(&http_err.to_string())
+            http_client::Error::Transient(_) => CompletionErrorKind::Network,
+            http_client::Error::Permanent(source) => {
+                // The transport error erased to Box<dyn Error> — use Display
+                classify_text(&source.to_string(), finish)
             }
             _ => CompletionErrorKind::Unknown,
         },
-        ProviderError::Response(s) => classify_from_display(&s),
-        ProviderError::Provider(s) => classify_from_display(&s),
+        ProviderError::Response(s) => classify_text(&s, finish),
+        ProviderError::Provider(s) => classify_text(&s, finish),
         ProviderError::Request(s) => classify_from_display(&s.to_string()),
         // rig surfaces a failed streaming handshake (connect-time
         // non-success, e.g. a 500) as `ProviderResponse` carrying the
@@ -217,7 +251,7 @@ fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
         // Classify by status when present so a 500/503/429 stays retryable.
         ProviderError::ProviderResponse(e) => match e.status {
             Some(status) => classify_by_status(status.as_u16()),
-            None => classify_from_display(&e.body),
+            None => classify_text(&e.body, finish),
         },
         // The provider rejected the configured credentials with 401 or 403.
         ProviderError::InvalidAuthentication(_) => CompletionErrorKind::Auth,
@@ -228,15 +262,13 @@ fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
         // timeout-class kind is `ServerError`, which is retryable.
         ProviderError::Stalled(_) => CompletionErrorKind::ServerError,
         // A relayed report preserves the origin's status and message.
-        ProviderError::Relayed(report) => match report.http_status {
-            Some(status) => classify_by_status(status),
-            None => classify_from_display(&report.message),
-        },
+        ProviderError::Relayed(report) => classify_report(&report),
         _ => CompletionErrorKind::Unknown,
     };
     TurnError::CompletionFailed {
         msg,
         kind,
+        retry_after,
         exhaustion: None,
     }
 }
@@ -244,6 +276,52 @@ fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
+
+/// Classify a rig `ErrorReport` into a `CompletionErrorKind`.
+///
+/// The report's HTTP status decides when it names a family of its own; a status
+/// the table does not know (a plain 400, which is how a provider reports a
+/// context overflow) leaves the decision to the message's display text. Without
+/// a status the text decides outright.
+pub(crate) fn classify_report(report: &rig::error::ErrorReport) -> CompletionErrorKind {
+    match report.http_status {
+        Some(status) => match classify_by_status(status) {
+            CompletionErrorKind::Unknown => classify_from_display(&report.message),
+            kind => kind,
+        },
+        None => classify_from_display(&report.message),
+    }
+}
+
+/// Classify display text, letting the typed finish reason decide first.
+///
+/// A reply the output limit cut is read from that typed reason, never from the
+/// diagnostic rig writes about it: the display text is content for the user.
+fn classify_text(msg: &str, finish: Option<&FinishReason>) -> CompletionErrorKind {
+    finish
+        .and_then(classify_finish)
+        .unwrap_or_else(|| classify_from_display(msg))
+}
+
+/// The kind a reply's typed finish reason decides, when it decides one.
+///
+/// The output limit is the only reason the turn cannot absorb: the reply it cut
+/// produced no answer, so the turn failed on its budget. Every other reason
+/// leaves the failure to its own status and display text.
+fn classify_finish(finish: &FinishReason) -> Option<CompletionErrorKind> {
+    match finish {
+        FinishReason::Length => Some(CompletionErrorKind::OutputBudget),
+        _ => None,
+    }
+}
+
+/// The wait `report` asks for, as of now, through rig's own hint reader.
+///
+/// Read once at the classification boundary: the retry loop holds the kind and
+/// this wait, never the report, so no path re-parses a hint out of display text.
+fn retry_wait(report: &rig::error::ErrorReport) -> Option<Duration> {
+    report.retry_after(SystemTime::now())
+}
 
 /// Classify a status code into a `CompletionErrorKind`.
 fn classify_by_status(status: u16) -> CompletionErrorKind {
@@ -259,13 +337,13 @@ fn classify_by_status(status: u16) -> CompletionErrorKind {
     }
 }
 
-/// Classify a string (from `ResponseError`, `ProviderError`, or an erased `Instance` error)
+/// Classify a string (from `ResponseError`, `ProviderError`, or an erased `Permanent` error)
 /// into a `CompletionErrorKind`.
 ///
 /// This function is used when the concrete error type is unavailable and only the Display
 /// string is accessible.  Structural matching (via HTTP status codes) is always preferred
 /// and is done first in `From<PromptError>`.  This function acts as the fallback for
-/// `Instance(Box<dyn Error>)`, `ResponseError`, and `ProviderError` payloads.
+/// `Permanent(Box<dyn Error>)`, `ResponseError`, and `ProviderError` payloads.
 ///
 /// Patterns are ordered most-specific first to avoid misclassification.
 fn classify_from_display(msg: &str) -> CompletionErrorKind {
@@ -281,11 +359,10 @@ fn classify_from_display(msg: &str) -> CompletionErrorKind {
         return CompletionErrorKind::ToolStructure;
     }
 
-    // OutputBudget — run before ContextOverflow; most-specific first
-    if lower.contains("finish_reason=length")
-        || lower.contains("ran out of output budget")
-        || lower.contains("raise max_tokens")
-        || lower.contains("exceeds model's maximum output tokens")
+    // OutputBudget from provider wording — run before ContextOverflow; the
+    // cut-off reply itself is read from the typed finish reason in
+    // `classify_finish`, never from a diagnostic string.
+    if lower.contains("exceeds model's maximum output tokens")
         || (lower.contains("exceeds") && lower.contains("output tokens"))
     {
         return CompletionErrorKind::OutputBudget;
@@ -418,5 +495,21 @@ fn contains_status_token(msg: &str, code: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "../../../test/conversation/turn/error.rs"]
-mod error_test;
+#[path = "../../../test/conversation/turn/error/support.rs"]
+mod support;
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/error/boundary.rs"]
+mod boundary_test;
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/error/status.rs"]
+mod status_test;
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/error/classify.rs"]
+mod classify_test;
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/error/kind.rs"]
+mod kind_test;

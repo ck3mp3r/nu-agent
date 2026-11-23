@@ -11,7 +11,6 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::*;
 use crate::config::{AgentsConfig, Config};
-use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::managers::ProviderManager;
 use crate::conversation::providers::CachedProviderClient;
@@ -156,21 +155,24 @@ where
 {
     let cwd = temp_dir.path().to_path_buf();
     let bus = crate::bus::Bus::default();
-    let compaction = CompactionConfig {
-        compactor: NuCompactor::from_shared_model(
-            Arc::new(Mutex::new(summary_model().erase())),
-            bus.clone(),
-            rig_memory::CompactionPolicy::default(),
-            crate::conversation::compaction::compactor::resolve_model_spec(
-                "openai",
-                "gpt-4o",
-                Some(200_000),
-                Some(1_024),
-                None,
-            ),
+    // Keeps only the newest message, so a short conversation is still
+    // summarized; the turn that message belongs to splits, which the scripted
+    // summary model answers with its second turn.
+    let compaction = NuCompactor::from_shared_model(
+        Arc::new(Mutex::new(summary_model().erase())),
+        bus.clone(),
+        rig_memory::CompactionSettings {
+            keep_recent_tokens: 1,
+            ..rig_memory::CompactionSettings::default()
+        },
+        crate::conversation::compaction::compactor::resolve_model_spec(
+            "openai",
+            "gpt-4o",
+            Some(200_000),
+            Some(1_024),
+            None,
         ),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    };
+    );
 
     Ok(AgentRuntime {
         runtime: tokio::runtime::Handle::current(),

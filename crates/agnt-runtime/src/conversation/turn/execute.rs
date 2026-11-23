@@ -342,6 +342,7 @@ where
         let err = TurnError::CompletionFailed {
             msg: format!("Agent task panicked: {e}"),
             kind: executor::CompletionErrorKind::Unknown,
+            retry_after: None,
             exhaustion: None,
         };
         let ctx = Box::new(error::TurnContext {
@@ -352,8 +353,7 @@ where
         (err, ctx)
     })?;
 
-    let response = join_result.map_err(|e| {
-        let err = TurnError::from(*e);
+    let response = join_result.map_err(|err| {
         let ctx = Box::new(error::TurnContext {
             last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
             pre_turn_message_count,
@@ -456,11 +456,11 @@ struct StreamingTurnResult {
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
 ///
-/// The error is boxed: rig 0.44's `PromptError` is large enough to trip
-/// `clippy::result_large_err`.
+/// The failure is classified where the stream's last completion call is still
+/// in hand, so the typed finish reason travels with it.
 async fn build_agent_and_stream<P>(
     config: AgentPromptConfig<P>,
-) -> Result<StreamingTurnResult, Box<rig::completion::PromptError>>
+) -> Result<StreamingTurnResult, TurnError>
 where
     P: AsyncPermissionResolver,
 {
@@ -514,8 +514,7 @@ where
     // executor reads it after the run to narrate and steer the stop.
     let stop_ledger = hook.stop_ledger();
     // The compaction slot and the meter: read between the two runs, when the
-    // patched call's reply becomes the conversation's summary or the outputs a
-    // clearing dropped are written out.
+    // side-call's summary becomes the conversation's summary.
     let pending = hook.pending_summary();
     let meter = hook.meter();
     let mut builder = rig::agent::AgentBuilder::new(dyn_model)
@@ -544,10 +543,10 @@ where
     }
     let agent = builder.build();
 
-    // The turn runs at most twice: when the patched call answered with a
-    // summary, the between-runs splice lands it in the store and the second run
-    // answers the turn against the summarized context. The agent is reusable: a
-    // second prompt loads the conversation before its run, so it sent what the
+    // The turn runs at most twice: when the threshold decision asked a side-call
+    // for a summary, the between-runs splice lands it in the store and the second
+    // run answers the turn against the summarized context. The agent is reusable:
+    // a second prompt loads the conversation before its run, so it sent what the
     // splice wrote.
     let mut pass = 1u8;
     let result = loop {
@@ -568,8 +567,7 @@ where
 
         // The splice slot: pass one's run ended, so the store holds its exchange,
         // and this write is what the next run loads. A cancelled turn gets no
-        // second run, and the turn-end sweep clears the slots. A clearing comes
-        // first: the summary then builds on the cleared conversation.
+        // second run, and the turn-end sweep clears the slots.
         if pass == 1 && !result.cancelled {
             let mut spliced = false;
             if let Some(supersede) = pending.take_settled() {
@@ -585,19 +583,6 @@ where
                     // The splice rewrote the context the metered request
                     // described, so the anchor no longer describes the next
                     // request.
-                    meter.reset();
-                }
-                spliced = true;
-            } else if let Some(clearance) = pending.take_clear() {
-                if let (Some(store), Some(log)) = (&state_store, &state_session) {
-                    crate::conversation::compaction::cleared::land(
-                        clearance,
-                        Arc::clone(store),
-                        log.clone(),
-                        bus.stream(),
-                        bus.lifecycle(),
-                    )
-                    .await;
                     meter.reset();
                 }
                 spliced = true;
@@ -665,7 +650,7 @@ async fn drive_stream<S>(
     cancel_grace: Duration,
     pre_turn_message_count: usize,
     stop_ledger: StopLedger,
-) -> Result<StreamingTurnResult, Box<rig::completion::PromptError>>
+) -> Result<StreamingTurnResult, TurnError>
 where
     S: futures::Stream<
             Item = Result<rig::agent::MultiTurnStreamItem, rig::completion::PromptError>,
@@ -679,6 +664,10 @@ where
     let mut tool_call_count: usize = 0;
     let mut streamed_tool_calls: Vec<ToolCall> = Vec::new();
     let mut last_total_tokens: u64 = 0;
+    // Why the turn's latest completion stopped, as its `CompletionCall`
+    // reported it. rig surfaces that call before the failure the reply leaves
+    // behind, so the typed reason is here when the failure arrives.
+    let mut finish: Option<rig::completion::FinishReason> = None;
     let mut cancelled = false;
     let mut cancel_reason: Option<String> = None;
     let mut deltas_emitted = false;
@@ -757,6 +746,7 @@ where
                 // --- PER-SUBCALL USAGE ---
                 rig::agent::MultiTurnStreamItem::CompletionCall(call) => {
                     last_total_tokens = call.usage.total_tokens.unwrap_or(0);
+                    finish = call.finish_reason.clone();
                 }
 
                 // --- FINAL RESPONSE ---
@@ -776,6 +766,9 @@ where
                 rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. } => {
                     deltas_emitted = false;
                     text.clear();
+                    // The rejected attempt's finish reason describes a reply
+                    // the run replaced, not the one it fails on.
+                    finish = None;
                     let _ = bus.narration().publish(NarrationEvent::InferenceStopped {
                         reason: String::new(),
                     });
@@ -788,6 +781,23 @@ where
                 // siblings undispatched, and only the stream names them.
                 rig::agent::MultiTurnStreamItem::ToolCall { tool_call } => {
                     streamed_tool_calls.push(tool_call);
+                    // A reply that carried a call is not an answerless cut: its
+                    // calls run, and the turn goes on to another completion.
+                    // The reason it stopped must not outlive the turn it names.
+                    finish = None;
+                }
+
+                // --- TOOL LIFECYCLE ---
+                // rig reports a call starting before its dispatch hooks run and
+                // each accepted output item as it lands. The row and its result
+                // are the dispatch and outcome hooks' records — publishing one
+                // here would push a duplicate. A tool item also proves the reply
+                // it came from ended with calls, so the turn it belongs to was
+                // not an answerless cut, and the finish reason above no longer
+                // describes any failure.
+                rig::agent::MultiTurnStreamItem::ToolExecutionStarted { .. }
+                | rig::agent::MultiTurnStreamItem::ToolResultItem { .. } => {
+                    finish = None;
                 }
 
                 // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.
@@ -807,7 +817,7 @@ where
                         cancel_reason = Some(reason);
                         break;
                     }
-                    other => return Err(Box::new(other)),
+                    other => return Err(TurnError::from_failure(other, finish.as_ref())),
                 }
             }
             None => {

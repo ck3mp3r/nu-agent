@@ -105,12 +105,12 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         self.stop.clone()
     }
 
-    /// Return the per-turn slot the in-place summary decision stashes its plan
-    /// in.
+    /// Return the per-turn slot the threshold decision stashes a side-call's
+    /// summary in.
     ///
     /// Callers clone it **before** passing the hook into the agent builder
-    /// (which consumes `self`), then read it between the two runs: the patched
-    /// call's settled reply is what the turn executor splices into the store.
+    /// (which consumes `self`), then read it between the two runs: the summary
+    /// the side-call produced is what the turn executor splices into the store.
     pub(crate) fn pending_summary(&self) -> crate::hook::chain::PendingSummary {
         self.pending_summary.clone()
     }
@@ -152,12 +152,14 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Publish the not-run sequence for a call the cancel arm denied before it
-    /// ran.
+    /// Publish the not-run completion for a call a stop denied before it ran.
     ///
-    /// The cancel arm returns `stop` before the `ToolStarted` send, and rig
-    /// fails the dispatch before `on_outcome` fires — so without this sequence
-    /// the live transcript renders nothing for the denied call.
+    /// The dispatch gate publishes the call's started record before any arm
+    /// runs, and a stop fails the dispatch before `on_outcome` fires — nothing
+    /// would settle that record. This completion is its only settle. The
+    /// started record is already on the stream, so the call is marked
+    /// `AlreadyPublished`. Two arms stop a call: a user cancel and the doom
+    /// loop's stop detection.
     pub(super) async fn emit_cancelled_dispatch(
         &self,
         tool_name: &str,
@@ -170,7 +172,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 tool_name,
                 source,
                 arguments,
-                start: NotRunStart::Publish,
+                start: NotRunStart::AlreadyPublished,
             },
             NotRunOutcome::Cancelled,
         )

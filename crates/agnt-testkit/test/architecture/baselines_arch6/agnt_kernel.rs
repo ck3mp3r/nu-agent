@@ -8,7 +8,7 @@ pub const ROWS: &[&str] = &[
     "ARCH-6 agnt-kernel/src/bus/mod.rs:54: `Bus` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/ring.rs:119: `Ring` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/ring.rs:193: `Strict` has no consumer outside `agnt-kernel`",
-    "ARCH-6 agnt-kernel/src/records.rs:563: `TurnOutcome` has no consumer outside `agnt-kernel`",
+    "ARCH-6 agnt-kernel/src/records.rs:566: `TurnOutcome` has no consumer outside `agnt-kernel`",
 ];
 
 /// The impl-member rows: a `pub` member on a type this crate surfaces, with no
@@ -28,5 +28,13 @@ pub const MEMBER_ROWS: &[&str] = &[
     "ARCH-6 agnt-kernel/src/bus/ring.rs:125: `with_capacity` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/ring.rs:152: `subscriber_count` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/ring.rs:221: `subscriber_count` has no consumer outside `agnt-kernel`",
+    // The one recorded census exception. The consumption chain is
+    // `agnt-tui/src/interactive/render_loop/mod.rs:74` calling `subscribe_text` on
+    // a `Stream` it names through `agnt-runtime`'s re-export
+    // (`agnt-runtime/src/bus/mod.rs:9`), not through `agnt-kernel` itself, so the
+    // member-credit gate — the caller must write a path into the declaring crate
+    // — never fires. Blind-spot class: a re-export chain. Recorded permanently,
+    // not drained.
+    "ARCH-6 agnt-kernel/src/bus/stream.rs:65: `subscribe_text` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/stream.rs:70: `subscriber_count` has no consumer outside `agnt-kernel`",
 ];

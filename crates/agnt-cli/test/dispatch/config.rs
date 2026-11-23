@@ -405,7 +405,6 @@ fn test_dispatch_config_session_store_type_from_config_load_with_store() -> Resu
     let loaded = Ok(PluginConfig {
         session_store: Some(StoreTypeConfig {
             store_type: StoreType::Memory,
-            path: None,
         }),
         ..Default::default()
     });

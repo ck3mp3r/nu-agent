@@ -289,52 +289,6 @@ fn retry_not_attempted_when_no_partial_history() {
 }
 
 // ---------------------------------------------------------------------------
-// Gap 3 — extract_retry_after_ms unit tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn extract_retry_after_ms_parses_seconds_basic() {
-    use super::extract_retry_after_ms;
-    assert_eq!(
-        extract_retry_after_ms("rate limited, retry after 5 seconds"),
-        Some(5000)
-    );
-}
-
-#[test]
-fn extract_retry_after_ms_parses_retry_after_header() {
-    use super::extract_retry_after_ms;
-    assert_eq!(
-        extract_retry_after_ms("HTTP 429: Retry-After: 30"),
-        Some(30_000)
-    );
-}
-
-#[test]
-fn extract_retry_after_ms_parses_underscore_variant() {
-    use super::extract_retry_after_ms;
-    assert_eq!(
-        extract_retry_after_ms("error: retry_after: 10 seconds"),
-        Some(10_000)
-    );
-}
-
-#[test]
-fn extract_retry_after_ms_returns_none_when_absent() {
-    use super::extract_retry_after_ms;
-    assert_eq!(
-        extract_retry_after_ms("rate limit exceeded, try again later"),
-        None
-    );
-}
-
-#[test]
-fn extract_retry_after_ms_handles_zero() {
-    use super::extract_retry_after_ms;
-    assert_eq!(extract_retry_after_ms("retry after 0 seconds"), Some(0));
-}
-
-// ---------------------------------------------------------------------------
 // Jitter variance test
 // ---------------------------------------------------------------------------
 

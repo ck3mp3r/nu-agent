@@ -3,9 +3,7 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::LabeledError;
 
 use crate::bus::Bus;
-use crate::config::{
-    AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
-};
+use crate::config::{AgentsConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault};
 use crate::conversation::runtime::AgentConversationRuntime;
 use crate::conversation::runtime_parts::RuntimeParts;
 use crate::hooks::HookAgentContext;
@@ -109,64 +107,6 @@ pub async fn build_runtime(
     };
 
     AgentConversationRuntime::compose(parts, params).await
-}
-
-/// The compaction policy a `[compaction]` block asks for.
-///
-/// Starts from rig-memory's default policy and overwrites each field the block
-/// sets. A field the block leaves unset keeps rig-memory's default value,
-/// except two: `summarizer.limits.summary_tokens` is pinned to
-/// `crate::config::defaults::COMPACTION_SUMMARY_TOKENS` — a deliberate budget
-/// of 32_000 tokens, ours rather than whatever the library defaults to — and
-/// `tracked` is our two built-in rules, `read`'s path and `edit`'s path, the
-/// tool arguments a summary keeps. The built-in rules are imposed only when the
-/// block leaves `tracked` unset; an explicit list wins verbatim, an explicit
-/// empty list included.
-///
-/// `reserve_pct` is not a policy field: the decision derives the room from it
-/// and the turn's own spec, and sets it on a decision-local clone of this
-/// policy. The policy this builds keeps rig-memory's own reserve.
-pub fn build_compaction_policy(cfg: &CompactionConfig) -> rig_memory::CompactionPolicy {
-    let mut policy = rig_memory::CompactionPolicy::default();
-    policy.summarizer.limits.summary_tokens = crate::config::defaults::COMPACTION_SUMMARY_TOKENS;
-
-    if let Some(summary_tokens) = cfg.summary_tokens {
-        policy.summarizer.limits.summary_tokens = summary_tokens;
-    }
-    if let Some(snippet_chars) = cfg.snippet_chars {
-        policy.summarizer.limits.snippet_chars = snippet_chars;
-    }
-    if let Some(unknown_window_chars) = cfg.unknown_window_chars {
-        policy.summarizer.limits.unknown_window_chars = unknown_window_chars;
-    }
-    if let Some(keep_recent) = cfg.keep_recent {
-        policy.keep_recent = keep_recent;
-    }
-    if let Some(keep_asked) = cfg.keep_asked {
-        policy.keep_asked = keep_asked;
-    }
-    if let Some(clearing) = &cfg.clearing {
-        policy.clearing = clearing.clone();
-    }
-    if let Some(tracked) = &cfg.tracked {
-        policy.tracked = tracked.clone();
-    } else {
-        // Our built-in rules: the path arguments a summary keeps. The read and
-        // edit tools are our whole file surface, so two rules, not rig-basics'
-        // three; an explicit list (empty included) wins over them.
-        policy.tracked = vec![
-            rig_memory::TrackArgument::new("read", "path", "read-files"),
-            rig_memory::TrackArgument::new("edit", "path", "modified-files"),
-        ];
-    }
-    if let Some(prompts) = &cfg.prompts {
-        policy.summarizer.prompts = prompts.clone();
-    }
-    if let Some(near_window) = cfg.near_window {
-        policy.near_window = near_window;
-    }
-
-    policy
 }
 
 /// Apply persona model override if CLI --model was not provided.
@@ -296,10 +236,6 @@ pub fn build_preamble_cache(
 }
 
 // region:    --- Tests
-
-#[cfg(test)]
-#[path = "../../test/conversation/compaction/policy.rs"]
-mod policy_test;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/conversation/runtime_build_integration/test.rs"]

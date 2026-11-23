@@ -1,25 +1,25 @@
-//! The between-runs splice: the patched call's reply becomes the stored
+//! The between-runs splice: the side-call's summary becomes the stored
 //! conversation's summary, between pass one's save and pass two's load.
 //!
 //! The tests pin the folded store state after the splice: the summary entry by
-//! `summary_author`, the kept messages after it, and no assistant turn left
-//! where the model's internal call wrote its reply.
+//! `summary_author`, the kept messages after it, and pass one's own exchange left
+//! where the run saved it.
 
 use std::sync::Arc;
 
-use rig::completion::{CompletionResponse, Usage};
-use rig::message::{AssistantContent, Origin};
-use rig_memory::{Store, SummaryCut, SummaryState, summary_author};
+use rig::conversation::Author;
+use rig_memory::{Store, SummaryState, summarized_in_log, summary_author};
 
 use crate::bus::Bus;
 use crate::conversation::compaction::supersede::{Landed, land};
 use crate::hook::chain::PendingSummary;
 use crate::session::RigStoreConfig;
-use crate::types::{AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName};
+use crate::types::Message;
 use agnt_kernel::bus::LifecycleEvent;
 
 const CONV: &str = "conv-1";
 const SUMMARY: &str = "the older turns, summarized";
+const ANSWER: &str = "the turn's real answer";
 
 // region:    --- Test Support
 
@@ -31,88 +31,51 @@ async fn memory_store() -> Result<Arc<dyn Store>> {
     Ok(RigStoreConfig::in_memory().open(CONV).await?)
 }
 
-/// Seed the store with a conversation as pass one leaves it: the older turns,
-/// the turn's prompt, and the reply of the call the decision patched.
-async fn seeded(store: &Arc<dyn Store>, reply: &str) -> Result<()> {
+/// Seed the store with a conversation as pass one leaves it: the older turns, the
+/// turn's prompt, and the turn's own answer.
+async fn seeded(store: &Arc<dyn Store>) -> Result<()> {
     let mut conversation = rig_memory::load(&**store, CONV)?;
     conversation.extend([
         Message::user("an older question"),
         Message::assistant("an older answer"),
         Message::user("the turn's prompt"),
-        Message::assistant(reply),
+        Message::assistant(ANSWER),
     ]);
     rig_memory::save(&**store, CONV, &mut conversation)?;
     Ok(())
 }
 
-/// The tool result parts of `message`, in order.
-fn tool_results(message: &Message) -> Vec<&crate::types::ToolResult> {
-    let Message::User { content } = message else {
-        return Vec::new();
-    };
-    content
-        .iter()
-        .filter_map(|item| match item {
-            crate::types::UserContent::ToolResult(result) => Some(result),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Seed the store with a reply that called a tool: the older turns, the turn's
-/// prompt, the textless reply carrying one tool call, the result answering that
-/// call, and the assistant turn the run ended with.
-async fn seeded_with_tool_call(store: &Arc<dyn Store>) -> Result<()> {
-    let name = ToolName::new("tool").map_err(|_| "tool is a non-empty tool name")?;
-    let call = CallId::from_wire("tc-1");
-    let call_part = AssistantContent::ToolCall(ToolCall::new(
-        call.clone(),
-        ToolFunction::new(name.clone(), serde_json::Value::Null),
-    ));
-    let mut conversation = rig_memory::load(&**store, CONV)?;
-    conversation.extend([
-        Message::user("an older question"),
-        Message::assistant("an older answer"),
-        Message::user("the turn's prompt"),
-        Message::Assistant(AssistantMessage::new(vec![call_part])),
-        Message::tool_result(call.clone(), name, "the tool answered"),
-        Message::assistant("the real answer"),
-    ]);
-    rig_memory::save(&**store, CONV, &mut conversation)?;
-    Ok(())
-}
-
-/// The cut a decision stashes: the prompt is the first message kept, so the
-/// older turns are what the summary replaces.
-async fn cut(store: &Arc<dyn Store>) -> Result<SummaryCut> {
+/// What a side-call stashes as replaced: the prompt is the first message kept,
+/// so the older turns are what the summary replaces.
+async fn replaces(store: &Arc<dyn Store>) -> Result<Vec<Arc<Message>>> {
     let conversation = rig_memory::load(&**store, CONV)?;
     let at = conversation
         .messages()
         .iter()
         .position(|message| user_text(message) == "the turn's prompt")
         .ok_or("the seeded conversation holds the turn's prompt")?;
-    Ok(SummaryCut {
-        keep_from: conversation.id(at),
-        state: SummaryState::default(),
-    })
+    Ok(conversation
+        .messages()
+        .get(..at)
+        .unwrap_or_default()
+        .to_vec())
 }
 
-/// The completion answer the patched call returns: one text choice and no stop
-/// reason, so `summary_text` accepts it.
-fn answer(text: &str) -> CompletionResponse {
-    CompletionResponse::new(
-        vec![AssistantContent::text(text)],
-        Usage::new().input_tokens(10).output_tokens(5),
-        Origin::new("openai", "openai", "gpt-4o"),
-        serde_json::Value::Null,
-    )
-}
-
-/// The reply the hook's settle validated, taken from the slot it wrote it to.
+/// The summary the side-call produced, taken from the slot it wrote it to.
 fn settled(pending: &PendingSummary) -> Result<crate::hook::chain::Supersede> {
     pending
         .take_settled()
-        .ok_or_else(|| "the patched call's verdict must be stashed for the executor".into())
+        .ok_or_else(|| "the side-call's summary must be stashed for the executor".into())
+}
+
+/// Cut the store's conversation down to its first message, as another component
+/// saving over the log leaves it: fewer messages than the side-call read, so the
+/// prefix it summarized is no longer there to splice.
+fn shorten(store: &dyn Store) -> Result<()> {
+    let mut conversation = rig_memory::load(store, CONV)?;
+    conversation.splice(1.., std::iter::empty(), Author::plugin("test"));
+    rig_memory::save(store, CONV, &mut conversation)?;
+    Ok(())
 }
 
 /// The concatenated user text of `message`.
@@ -137,7 +100,7 @@ fn assistant_text(message: &Message) -> String {
     turn.content
         .iter()
         .filter_map(|item| match item {
-            AssistantContent::Text(text) => Some(text.text.clone()),
+            crate::types::AssistantContent::Text(text) => Some(text.text.clone()),
             _ => None,
         })
         .collect()
@@ -145,26 +108,26 @@ fn assistant_text(message: &Message) -> String {
 
 // endregion: --- Test Support
 
-/// WHEN the summary reply validates, THE between-runs splice SHALL leave the
-/// folded store conversation leading with the summary under `summary_author`,
-/// keeping the turn's prompt, and holding NO assistant entry for the reply.
+/// WHEN the side-call produced a summary, THE between-runs splice SHALL leave the
+/// folded store conversation leading with that summary under `summary_author`,
+/// keeping the turn's prompt and pass one's own answer.
 #[tokio::test]
-async fn validated_reply_lands_as_the_stored_summary() -> Result<()> {
+async fn side_call_summary_lands_as_the_stored_summary() -> Result<()> {
     // -- Setup & Fixtures: pass one's exchange, already saved.
     let store = memory_store().await?;
-    seeded(&store, SUMMARY).await?;
+    seeded(&store).await?;
     let bus = Bus::default();
     let mut rx = bus.lifecycle().subscribe();
     let pending_summary = PendingSummary::default();
-    let answer = answer(SUMMARY);
 
-    // -- Exec: the decision stashes, the settle validates, the executor splices.
-    pending_summary.stash(
-        cut(&store).await?,
+    // -- Exec: the side-call stashes, the executor splices.
+    let replaces = replaces(&store).await?;
+    pending_summary.stash_side_call(
+        replaces,
+        SummaryState::default(),
         agnt_kernel::CompactionSource::Auto,
-        vec![],
+        SUMMARY.to_string(),
     );
-    pending_summary.settle(&answer);
     let landed = land(
         settled(&pending_summary)?,
         Arc::clone(&store),
@@ -174,10 +137,10 @@ async fn validated_reply_lands_as_the_stored_summary() -> Result<()> {
     )
     .await;
 
-    // -- Check: the summary leads, the prompt is kept, the reply is gone.
+    // -- Check: the summary leads, the prompt and the turn's own answer are kept.
     assert!(
         matches!(&landed, Landed::Summary(text) if text == SUMMARY),
-        "the validated reply must land as the summary, got {landed:?}"
+        "the side-call's summary must land as the summary, got {landed:?}"
     );
     let conversation = rig_memory::load(&*store, CONV)?;
     let first = conversation
@@ -191,7 +154,7 @@ async fn validated_reply_lands_as_the_stored_summary() -> Result<()> {
     );
     assert!(
         user_text(first.message).contains(SUMMARY),
-        "the leading entry must carry the validated summary, got {:?}",
+        "the leading entry must carry the side-call's summary, got {:?}",
         user_text(first.message)
     );
     assert!(
@@ -205,8 +168,27 @@ async fn validated_reply_lands_as_the_stored_summary() -> Result<()> {
         conversation
             .messages()
             .iter()
-            .all(|message| assistant_text(message) != SUMMARY),
-        "the internal call must not read back as an assistant turn"
+            .any(|message| assistant_text(message) == ANSWER),
+        "the summary must keep pass one's own answer"
+    );
+    let recorded = summarized_in_log(&*store, CONV)?;
+    assert_eq!(
+        recorded.len(),
+        1,
+        "the splice must be the log's one summary, got {recorded:?}"
+    );
+    let (summary_id, replaced) = recorded
+        .iter()
+        .next()
+        .ok_or("the log holds the splice's summary")?;
+    assert_eq!(
+        first.id, *summary_id,
+        "the log's summary must be the entry the conversation leads with"
+    );
+    assert_eq!(
+        replaced.len(),
+        2,
+        "the summary must record the two older turns it replaced"
     );
     let completed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
         .await
@@ -219,26 +201,31 @@ async fn validated_reply_lands_as_the_stored_summary() -> Result<()> {
     Ok(())
 }
 
-/// WHEN the reply fails `summary_text` validation, THEN THE splice SHALL remove
-/// only the reply entry — no summary inserted — and SHALL publish `Failed`.
+/// WHEN the stored conversation no longer keeps the prefix the side-call read,
+/// THE splice SHALL be refused and the log SHALL gain no summary.
 #[tokio::test]
-async fn rejected_reply_removes_only_the_reply_entry() -> Result<()> {
-    // -- Setup & Fixtures: an empty answer, which `summary_text` refuses.
+async fn refused_splice_leaves_no_summary_in_the_log() -> Result<()> {
+    // -- Setup & Fixtures: the side-call's stash, then a conversation shorter
+    // than the prefix it read.
     let store = memory_store().await?;
-    seeded(&store, "").await?;
-    let before = rig_memory::load(&*store, CONV)?.messages().len();
+    seeded(&store).await?;
     let bus = Bus::default();
-    let mut rx = bus.lifecycle().subscribe();
     let pending_summary = PendingSummary::default();
-    let answer = answer("");
-
-    // -- Exec
-    pending_summary.stash(
-        cut(&store).await?,
+    let replaces = replaces(&store).await?;
+    pending_summary.stash_side_call(
+        replaces,
+        SummaryState::default(),
         agnt_kernel::CompactionSource::Auto,
-        vec![],
+        SUMMARY.to_string(),
     );
-    pending_summary.settle(&answer);
+    let before = summarized_in_log(&*store, CONV)?;
+    assert!(
+        before.is_empty(),
+        "nothing is in the log as a summary before the splice, got {before:?}"
+    );
+    shorten(&*store)?;
+
+    // -- Exec: the executor splices over the shortened conversation.
     let landed = land(
         settled(&pending_summary)?,
         Arc::clone(&store),
@@ -248,136 +235,46 @@ async fn rejected_reply_removes_only_the_reply_entry() -> Result<()> {
     )
     .await;
 
-    // -- Check: no summary, one entry fewer, and a Failed row.
+    // -- Check: the splice is refused and the log keeps its summaries.
     assert!(
-        matches!(&landed, Landed::Rejected(_)),
-        "an empty answer must not land as a summary, got {landed:?}"
-    );
-    let conversation = rig_memory::load(&*store, CONV)?;
-    assert!(
-        conversation
-            .entries()
-            .all(|entry| entry.author != Some(&summary_author())),
-        "a rejected reply must insert no summary"
+        matches!(
+            &landed,
+            Landed::Rejected(message) if message == "Compaction summary could not be spliced in"
+        ),
+        "a conversation that no longer keeps the prefix must refuse the splice, got {landed:?}"
     );
     assert_eq!(
-        conversation.messages().len(),
-        before - 1,
-        "a rejected reply must remove exactly its own entry"
-    );
-    let failed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .map_err(|_| "should receive CompactionFailed within timeout")?
-        .map_err(|_| "should receive CompactionFailed")?;
-    assert!(
-        matches!(&failed, LifecycleEvent::CompactionFailed { .. }),
-        "an unusable summary must be announced, got {failed:?}"
+        summarized_in_log(&*store, CONV)?,
+        before,
+        "a refused splice must leave the log without a new summary"
     );
     Ok(())
 }
 
-/// WHEN the rejected reply carried a tool call and the store holds the result
-/// answering it, THEN THE splice SHALL remove the result with the reply, keep
-/// the run's real answer and the earlier turns, and insert no summary.
+/// WHEN a side-call stashes a summary, THE stash SHALL spend the turn's one
+/// attempt, and the turn-end sweep SHALL leave nothing for the next turn.
 #[tokio::test]
-async fn rejected_reply_takes_its_paired_tool_records() -> Result<()> {
-    // -- Setup & Fixtures: an empty answer over a reply that called a tool.
+async fn one_attempt_per_turn_side_call() -> Result<()> {
+    // -- Setup & Fixtures: a slot that already stashed a summary.
     let store = memory_store().await?;
-    seeded_with_tool_call(&store).await?;
-    let bus = Bus::default();
+    seeded(&store).await?;
     let pending_summary = PendingSummary::default();
-    let answer = answer("");
-
-    // -- Exec
-    pending_summary.stash(
-        cut(&store).await?,
+    let replaces = replaces(&store).await?;
+    pending_summary.stash_side_call(
+        replaces,
+        SummaryState::default(),
         agnt_kernel::CompactionSource::Auto,
-        vec![],
-    );
-    pending_summary.settle(&answer);
-    let landed = land(
-        settled(&pending_summary)?,
-        Arc::clone(&store),
-        CONV.to_string(),
-        bus.stream(),
-        bus.lifecycle(),
-    )
-    .await;
-
-    // -- Check: the call and its result are gone together, nothing else is.
-    assert!(
-        matches!(&landed, Landed::Rejected(_)),
-        "an empty answer must not land as a summary, got {landed:?}"
-    );
-    let conversation = rig_memory::load(&*store, CONV)?;
-    let unpaired = conversation.validate();
-    assert!(
-        unpaired.is_ok(),
-        "the folded store must pair every tool call with its result, got {unpaired:?}"
-    );
-    assert!(
-        conversation
-            .messages()
-            .iter()
-            .all(|message| tool_results(message).is_empty()),
-        "a tool result must not outlive the call it answers"
-    );
-    assert!(
-        conversation
-            .messages()
-            .iter()
-            .any(|message| assistant_text(message) == "the real answer"),
-        "the cleanup must keep the run's real answer"
-    );
-    assert!(
-        conversation
-            .messages()
-            .iter()
-            .any(|message| user_text(message) == "the turn's prompt"),
-        "the cleanup must keep the turn's prompt"
-    );
-    assert!(
-        conversation
-            .messages()
-            .iter()
-            .any(|message| assistant_text(message) == "an older answer"),
-        "the cleanup must keep the older turns"
-    );
-    assert!(
-        conversation
-            .entries()
-            .all(|entry| entry.author != Some(&summary_author())),
-        "a rejected reply must insert no summary"
-    );
-    Ok(())
-}
-
-/// WHEN a turn is patched, THE decision SHALL let the turn's request patch
-/// once: a second pass over the same turn takes no second attempt.
-#[tokio::test]
-async fn one_attempt_per_turn_patch() -> Result<()> {
-    // -- Setup & Fixtures: a slot that already stashed a plan.
-    let store = memory_store().await?;
-    seeded(&store, SUMMARY).await?;
-    let pending_summary = PendingSummary::default();
-    pending_summary.stash(
-        cut(&store).await?,
-        agnt_kernel::CompactionSource::Auto,
-        vec![],
+        SUMMARY.to_string(),
     );
 
     // -- Exec & Check: the attempt is spent until the turn-end sweep.
     assert!(
         pending_summary.attempted(),
-        "a stashed plan spends the turn's one attempt"
-    );
-    assert!(
-        pending_summary.awaiting_reply().is_some(),
-        "a stashed plan is waiting for the reply its deltas belong to"
+        "a stashed summary spends the turn's one attempt"
     );
     pending_summary.clear();
     assert!(
-        !pending_summary.attempted() && pending_summary.awaiting_reply().is_none(),
+        !pending_summary.attempted() && pending_summary.take_settled().is_none(),
         "the turn-end sweep must leave nothing for the next turn"
     );
     Ok(())

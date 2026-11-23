@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::bus::{Bus, StrictSubscription, Subscription};
 use crate::config::Config;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use agnt_kernel::NoticeKind;
 use agnt_kernel::bus::{ControlCommand, LifecycleEvent, NarrationEvent, SessionRecord};
@@ -215,7 +216,7 @@ pub(super) fn test_compactor(bus: Bus) -> crate::conversation::compaction::compa
     NuCompactor::from_shared_model(
         Arc::new(std::sync::Mutex::new(model.erase())),
         bus,
-        rig_memory::CompactionPolicy::default(),
+        rig_memory::CompactionSettings::default(),
         test_model_spec(),
     )
 }
@@ -231,15 +232,10 @@ pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
     )
 }
 
-/// A `CompactionConfig` with deterministic defaults (no LLM invoked) used by
+/// The session's compactor with deterministic defaults (no LLM invoked) used by
 /// tests that are not exercising compaction.
-pub(super) fn test_compaction_config(
-    bus: Bus,
-) -> crate::conversation::compaction::CompactionConfig {
-    crate::conversation::compaction::CompactionConfig {
-        compactor: test_compactor(bus.clone()),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    }
+pub(super) fn test_compaction_config(bus: Bus) -> NuCompactor {
+    test_compactor(bus.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +256,23 @@ pub(super) fn shared_model_handle(
     model: MockCompletionModel,
 ) -> Arc<std::sync::Mutex<DynModel<Completion>>> {
     Arc::new(std::sync::Mutex::new(model.erase()))
+}
+
+// ---------------------------------------------------------------------------
+// Truncated reply fixture
+// ---------------------------------------------------------------------------
+
+/// A reply the output limit cut before it produced an answer.
+///
+/// The typed finish reason is the whole signal: rig surfaces the completion
+/// call that carries it, then fails the turn because a cut reply has no
+/// answer. The pipeline classifies the failure as an output-budget turn from
+/// that reason, never from the diagnostic text rig writes about it.
+pub(super) fn truncated_reply() -> rig::test_utils::MockStreamEvent {
+    use rig::completion::FinishReason;
+    let mut finish = rig::test_utils::mock_final(rig::completion::request::Usage::default());
+    finish.reason = Some(FinishReason::Length);
+    rig::test_utils::MockStreamEvent::FinalResponse(finish)
 }
 
 // ---------------------------------------------------------------------------

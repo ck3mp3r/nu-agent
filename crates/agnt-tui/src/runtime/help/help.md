@@ -78,39 +78,29 @@
 
 # Compaction
 
-Auto compaction fires when the next request would exceed the room `reserve_pct` keeps free: 20% of the model's input limit (unset) or the percent you set.
+Auto compaction fires when the next request would exceed the model's input limit less `reserve_tokens`: 16384 tokens (unset) or the count you set.
 
-These fields mirror rig-memory's own policy, except `reserve_pct`, which is ours. Each is optional, and unset = the rig default, except `reserve_pct` and `summary_tokens`:
+Each key is optional; a key outside the three fails the load as unknown, and unset = the built-in default:
 
-- `keep_recent` — tokens of the newest messages an automatic compaction keeps verbatim (unset = the rig default, 20000 tokens, a quarter of the window at most).
-- `keep_asked` — tokens of the newest messages an asked compaction keeps verbatim (unset = the rig default, 0 tokens).
-- `clearing.keep_tokens` / `clearing.keep_under` — the newest tool output kept, and the size under which an output is never cleared (unset = the rig defaults, 20000 / 500).
-- `near_window` — what a near-window compaction does with the outputs it clears: `"summarize"` writes notes on an output that cannot be had again, `"clear"` clears silently (unset = the rig default, `"summarize"`).
-
-Near-window clearing keeps the turn when it frees too little of the room, or when the outputs it would drop cannot be had again and their notes cannot be written.
-- `reserve_pct` — percent of the model's input limit kept free below the trigger, 0-100, derived on every decision from the turn's own model (unset = 20, ours).
-- `summary_tokens` — the longest summary asked for, in tokens (unset = 32000 — ours, a deliberate pin).
-- `snippet_chars` — characters of a tool's output or arguments the summarizer sees (unset = the rig default, 2000).
-- `unknown_window_chars` — characters of conversation sent when the model window is unknown (unset = the rig default, 400000).
-- `tracked` / `prompts` — advanced: the tool arguments a summary tracks — unset = our two built-in rules, `read` with `path` into `read-files` and `edit` with `path` into `modified-files` (an explicit list wins verbatim, an empty list included) — and the summarizer's six prompts (unset = the rig defaults).
+- `enabled` — whether a conversation is compacted on its own: near the window, and after a request refused as too long (unset = the built-in default, true).
+- `reserve_tokens` — tokens of the model's input limit kept free below the trigger (unset = the built-in default, 16384 tokens).
+- `keep_recent_tokens` — about how many tokens of the newest messages stay as they are (unset = the built-in default, 20000 tokens).
 
 Use `/compact` to trigger compaction immediately; it bypasses threshold gating. `/compact` args are reserved for a future focus option.
 
 # Auto compaction behavior
 
-- Auto compaction fires once the next request would exceed the room `reserve` keeps free below the model's input limit.
+- Auto compaction fires once the next request would exceed the model's input limit less `reserve_tokens`.
 - Manual and auto compaction share one execution path.
-- Old tool outputs are cleared before the summary is asked for; error results and small outputs stay.
-- The newest messages stay verbatim within the keep budget, and the older ones become the summary.
-- The splice is written to the session's rig-memory log, and the next run loads the compacted set.
+- The newest messages stay as they are within the keep budget, and the older ones become the summary.
+- The splice is written to the session's saved memory, and the next run loads the compacted set.
 
 # Session memory persistence
 
-- Compaction updates are persisted to the session's rig-memory log.
+- Compaction updates are persisted to the session's saved memory.
 - The persisted update is the compacted message set; the next run loads it.
 - Compaction emits a transcript-visible summary artifact including source and summarized/kept counts.
 - The `/uncompact` artifact (`Uncompacted`) carries the source of the command that asked for it — `manual`, the only uncompact source.
-- The restored aside in the transcript holds no compaction source of its own; the `Uncompacted` record is where the asking source travels.
 
 # Troubleshooting
 

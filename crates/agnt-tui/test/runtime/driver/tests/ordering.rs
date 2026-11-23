@@ -87,7 +87,7 @@ async fn summary_chunk_folds_before_a_compaction_completion_pending_on_the_same_
                 DriveEvent::TextRecord(Box::new(summary_chunk(&format!("{summary} final")))),
                 DriveEvent::Record(Box::new(SessionRecord::Compaction(
                     CompactionRecord::Completed {
-                        source: CompactionSource::Auto,
+                        source: Some(CompactionSource::Auto),
                         summary: format!("{summary} final"),
                     },
                 ))),

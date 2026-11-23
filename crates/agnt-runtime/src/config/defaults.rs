@@ -72,18 +72,3 @@ pub const REPETITION_GUARD_ENABLED: bool = true;
 
 /// Default timeout for a user hook subprocess, in milliseconds.
 pub const HOOK_TIMEOUT_MS: u64 = 10_000;
-
-/// Default percent of the model's input limit kept free below the compaction
-/// trigger.
-///
-/// The room the trigger, the clearing check, and the summary request measure
-/// against is derived from this once per decision, against that turn's model.
-/// `[compaction] reserve_pct` overrides it.
-pub const DEFAULT_RESERVE_PCT: u32 = 20;
-
-/// Default compaction summary budget in tokens.
-///
-/// Pinned to rig-memory 0.46's own 32_000 default as a deliberate, reviewed
-/// decision: an unset `[compaction] summary_tokens` key keeps that budget even
-/// if the library changes its default again.
-pub(crate) const COMPACTION_SUMMARY_TOKENS: u64 = 32_000;

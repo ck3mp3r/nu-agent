@@ -7,7 +7,6 @@
 pub(super) use std::sync::{Arc, Mutex};
 
 pub(super) use crate::bus::Bus;
-pub(super) use crate::conversation::compaction::CompactionConfig;
 pub(super) use crate::conversation::compaction::compactor::NuCompactor;
 pub(super) use crate::hook::chain::HookEnv;
 pub(super) use crate::hook::doom_loop::DoomLoopState;
@@ -31,12 +30,12 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 // ---------------------------------------------------------------------------
 
 /// Shared fixtures for the `decide_compaction` trigger tests: an in-memory
-/// store (no markers), a compactor backed by a deterministic mock model, an
-/// empty meter, the compaction config + bus, and the spec the decision meters
-/// against (a 10k-token input limit, so a short conversation is under it).
+/// store (no markers), a compactor carrying rig's compaction settings, an
+/// empty meter, the bus, and the spec the decision measures against (a
+/// 10k-token input limit, so a short conversation is under it).
 pub(super) struct DecideFixture {
     pub(super) memory: Arc<CachedMemory>,
-    pub(super) compaction: CompactionConfig,
+    pub(super) compaction: NuCompactor,
     pub(super) bus: Bus,
     pub(super) meter: crate::hook::AnchorMeter,
     pub(super) pending: crate::hook::chain::PendingSummary,
@@ -51,14 +50,6 @@ pub(super) struct DecideFixture {
 
 /// Build the fixtures shared by the `decide_compaction` trigger tests.
 pub(super) fn decide_fixture() -> Result<DecideFixture> {
-    decide_fixture_with_policy(rig_memory::CompactionPolicy::default())
-}
-
-/// The same fixtures over `policy`: the clearing and notes branches of the ladder
-/// read it, so a test that pins them supplies its own.
-pub(super) fn decide_fixture_with_policy(
-    policy: rig_memory::CompactionPolicy,
-) -> Result<DecideFixture> {
     let summary_model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -67,19 +58,21 @@ pub(super) fn decide_fixture_with_policy(
     let compactor = NuCompactor::new(
         summary_model.clone().erase(),
         bus.clone(),
-        policy,
+        // Keeps only the newest message — this turn's prompt — so a short
+        // conversation is still summarized and the cut splits no turn.
+        rig_memory::CompactionSettings {
+            keep_recent_tokens: 1,
+            ..rig_memory::CompactionSettings::default()
+        },
         test_model_spec(),
     );
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
-    let compaction = CompactionConfig {
-        compactor,
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    };
-    // The turn's model answers the side-calls the ladder asks for; every call
+    let compaction = compactor;
+    // The turn's model answers the side-calls the decision asks for; every call
     // consumes one scripted streaming turn. It carries the turn's spec, as the
-    // wire serving a real turn does: the settle site reads it for the fallback.
+    // wire serving a real turn does.
     let spec = spec_with_input_limit(60_000)?;
     let turn_model = MockCompletionModel::from_stream_turns((0..4).map(|_| {
         [
@@ -153,15 +146,12 @@ impl Default for HookStateFixture {
                     crate::session::RigStoreConfig::in_memory(),
                 )),
                 conversation_id: "chain-test-conv".to_string(),
-                compaction: CompactionConfig {
-                    compactor: NuCompactor::new(
-                        MockCompletionModel::text("summary").erase(),
-                        Bus::default(),
-                        rig_memory::CompactionPolicy::default(),
-                        test_model_spec(),
-                    ),
-                    reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-                },
+                compaction: NuCompactor::new(
+                    MockCompletionModel::text("summary").erase(),
+                    Bus::default(),
+                    rig_memory::CompactionSettings::default(),
+                    test_model_spec(),
+                ),
                 model: MockCompletionModel::default().erase(),
                 meter: crate::hook::AnchorMeter::default(),
                 turn_usage: crate::hook::TurnUsage::default(),
@@ -185,6 +175,32 @@ impl HookStateFixture {
     /// Whether the doom-loop and output-repetition detectors run.
     pub(super) fn with_repetition_guard(mut self, on: bool) -> Self {
         self.state.repetition_guard = on;
+        self
+    }
+
+    /// Seed the doom detector with `count` identical call signatures, so the
+    /// next call of `tool` with `args` trips it: the fifth matching signature
+    /// is the first detection in the turn attempt.
+    pub(super) fn with_doom_signatures(self, tool: &str, args: &str, count: usize) -> Self {
+        *self
+            .state
+            .doom_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = DoomLoopState {
+            recent_signatures: vec![(tool.to_string(), args.to_string()); count],
+            escalation_count: 0,
+        };
+        self
+    }
+
+    /// The escalation counter the doom detector carries into the turn: `4`
+    /// means the next detection stops the run instead of steering.
+    pub(super) fn with_doom_escalation(self, escalation_count: usize) -> Self {
+        self.state
+            .doom_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .escalation_count = escalation_count;
         self
     }
 
@@ -220,10 +236,10 @@ impl HookStateFixture {
 
     /// The fixture with its compactor back in step with its model and bus.
     fn recompacted(mut self) -> Self {
-        self.state.compaction.compactor = NuCompactor::new(
+        self.state.compaction = NuCompactor::new(
             self.compactor_model.clone(),
             self.compaction_bus.clone(),
-            rig_memory::CompactionPolicy::default(),
+            rig_memory::CompactionSettings::default(),
             test_model_spec(),
         );
         self
@@ -239,6 +255,27 @@ pub(super) fn build_chain<P: crate::hook::permission_resolver::AsyncPermissionRe
     permission: P,
     fixture: HookStateFixture,
 ) -> HookChain<P> {
+    build_chain_with_gates(
+        bus,
+        permission,
+        fixture,
+        None,
+        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+    )
+}
+
+/// Build a chain over `bus` with the gate limits a test needs: the per-sub-turn
+/// tool cap (`None` is the production default) and the MCP registry the
+/// circuit-breaker arm reads. Every other part comes from the fixture.
+pub(super) fn build_chain_with_gates<
+    P: crate::hook::permission_resolver::AsyncPermissionResolver,
+>(
+    bus: Bus,
+    permission: P,
+    fixture: HookStateFixture,
+    max_tool_calls_per_subturn: Option<usize>,
+    mcp_registry: Arc<crate::tools::handler::McpToolRegistry>,
+) -> HookChain<P> {
     HookChain::new(
         HookEnv {
             bus,
@@ -246,8 +283,8 @@ pub(super) fn build_chain<P: crate::hook::permission_resolver::AsyncPermissionRe
         },
         permission,
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        None,
+        mcp_registry,
+        max_tool_calls_per_subturn,
         fixture.state,
     )
 }
@@ -298,12 +335,6 @@ impl RepetitionTurnFixture {
             session,
             _temp_dir: temp_dir,
         })
-    }
-
-    /// The in-place summary slot this fixture's turns share, so a test can
-    /// stash a plan before a turn and read its verdict after.
-    pub(super) fn pending_summary(&self) -> crate::hook::chain::PendingSummary {
-        self.session.state.pending_summary.clone()
     }
 
     /// Queue a script of one or more streaming turns on the shared model.

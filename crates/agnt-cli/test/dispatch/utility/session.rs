@@ -5,32 +5,24 @@ use agnt_runtime::types::{AssistantMessage, CallId, Opaque, Text, ToolName, Tool
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
-fn test_utility_session_compaction_display_reports_the_resolved_policy() -> Result<()> {
+fn test_utility_session_compaction_display_reports_the_resolved_settings() -> Result<()> {
     // -- Setup & Fixtures
-    let mut policy = agnt_runtime::rig_memory::CompactionPolicy {
-        keep_recent: 5000,
-        clearing: agnt_runtime::rig_memory::ClearToolOutputs {
-            keep_tokens: 9000,
-            ..Default::default()
-        },
-        ..Default::default()
+    let settings = agnt_runtime::config::CompactionSettings {
+        enabled: false,
+        reserve_tokens: 40_000,
+        keep_recent_tokens: 5_000,
     };
-    // The 32k budget is our deliberate pin (c5t 7eb115fe), not rig's default.
-    policy.summarizer.limits.summary_tokens = 32_000;
 
     // -- Exec
-    let lines = compaction_display(&policy, agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT);
+    let lines = compaction_display(&settings);
 
     // -- Check
     assert_eq!(
         lines,
         vec![
-            "Compaction keep_recent: 5000".to_string(),
-            "Compaction keep_asked: 0".to_string(),
-            "Compaction reserve_pct: 20".to_string(),
-            "Compaction summary_tokens: 32000".to_string(),
-            "Compaction keep_tokens: 9000".to_string(),
-            "Compaction keep_under: 500".to_string(),
+            "Compaction enabled: false".to_string(),
+            "Compaction reserve_tokens: 40000".to_string(),
+            "Compaction keep_recent_tokens: 5000".to_string(),
         ]
     );
     Ok(())

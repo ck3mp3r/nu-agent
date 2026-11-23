@@ -4,19 +4,16 @@
 use super::super::*;
 use super::*;
 
-use crate::hook::chain::in_place::InPlace;
-
-/// WHEN the in-place request is impossible and no clearing can be had, THEN THE
-/// over-threshold decision SHALL take the side-call: the request goes unpatched,
-/// no worker compaction is scheduled, and the summary waits for the executor's
-/// between-runs splice — which is what the next run loads.
+/// WHEN the decision crosses the threshold, THEN THE decision SHALL take the
+/// side-call: the request goes unpatched, no worker compaction is scheduled, and
+/// the summary waits for the executor's between-runs splice — which is what the
+/// next run loads.
 #[tokio::test]
 async fn side_call_lands_between_the_runs_and_the_next_load_sees_it() -> Result<()> {
     // -- Setup & Fixtures
     // The end-to-end proof that the Auto worker path is closed: the decide step
     // reads the live rig conversation and asks for the summary on its own. Four
-    // messages of 30k chars each are over a 5k limit, whose kept window leaves no
-    // room for an in-place request; plain user messages leave nothing to clear.
+    // messages of 30k chars each are over a 5k limit.
     let fx = decide_fixture()?;
     let spec = spec_with_input_limit(5_000)?;
     let pending = crate::hook::chain::PendingSummary::default();
@@ -30,10 +27,8 @@ async fn side_call_lands_between_the_runs_and_the_next_load_sees_it() -> Result<
     let action = decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&spec),
-            pending: &pending,
-        },
+        Some(&spec),
+        &pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -152,19 +147,16 @@ async fn successful_run_compaction_clears_the_latch() -> Result<()> {
         crate::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
-    let compaction = CompactionConfig {
-        compactor: NuCompactor::new(
-            MockCompletionModel::text("summary").erase(),
-            Bus::default(),
-            rig_memory::CompactionPolicy::default(),
-            test_model_spec(),
-        ),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    };
+    let compaction = NuCompactor::new(
+        MockCompletionModel::text("summary").erase(),
+        Bus::default(),
+        rig_memory::CompactionSettings::default(),
+        test_model_spec(),
+    );
     let meter = crate::hook::AnchorMeter::default();
     let store_latch: crate::hook::StoreLatch = Default::default();
     *store_latch.lock().map_err(|_| "store latch poisoned")? = Some("dead".to_string());
-    let model = compaction.compactor.model();
+    let model = compaction.model();
 
     // -- Exec
     let _ = run_compaction(
@@ -183,6 +175,74 @@ async fn successful_run_compaction_clears_the_latch() -> Result<()> {
             .map_err(|_| "store latch poisoned")?
             .is_none(),
         "a store that opens SHALL clear the latch"
+    );
+    Ok(())
+}
+
+/// WHEN a manual compaction runs while a provider refusal is on record, THEN THE
+/// run SHALL consume the verdict, so the next decision — whose estimate is under
+/// the threshold — plans nothing: one refusal asks for one compaction, and the
+/// one that ran is that compaction.
+#[tokio::test]
+async fn run_compaction_consumes_the_overflow_verdict() -> Result<()> {
+    // -- Setup & Fixtures: a settled overflow on a conversation far under the 60k
+    // limit less the 16_384-token reserve, so only the verdict could fire either
+    // path.
+    let fx = decide_fixture()?;
+    seed_rig(
+        &fx,
+        &[
+            Message::user("turn one"),
+            Message::assistant("turn one reply"),
+        ],
+    )
+    .await?;
+    fx.compaction.mark_overflowed();
+
+    // -- Exec: the user's `/compact`.
+    let _ = run_compaction(
+        "conv-1",
+        &CompactionPath::new(
+            fx.memory.as_ref(),
+            &fx.compaction,
+            &fx.meter,
+            &Default::default(),
+            &fx.model,
+        ),
+        CompactionSource::Manual,
+        fx.bus.stream(),
+        fx.bus.lifecycle(),
+    )
+    .await;
+
+    // -- Check: the verdict is spent, and the next decision plans nothing.
+    assert!(
+        !fx.compaction.take_overflowed(),
+        "a manual compaction must consume the verdict"
+    );
+    let action = decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        Some(&fx.spec),
+        &fx.pending,
+        &CompactionPath::new(
+            fx.memory.as_ref(),
+            &fx.compaction,
+            &fx.meter,
+            &Default::default(),
+            &fx.model,
+        ),
+        fx.bus.stream(),
+        fx.bus.lifecycle(),
+    )
+    .await;
+    assert!(
+        matches!(action, rig::agent::CompletionCallAction::Continue),
+        "the next decision leaves the request alone, got {action:?}"
+    );
+    assert!(
+        fx.pending.take_settled().is_none(),
+        "a spent verdict must leave the under-threshold request alone"
     );
     Ok(())
 }

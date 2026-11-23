@@ -1,33 +1,30 @@
-//! Hook-driven compaction: the threshold decision and the ladder it takes — an
-//! in-place summary, a near-window clearing, or a self-contained side-call — and
-//! the splice that runs when the orchestrator dispatches a manual compaction.
+//! Hook-driven compaction: the threshold decision and the self-contained side-call
+//! it schedules, and the splice that runs when the orchestrator dispatches a manual
+//! compaction.
 
 // region:    --- Modules
 
-mod clear;
 mod side_call;
-
-pub(crate) use clear::PendingClearance;
 
 // endregion: --- Modules
 
 use rig::DynModel;
 use rig::agent::CompletionCallAction;
+use rig::catalog::ModelSpec;
 use rig::conversation::Conversation;
 use rig::message::Message;
 use rig::operation::Completion;
-use rig_memory::{CompactReason, Prepared, next_request_tokens};
+use rig_memory::request_tokens;
 
 use agnt_kernel::bus::LifecycleEvent;
 use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
 use agnt_storage::StorageError;
 
 use crate::bus::{LifecycleTx, Stream};
-use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::anchor_meter::AnchorMeter;
 
 use super::PendingSummary;
-use super::in_place::{self, InPlace};
 
 // region:    --- Types
 
@@ -40,8 +37,8 @@ use super::in_place::{self, InPlace};
 pub struct CompactionPath<'a> {
     /// The session's rig-memory store.
     pub memory: &'a crate::session::CachedMemory,
-    /// The compaction policy the session decided on.
-    pub compaction: &'a CompactionConfig,
+    /// The compactor the session decided on, carrying rig's compaction settings.
+    pub compaction: &'a NuCompactor,
     /// The trigger's meter: the usage the last completion reported and the entry
     /// it counts through.
     pub meter: &'a AnchorMeter,
@@ -58,7 +55,7 @@ pub struct CompactionPath<'a> {
 impl<'a> CompactionPath<'a> {
     pub fn new(
         memory: &'a crate::session::CachedMemory,
-        compaction: &'a CompactionConfig,
+        compaction: &'a NuCompactor,
         meter: &'a AnchorMeter,
         store_latch: &'a crate::hook::StoreLatch,
         model: &'a DynModel<Completion>,
@@ -75,35 +72,30 @@ impl<'a> CompactionPath<'a> {
 
 // endregion: --- Implementations
 
-/// Decide what this turn's completion call sends: the baseline request, or an
-/// in-place summary request that replaces its history.
+/// Decide what this turn's completion call sends, and whether it schedules a
+/// summary before the turn's second pass.
 ///
-/// The trigger is rig's: the tokens the next request would send, measured by
-/// `next_request_tokens`, against the room the `reserve_pct` knob keeps free
-/// below the model's input limit (`CompactionPolicy::over_threshold`). The room
-/// is derived once per decision from THIS turn's spec, and the policy the three
-/// consumers measure against is a decision-local clone carrying it — the
-/// session's stored policy is never mutated. The request is
-/// the CURRENT conversation of the session's rig-memory store — the store a run
-/// loads at its start — plus this turn's prompt, so a turn saved after the cache
-/// was populated is counted. `rig_memory::load` re-reads and folds the log on every
-/// call, so it is always current; the first-read cache is not a compaction input.
+/// The trigger is rig's: the tokens the next request would send, counted by
+/// `request_tokens`, against `should_compact` — the model's input limit less the
+/// settings' `reserve_tokens`. The request is the CURRENT conversation of the
+/// session's rig-memory store — the store a run loads at its start — plus this
+/// turn's prompt, so a turn saved after the cache was populated is counted.
+/// `rig_memory::load` re-reads and folds the log on every call, so it is always
+/// current; the first-read cache is not a compaction input.
 ///
-/// The measured request is recorded on the meter, so the completion that settles
-/// writes the usage the next decision meters with. An unknown input limit never
-/// reads as over the threshold: rig answers `false` without a limit, so the turn
-/// continues and no request is scheduled.
+/// The entry the request counts through is recorded on the meter, so the
+/// completion that settles writes the usage the next decision anchors with. An
+/// unknown input limit never reads as over the threshold: `should_compact` needs
+/// a window, so the turn continues and no request is scheduled.
 ///
-/// Over the threshold, the call is patched in place when the conversation has
-/// something worth summarizing and the model leaves room for the summary; the
-/// summary is written from that call's own reply. When it does not, older tool
-/// outputs are cleared instead — if that frees enough room — and the executor
-/// persists the clearing. When clearing frees too little, the summary is asked
-/// for on its own and spliced in between the runs.
+/// Over the threshold — or after a request the provider refused as too long — the
+/// summary is asked for on its own and spliced in between the runs: the turn's
+/// own request goes unpatched.
 pub(super) async fn decide_compaction(
     prompt: &Message,
     conversation_id: &str,
-    in_place: InPlace<'_>,
+    spec: Option<&ModelSpec>,
+    pending: &PendingSummary,
     path: &CompactionPath<'_>,
     stream: &Stream,
     lifecycle: &LifecycleTx,
@@ -126,7 +118,7 @@ pub(super) async fn decide_compaction(
     // A model whose input limit is unknown has no threshold to cross, and a
     // session whose provider name resolved to no rig provider id has no spec at
     // all.
-    let Some(spec) = in_place.spec else {
+    let Some(spec) = spec else {
         return CompletionCallAction::continue_run();
     };
 
@@ -139,7 +131,7 @@ pub(super) async fn decide_compaction(
         return CompletionCallAction::continue_run();
     }
     // The request about to be sent is the store's conversation plus this turn's
-    // prompt, so the prompt joins the measured history and its entry is the one
+    // prompt, so the prompt joins the counted history and its entry is the one
     // the reply's usage counts through.
     conversation.extend([prompt.clone()]);
     let Some(through) = conversation
@@ -151,117 +143,52 @@ pub(super) async fn decide_compaction(
         return CompletionCallAction::continue_run();
     };
 
-    let prepared = Prepared {
-        model: spec.id.as_str(),
-        prompt: None,
-        tools: &[],
-        history: &conversation,
-    };
-    let (anchor, sent) = path.meter.metering();
-    let tokens = next_request_tokens(anchor.as_ref(), sent, &prepared);
-    path.meter.record_request(prepared.start(), through);
+    // The anchor is the usage the provider reported for the last reply, plus an
+    // estimate of the messages sent after the entry it counted through. The hook
+    // holds no system prompt and no tool definitions here, so the whole estimate
+    // counts the messages alone.
+    let anchor = path.meter.anchor().and_then(|anchor| {
+        let tokens = anchor.usage.input_tokens?;
+        Some((tokens, conversation.index_of(anchor.through)?))
+    });
+    let tokens = request_tokens((None, None), conversation.messages(), anchor);
+    path.meter.record_request(through);
 
-    // The room this turn's request must leave free: `reserve_pct` percent of
-    // THIS model's input limit, derived from the fresh spec so a mid-session
-    // model switch moves the threshold with the window. The policy below is the
-    // session's, cloned: every consumer reads the derived room off the clone and
-    // the stored policy keeps rig-memory's own reserve.
-    let Some(room) = compaction.keep_free(spec) else {
+    // One attempt per turn: the pass that already stashed a summary re-runs, so
+    // the summary it asked for stays the turn's only one and no second Started row
+    // is published for it.
+    if pending.attempted() {
+        return CompletionCallAction::continue_run();
+    }
+
+    let settings = compaction.settings();
+    if !settings.enabled {
+        return CompletionCallAction::continue_run();
+    }
+    // A request the provider refused as too long compacts even when the estimate
+    // says it fits: the previous summary may have gone in after its prompt.
+    let overflowed = compaction.take_overflowed();
+    let Some(window) = spec.input_limit().map(u64::from) else {
         return CompletionCallAction::continue_run();
     };
-    let mut policy = compaction.policy().clone();
-    policy.summarizer.limits.reserve = room;
-
-    if !policy.over_threshold(tokens, spec) {
+    if !overflowed && !settings.should_compact(tokens, window) {
         return CompletionCallAction::continue_run();
     }
 
-    // One in-place attempt per turn: the pass that already stashed a summary
-    // re-runs unpatched, so the reply it asked for stays the turn's only one and
-    // no second Started row is published for it.
-    if in_place.pending.attempted() {
-        return CompletionCallAction::continue_run();
-    }
-
-    // Over the threshold: replace this request's history in place when the
-    // conversation has a part worth summarizing and the model leaves room for
-    // the summary. The cut is kept for the reply consumer: that call's reply IS
-    // the summary.
-    if let Some((patch, cut, request)) = in_place::summary(&conversation, spec, &policy) {
-        let source = CompactionSource::Auto;
-        path.compaction.compactor.emit_started(source).await;
-        in_place.pending.stash(cut, source, request);
-        return CompletionCallAction::patch(patch);
-    }
-
-    // The in-place request is impossible. Clearing older tool outputs replaces
-    // the summary when it frees enough of the room; when it cannot be had again
-    // and its notes cannot be written, the summary path keeps the turn instead.
-    if let Some((patch, plan, notes)) =
-        clear::decision(&conversation, tokens, spec, &policy, path).await
-    {
-        let source = CompactionSource::Auto;
-        path.compaction.compactor.emit_started(source).await;
-        in_place.pending.spend_attempt();
-        in_place.pending.stash_clear(plan, notes);
-        return CompletionCallAction::patch(patch);
-    }
-
-    // The summary on its own: planned to fit, asked in one self-contained call,
-    // and spliced in between the runs by the executor.
+    // Over the threshold: the summary is asked for on its own, prepared to fit,
+    // asked in one self-contained call, and spliced in between the runs by the
+    // executor.
     side_call::plan_alone(
         &conversation,
-        &policy,
         spec,
-        &path.compaction.compactor,
+        compaction,
         path.model,
         CompactionSource::Auto,
-        in_place.pending,
-    )
-    .await;
-    CompletionCallAction::continue_run()
-}
-
-/// Ask for the summary on its own when the patched call's reply could not be one.
-///
-/// The reply is refused at the settle site, where the answer arrives: the cut it
-/// answered is gone and the turn's second pass would open on the unsummarized
-/// conversation. A side-call over the same conversation answers instead, and the
-/// executor splices it between the runs the way it splices a patched reply.
-pub(super) async fn settle_fallback(
-    conversation_id: &str,
-    path: &CompactionPath<'_>,
-    pending: &PendingSummary,
-    stream: &Stream,
-    lifecycle: &LifecycleTx,
-) {
-    if !pending.settled_rejected() {
-        return;
-    }
-    let Some(spec) = path.model.spec().cloned() else {
-        return;
-    };
-    // The same room the decision derives: the side-call sizes its request against
-    // it, never against the stored policy's rig default.
-    let Some(room) = path.compaction.keep_free(&spec) else {
-        return;
-    };
-    let mut policy = path.compaction.policy().clone();
-    policy.summarizer.limits.reserve = room;
-    let Some(conversation) = current_conversation(conversation_id, path, stream, lifecycle).await
-    else {
-        return;
-    };
-    side_call::plan_alone(
-        &conversation,
-        &policy,
-        &spec,
-        &path.compaction.compactor,
-        path.model,
-        CompactionSource::Auto,
+        overflowed,
         pending,
     )
     .await;
+    CompletionCallAction::continue_run()
 }
 
 /// The conversation the session's rig-memory store holds right now.
@@ -389,7 +316,7 @@ fn store_refusal_text(error: &crate::session::MemoryError) -> String {
 /// The conversation is read from the rig-memory store of the session, which is
 /// what a run loads at its start: the splice `compact()` makes IS the context
 /// from then on.
-pub async fn run_compaction(
+pub(crate) async fn run_compaction(
     conversation_id: &str,
     path: &CompactionPath<'_>,
     source: CompactionSource,
@@ -416,10 +343,13 @@ pub async fn run_compaction(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 
-    let reason = compact_reason(source);
+    // One consumer for both sources: the flag marks a request the provider
+    // refused as too long, and the compaction that follows — asked for or
+    // scheduled — is the one that answers it. Consuming it here is what keeps a
+    // stale verdict from making the next decision plan a second, deeper cut.
+    let reason = compaction.take_overflowed();
     match compaction
-        .compactor
-        .compact(store, conversation_id, &reason, source)
+        .compact(store, conversation_id, reason, source)
         .await
     {
         Ok(Some(outcome)) => {
@@ -431,7 +361,7 @@ pub async fn run_compaction(
         }
         Ok(None) => {
             let _ = stream.publish(SessionRecord::Compaction(CompactionRecord::Completed {
-                source,
+                source: Some(source),
                 summary: String::new(),
             }));
             let _ = lifecycle.publish(LifecycleEvent::CompactionCompleted {
@@ -443,19 +373,6 @@ pub async fn run_compaction(
         // `compact()` already emitted `Failed`; fall back to the full history so
         // the turn is not lost.
         Err(_) => None,
-    }
-}
-
-/// Why a compaction is running, from the command that asked for it.
-///
-/// `Manual` is the user asking through `/compact`; `Auto` is the threshold
-/// path.
-fn compact_reason(source: CompactionSource) -> CompactReason {
-    match source {
-        CompactionSource::Manual => CompactReason::Asked {
-            focus: String::new(),
-        },
-        CompactionSource::Auto => CompactReason::Threshold,
     }
 }
 

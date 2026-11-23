@@ -34,7 +34,12 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let compactor = crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
         compactor_handle,
         bus.clone(),
-        rig_memory::CompactionPolicy::default(),
+        // Keeps only the newest message, so the older ones are summarized and
+        // the side-call has work to do.
+        rig_memory::CompactionSettings {
+            keep_recent_tokens: 1,
+            ..rig_memory::CompactionSettings::default()
+        },
         crate::conversation::compaction::compactor::resolve_model_spec(
             "openai",
             "gpt-4o",
@@ -93,10 +98,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
-    let compaction_config = crate::conversation::compaction::CompactionConfig {
-        compactor,
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    };
+    let compaction_config = compactor;
 
     let mut executor = TurnExecutor::new(
         &config,

@@ -48,7 +48,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// [`AcpError::Config`]. The model is rebuilt from the session's cached
     /// provider client, so no new transport is created. Returns
     /// [`AcpError::SessionNotFound`] when no live session has that id.
-    pub async fn set_model(
+    pub(crate) async fn set_model(
         &self,
         session_id: &str,
         model_value: &str,

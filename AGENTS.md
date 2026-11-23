@@ -245,7 +245,7 @@ cargo llvm-cov --workspace --html --output-dir coverage/
 - Coverage is a second quality dimension next to clippy: clippy finds suspicious code, coverage finds code no test executes.
 - Test files live in `test/` (singular), which the default exclusion patterns do not cover — pass `--ignore-filename-regex '(/test/|/test$)'` to keep them out of the report.
 - `--fail-under-lines <N>` exits non-zero when total line coverage drops below `N` percent. No threshold is enforced yet.
-- Full workflow, output formats, per-crate runs, and CI integration: `docs/coverage.md`.
+- Full workflow, output formats, per-crate runs, and CI integration: `docs/content/docs/reference/coverage.md`.
 
 ## Code Quality
 
@@ -532,7 +532,7 @@ When working with LLM streaming responses:
 
 ## Configuration System
 
-See `docs/configuration.md` for the full field reference and provider examples.
+See `docs/content/docs/user/configuration.md` for the full field reference and provider examples.
 
 ### Loading from config.toml
 
@@ -563,7 +563,7 @@ Every `Option` field on the runtime `Config` struct must have at least one real 
 3. Add env var `AGENT_<FIELD_UPPER>` to `Config::from_env()`
 4. Add CLI flag in `crates/agnt-plugin/src/command/agent/mod.rs` + apply in `apply_cli_flags()`
 5. Add tests in the corresponding `test/` directory file — NO inline tests
-6. Update `docs/configuration.md`
+6. Update `docs/content/docs/user/configuration.md`
 ```
 
 ### Test Structure (rust10x conventions)
@@ -595,9 +595,9 @@ fn test_module_function_variant() -> Result<()> {
 
 ## Design Choices
 
-Before adding a crate, a layer, an event, or a rendering path, read `docs/design-choices.md`. It states the patterns this workspace follows — forbidden edges, the kernel as a data plane, producer-ships-data/drawer-derives-display, text parsed once at the boundary, the builder-gated composition root, the loop owner, the store-owned transcript ETL — and where a new thing belongs. Each rule is marked *enforced* or *direction*; do not cite a direction as if it already exists.
+Before adding a crate, a layer, an event, or a rendering path, read `docs/content/docs/architecture/design-choices.md`. It states the patterns this workspace follows — forbidden edges, the kernel as a data plane, producer-ships-data/drawer-derives-display, text parsed once at the boundary, the builder-gated composition root, the loop owner, the store-owned transcript ETL — and where a new thing belongs. Each rule is marked *enforced* or *direction*; do not cite a direction as if it already exists.
 
-The properties the **target** must satisfy — and the numbered checks (`ARCH-1` … `ARCH-12`) that fail the build when one stops holding — are in `docs/target-architecture.md`. A slice is accepted against those assertions, never against "tests pass".
+The properties the **target** must satisfy — and the numbered checks (`ARCH-1` … `ARCH-12`) that fail the build when one stops holding — are in `docs/content/docs/architecture/target-architecture.md`. A slice is accepted against those assertions, never against "tests pass".
 
 ## Reviewing a change
 
@@ -616,8 +616,8 @@ A review is the judgement the author cannot supply about their own work. It is n
 
 When changing tool handler modules, permission UX, or TUI transcript rendering:
 
-- Follow `docs/contribution-guardrails.md` checklist (inline permission card, viewport invariants, sticky controls)
-- Keep `docs/usage.md` aligned with user-visible behavior changes
+- Follow `docs/content/docs/architecture/contribution-guardrails.md` checklist (inline permission card, viewport invariants, sticky controls)
+- Keep `docs/content/docs/user/usage.md` aligned with user-visible behavior changes
 
 **Repo files never reference internal notes.**
 - ❌ NO: note IDs, ADR-note citations, or session-note links in `AGENTS.md`, `docs/`, code comments, or commit messages.

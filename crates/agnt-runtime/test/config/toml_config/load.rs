@@ -50,7 +50,7 @@ temperature = 0.5
 tool_call = true
 
 [compaction]
-reserve_pct = 35
+reserve_tokens = 40000
 
 [agents]
 planner_enabled = true
@@ -81,7 +81,7 @@ default = "planner"
 
         // Compaction
         let compaction = config.compaction.ok_or("compaction")?;
-        assert_eq!(compaction.reserve_pct, Some(35));
+        assert_eq!(compaction.reserve_tokens, 40_000);
 
         // Agents
         assert!(config.agents.planner_enabled);
@@ -95,31 +95,15 @@ default = "planner"
 }
 
 #[test]
-fn load_parses_every_compaction_policy_field() -> Result<()> {
+fn load_parses_every_compaction_settings_key() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_path = write_config(
             dir,
             r#"
 [compaction]
-reserve_pct = 35
-summary_tokens = 6000
-snippet_chars = 1500
-unknown_window_chars = 200000
-keep_recent = 12000
-keep_asked = 2000
-tracked = [{ tool = "read", argument = "path", set = "files_read" }]
-
-[compaction.clearing]
-keep_tokens = 9000
-keep_under = 250
-
-[compaction.prompts]
-system = "system prompt"
-initial = "initial prompt"
-update = "update prompt"
-format = "format prompt"
-in_place = "in place prompt"
-notes = "notes prompt"
+enabled = false
+reserve_tokens = 40000
+keep_recent_tokens = 12000
 "#,
         )?;
 
@@ -128,30 +112,39 @@ notes = "notes prompt"
 
         // -- Check
         let compaction = config.compaction.ok_or("compaction")?;
-        assert_eq!(compaction.reserve_pct, Some(35));
-        assert_eq!(compaction.summary_tokens, Some(6000));
-        assert_eq!(compaction.snippet_chars, Some(1500));
-        assert_eq!(compaction.unknown_window_chars, Some(200_000));
-        assert_eq!(compaction.keep_recent, Some(12_000));
-        assert_eq!(compaction.keep_asked, Some(2_000));
+        assert!(!compaction.enabled);
+        assert_eq!(compaction.reserve_tokens, 40_000);
+        assert_eq!(compaction.keep_recent_tokens, 12_000);
+        Ok(())
+    })
+}
 
-        let clearing = compaction.clearing.ok_or("clearing")?;
-        assert_eq!(clearing.keep_tokens, 9000);
-        assert_eq!(clearing.keep_under, 250);
+#[test]
+fn load_refuses_the_removed_compaction_clearing_keys() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_path = write_config(
+            dir,
+            r#"
+[compaction]
+near_window = "clear"
+"#,
+        )?;
 
-        let tracked = compaction.tracked.ok_or("tracked")?;
-        assert_eq!(tracked.len(), 1);
-        assert_eq!(tracked[0].tool, "read");
-        assert_eq!(tracked[0].argument, "path");
-        assert_eq!(tracked[0].set, "files_read");
+        // -- Exec
+        let err = match load_from(&config_path) {
+            Ok(_) => return Err("load should error on a removed compaction key".into()),
+            Err(e) => e,
+        };
 
-        let prompts = compaction.prompts.ok_or("prompts")?;
-        assert_eq!(prompts.system, "system prompt");
-        assert_eq!(prompts.initial, "initial prompt");
-        assert_eq!(prompts.update, "update prompt");
-        assert_eq!(prompts.format, "format prompt");
-        assert_eq!(prompts.in_place, "in place prompt");
-        assert_eq!(prompts.notes, "notes prompt");
+        // -- Check
+        assert!(
+            matches!(err, TomlConfigError::Parse(_)),
+            "a removed key is refused as a parse error, got: {err}"
+        );
+        assert!(
+            err.to_string().contains("near_window"),
+            "the refusal names the unknown key, got: {err}"
+        );
         Ok(())
     })
 }

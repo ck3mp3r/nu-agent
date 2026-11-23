@@ -1,0 +1,29 @@
+# The URL the site will be built for
+base_url = "https://ck3mp3r.github.io/nu-agent/"
+
+title = "nu-agent"
+description = "Nushell plugin for running an LLM agent from pipelines."
+
+# Whether to automatically compile all Sass files in the sass directory
+compile_sass = true
+
+theme = "adidoks"
+
+# Whether to build a search index to be used later on by a JavaScript library
+build_search_index = true
+
+[markdown.highlighting]
+theme = "catppuccin-mocha"
+
+[extra]
+author = "Christian Kemper"
+github = "https://github.com/ck3mp3r"
+email = "christian.kemper@pm.me"
+is_netlify = false
+
+# SEO and meta
+title_separator = "|"
+title_addition = "Nushell plugin for running an LLM agent from pipelines"
+
+[extra.footer]
+info = ' '

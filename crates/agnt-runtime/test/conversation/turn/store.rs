@@ -12,7 +12,6 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use super::super::*;
 use crate::bus::Bus;
 use crate::config::Config;
-use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
@@ -106,17 +105,14 @@ fn model() -> MockCompletionModel {
     ]])
 }
 
-/// Compaction machinery that never triggers: no threshold and no model spec.
-fn never_compacting(bus: Bus) -> CompactionConfig {
-    CompactionConfig {
-        compactor: NuCompactor::new(
-            model().erase(),
-            bus,
-            rig_memory::CompactionPolicy::default(),
-            None,
-        ),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    }
+/// Compaction machinery that never triggers: rig's settings over no model spec.
+fn never_compacting(bus: Bus) -> NuCompactor {
+    NuCompactor::new(
+        model().erase(),
+        bus,
+        rig_memory::CompactionSettings::default(),
+        None,
+    )
 }
 
 /// The tool infrastructure a turn reaches through, with no tool registered.

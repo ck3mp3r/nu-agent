@@ -18,9 +18,8 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
     // -- Exec
     hydrate_by_replay(&mut replayed, messages, Some(14000));
 
-    // -- Check: the same entries, in the same order. The one intended
-    // difference is the compaction row's label: a replayed one reads
-    // `history`, a live fold of the same record reads its own source.
+    // -- Check: the same entries, in the same order. The compaction row's label
+    // reads `history` in both folds: the projected record names no source.
     assert_eq!(
         replayed.transcript.entries().len(),
         live.transcript.entries().len(),
@@ -72,16 +71,16 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
         "the persisted diff is the completion body"
     );
 
-    // -- Check: the compaction bookkeeping is the live bookkeeping, except the
-    // label the replay owns: a replayed row reads `history`, a live fold of the
-    // same record reads its own source.
+    // -- Check: the compaction bookkeeping is the live bookkeeping. The
+    // projected record names no source, so both folds draw the drawer's replay
+    // label.
     assert_eq!(
         replayed.compaction.blocks.len(),
         live.compaction.blocks.len()
     );
     assert_eq!(replayed.compaction.blocks.len(), 1);
     assert_eq!(replayed.compaction.blocks[0].source, "history");
-    assert_eq!(live.compaction.blocks[0].source, "auto");
+    assert_eq!(live.compaction.blocks[0].source, "history");
 
     // -- Check: the displayed tokens. Replay applies the persisted total after
     // the fold, exactly where the live status line leaves it.

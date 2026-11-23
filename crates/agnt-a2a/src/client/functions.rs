@@ -57,7 +57,7 @@ pub async fn send_task<C: A2aHttpClient>(
 /// Retrieve a task by ID from an A2A agent.
 ///
 /// GETs `{target_url}/tasks/{task_id}` and parses `{"task":{...}}`.
-pub async fn get_task<C: A2aHttpClient>(
+pub(crate) async fn get_task<C: A2aHttpClient>(
     client: &C,
     target_url: &str,
     task_id: &str,

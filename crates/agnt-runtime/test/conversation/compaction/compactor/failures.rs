@@ -11,16 +11,11 @@ async fn stream_error_surfaces_actual_error_message() -> Result<()> {
         MockStreamEvent::Text("partial".to_string()),
         MockStreamEvent::error("provider exploded"),
     ]]);
-    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
+    let compactor = NuCompactor::new(model.erase(), bus, test_settings(), Some(test_spec()?));
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check
@@ -54,16 +49,11 @@ async fn empty_summary_is_rejected_and_nothing_is_spliced() -> Result<()> {
         MockStreamEvent::reasoning("thinking hard"),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
+    let compactor = NuCompactor::new(model.erase(), bus, test_settings(), Some(test_spec()?));
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check
@@ -71,12 +61,12 @@ async fn empty_summary_is_rejected_and_nothing_is_spliced() -> Result<()> {
         panic!("compact must reject an empty summary, got {result:?}");
     };
     assert!(
-        err.to_string().contains("no summary"),
+        err.to_string().contains("the summary is empty"),
         "error must name the empty summary, got: {err}"
     );
     let failed = recv_until_failed(&mut rx).await?;
     assert!(
-        failed.contains("no summary"),
+        failed.contains("the summary is empty"),
         "expected Failed naming the empty summary, got {failed:?}"
     );
     let conversation = rig_memory::load(&*store, CONV)?;
@@ -101,16 +91,11 @@ async fn tool_call_chunk_during_compaction_emits_failed() -> Result<()> {
         MockStreamEvent::tool_call("tc1", "some_tool", serde_json::json!({})),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
+    let compactor = NuCompactor::new(model.erase(), bus, test_settings(), Some(test_spec()?));
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check
@@ -140,16 +125,11 @@ async fn unknown_stream_chunk_emits_failed() -> Result<()> {
         MockStreamEvent::unknown(serde_json::json!({"type": "mystery"})),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
+    let compactor = NuCompactor::new(model.erase(), bus, test_settings(), Some(test_spec()?));
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check
@@ -181,12 +161,7 @@ async fn store_load_failure_emits_failed_and_returns_error() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::new(store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::new(store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check
@@ -220,12 +195,7 @@ async fn store_save_failure_emits_failed_and_returns_error() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::new(store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::new(store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check

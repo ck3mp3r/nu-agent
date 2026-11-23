@@ -39,7 +39,7 @@ impl StreamingMarkdownBuffer {
     }
 
     /// Clear all state for a new turn.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.accumulated.clear();
         self.last_flushed_len = 0;
     }

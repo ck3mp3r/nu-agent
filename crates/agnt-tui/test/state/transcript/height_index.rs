@@ -175,9 +175,12 @@ fn height_index_rows_match_backend_measure() -> Result<()> {
 // -- Test Support
 
 /// Assert the store's index is valid at `width`, its total equals a wholesale
-/// rebuild of the same blocks, and every block's start row matches that
-/// rebuild. The per-block comparison pins the splice POSITION: a wrong-position
-/// splice keeps the index "valid" and the total equal while relocating rows.
+/// rebuild of the same blocks, every block's start row matches that rebuild, and
+/// the full frame plan of both stores is identical. The per-block comparison
+/// pins the splice POSITION: a wrong-position splice keeps the index "valid"
+/// and the total equal while relocating rows. The frame-plan comparison pins the
+/// whole observable layout — families, gap rows, rects and totals — so the
+/// incremental assembly and the planner's batch math cannot drift apart.
 ///
 /// The comparison settles the index first, exactly as the paint does: a push
 /// hands its entry to the frame's deferred measure, so the rows a pushed entry
@@ -203,6 +206,12 @@ fn assert_incremental_matches(state: &AppState, width: usize, context: &str) -> 
             "incremental start row of block {index} must equal a wholesale rebuild {context}"
         );
     }
+    let len = settled.entries().len();
+    assert_eq!(
+        settled.frame_plan(0, len, width),
+        wholesale.frame_plan(0, len, width),
+        "incremental frame plan must equal a wholesale rebuild {context}"
+    );
     Ok(())
 }
 

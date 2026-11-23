@@ -1,77 +1,15 @@
-//! The patched call's stream: the summary this turn asked for streams on the
-//! compaction records, not as an inference the transcript would show.
+//! The turn's stream: every call's deltas stream on the inference records, and no
+//! call's deltas are folded as a compaction summary.
 
 use super::super::*;
 
-use agnt_kernel::{CompactionRecord, CompactionSource, InferenceRecord, SessionRecord};
-use rig_memory::{SummaryCut, SummaryState};
+use agnt_kernel::{CompactionRecord, InferenceRecord, SessionRecord};
 
-/// WHEN the patched call streams deltas, THE stream_delta branch SHALL publish
-/// `CompactionRecord::SummaryChunk` rows instead of the InferenceChunk pair.
+/// WHEN a call streams deltas, THE stream_delta branch SHALL publish the
+/// InferenceChunk pair.
 #[tokio::test]
-async fn summary_deltas_stream_as_compaction_chunks() -> Result<()> {
-    // -- Setup & Fixtures: a turn whose request the decision patched, so the
-    // deltas in flight belong to the summary.
-    let fx = RepetitionTurnFixture::new()?;
-    let pending = fx.pending_summary();
-    pending.stash(
-        SummaryCut {
-            keep_from: None,
-            state: SummaryState::default(),
-        },
-        CompactionSource::Auto,
-        vec![],
-    );
-    fx.queue_turn(vec![identical_text_turn(1)]);
-    let mut rx = fx.bus.stream().subscribe();
-    let mut text_rx = fx.bus.stream().subscribe_text();
-
-    // -- Exec
-    let _ = fx.turn(false).await?;
-
-    // -- Check: the deltas landed as compaction chunks on the text lane, never
-    // as inference ones and never on the event lane.
-    let mut event_summary_chunks = 0;
-    while let Ok(record) = rx.try_recv() {
-        if matches!(
-            record,
-            SessionRecord::Compaction(CompactionRecord::SummaryChunk { .. })
-        ) {
-            event_summary_chunks += 1;
-        }
-    }
-    let mut summary_chunks = 0;
-    let mut inference_chunks = 0;
-    while let Ok(record) = text_rx.try_recv() {
-        match record {
-            SessionRecord::Compaction(CompactionRecord::SummaryChunk { source, .. }) => {
-                assert_eq!(source, CompactionSource::Auto);
-                summary_chunks += 1;
-            }
-            SessionRecord::Inference(InferenceRecord::Chunk { .. }) => inference_chunks += 1,
-            _ => {}
-        }
-    }
-    assert_eq!(
-        summary_chunks, 1,
-        "the summary's delta must stream on the compaction records"
-    );
-    assert_eq!(
-        inference_chunks, 0,
-        "a patched call's deltas must not read back as inference chunks"
-    );
-    assert_eq!(
-        event_summary_chunks, 0,
-        "a per-delta summary chunk must ride the text lane, not the event lane"
-    );
-    Ok(())
-}
-
-/// WHEN a call the decision did not patch streams deltas, THE stream_delta
-/// branch SHALL CONTINUE TO publish the InferenceChunk pair.
-#[tokio::test]
-async fn unpatched_deltas_stream_as_inference_chunks() -> Result<()> {
-    // -- Setup & Fixtures: no plan stashed, so nothing is in flight as a summary.
+async fn turn_deltas_stream_as_inference_chunks() -> Result<()> {
+    // -- Setup & Fixtures: one ordinary turn, nothing in flight as a summary.
     let fx = RepetitionTurnFixture::new()?;
     fx.queue_turn(vec![identical_text_turn(1)]);
     let mut rx = fx.bus.stream().subscribe();
@@ -94,6 +32,9 @@ async fn unpatched_deltas_stream_as_inference_chunks() -> Result<()> {
         }
     }
     assert_eq!(inference_chunks, 1, "a normal call streams its own deltas");
-    assert_eq!(summary_chunks, 0, "no summary was asked for in this turn");
+    assert_eq!(
+        summary_chunks, 0,
+        "no call's deltas are a compaction summary in this turn"
+    );
     Ok(())
 }

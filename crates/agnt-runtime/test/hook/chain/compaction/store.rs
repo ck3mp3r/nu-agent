@@ -3,8 +3,6 @@
 
 use super::super::*;
 
-use crate::hook::chain::in_place::InPlace;
-
 #[tokio::test]
 async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
     // -- Setup & Fixtures
@@ -19,28 +17,23 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
     ));
     let bus = Bus::default();
     let mut rx = bus.lifecycle().subscribe();
-    let compaction = CompactionConfig {
-        compactor: NuCompactor::new(
-            MockCompletionModel::text("summary").erase(),
-            Bus::default(),
-            rig_memory::CompactionPolicy::default(),
-            test_model_spec(),
-        ),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    };
+    let compaction = NuCompactor::new(
+        MockCompletionModel::text("summary").erase(),
+        Bus::default(),
+        rig_memory::CompactionSettings::default(),
+        test_model_spec(),
+    );
     let meter = crate::hook::AnchorMeter::default();
     let pending = crate::hook::chain::PendingSummary::default();
     let spec = spec_with_input_limit(60_000)?;
-    let model = compaction.compactor.model();
+    let model = compaction.model();
 
     // -- Exec
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&spec),
-            pending: &pending,
-        },
+        Some(&spec),
+        &pending,
         &CompactionPath::new(
             memory.as_ref(),
             &compaction,
@@ -86,29 +79,24 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
     ));
     let bus = Bus::default();
     let mut rx = bus.lifecycle().subscribe();
-    let compaction = CompactionConfig {
-        compactor: NuCompactor::new(
-            MockCompletionModel::text("summary").erase(),
-            Bus::default(),
-            rig_memory::CompactionPolicy::default(),
-            test_model_spec(),
-        ),
-        reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-    };
+    let compaction = NuCompactor::new(
+        MockCompletionModel::text("summary").erase(),
+        Bus::default(),
+        rig_memory::CompactionSettings::default(),
+        test_model_spec(),
+    );
     let meter = crate::hook::AnchorMeter::default();
     let store_latch: crate::hook::StoreLatch = Default::default();
     let pending = crate::hook::chain::PendingSummary::default();
     let spec = spec_with_input_limit(60_000)?;
-    let model = compaction.compactor.model();
+    let model = compaction.model();
 
     // -- Exec: two decisions over the dead store.
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&spec),
-            pending: &pending,
-        },
+        Some(&spec),
+        &pending,
         &CompactionPath::new(memory.as_ref(), &compaction, &meter, &store_latch, &model),
         bus.stream(),
         bus.lifecycle(),
@@ -117,10 +105,8 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&spec),
-            pending: &pending,
-        },
+        Some(&spec),
+        &pending,
         &CompactionPath::new(memory.as_ref(), &compaction, &meter, &store_latch, &model),
         bus.stream(),
         bus.lifecycle(),

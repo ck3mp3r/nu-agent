@@ -185,6 +185,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-zola": {
+      "locked": {
+        "lastModified": 1770803032,
+        "narHash": "sha256-SyLm0zlwK9vcs1QiTIOojvTfRrqUTzc/XsMEhKE90jY=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b5553f65a977d833d9e25bcc15fd4f8569ab61da",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b5553f65a977d833d9e25bcc15fd4f8569ab61da",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "base-nixpkgs": "base-nixpkgs",
@@ -193,6 +209,7 @@
           "base-nixpkgs",
           "unstable"
         ],
+        "nixpkgs-zola": "nixpkgs-zola",
         "rustnix": "rustnix"
       }
     },

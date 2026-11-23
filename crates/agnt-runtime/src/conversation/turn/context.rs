@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use crate::config::Config;
-use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::state::memory::MemoryOf;
 
 use super::execute::CANCEL_GRACE;
@@ -29,8 +29,9 @@ pub struct TurnConversation<M: TurnMemory = MemoryOf> {
     /// and `switch_model()` swaps the inner value. It is constructed eagerly at
     /// startup.
     pub dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
-    /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: CompactionConfig,
+    /// Hook-driven compaction machinery: the compactor with rig's compaction
+    /// settings and the spec its summaries are fitted to.
+    pub compaction: NuCompactor,
 }
 
 impl<M: TurnMemory> TurnConversation<M> {

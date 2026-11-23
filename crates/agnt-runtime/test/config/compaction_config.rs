@@ -1,75 +1,59 @@
-//! Compaction config serde and validation tests.
+//! The `[compaction]` table: rig's `CompactionSettings` as a serde passthrough.
 
-use crate::config::CompactionConfig;
+use crate::config::CompactionSettings;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// The keys this cycle removed. Every one is refused as unknown.
+const REMOVED: [&str; 7] = [
+    "reserve_pct",
+    "summary_tokens",
+    "snippet_chars",
+    "unknown_window_chars",
+    "keep_recent",
+    "keep_asked",
+    "near_window",
+];
+
+/// WHEN `[compaction]` sets one key, THE parse SHALL carry it and leave rig's
+/// defaults on the keys the table omits.
 #[test]
-fn compaction_config_defaults_and_serde_roundtrip() -> Result<()> {
+fn compaction_settings_partial_table_keeps_rig_defaults() -> Result<()> {
     // -- Setup & Fixtures
-    let default = CompactionConfig::default();
-    let config = CompactionConfig {
-        reserve_pct: Some(35),
-        keep_recent: Some(12_000),
-        ..CompactionConfig::default()
-    };
+    let defaults = CompactionSettings::default();
 
     // -- Exec
-    let json = serde_json::to_string(&config)?;
-    let deserialized: CompactionConfig = serde_json::from_str(&json)?;
+    let parsed: CompactionSettings = toml::from_str("reserve_tokens = 40000")?;
 
     // -- Check
-    assert_eq!(default.reserve_pct, None);
-    assert_eq!(default.keep_recent, None);
-    assert_eq!(config, deserialized);
-    Ok(())
-}
-
-/// WHEN the `[compaction]` block carries a key the knob replaced, THEN THE parse
-/// SHALL reject it: `deny_unknown_fields` fails on a key the struct no longer
-/// has rather than ignoring it.
-#[test]
-fn compaction_config_rejects_the_removed_key() -> Result<()> {
-    // -- Exec: the token-reserve key the percent replaced.
-    let error = match toml::from_str::<CompactionConfig>("reserve = 1000") {
-        Ok(_) => return Err("the removed `reserve` key must be rejected".into()),
-        Err(e) => e.to_string(),
-    };
-
-    // -- Check
-    assert!(
-        error.contains("reserve"),
-        "the parse error must name the unknown key, got: {error}"
+    assert_eq!(parsed.reserve_tokens, 40_000, "the set key is carried");
+    assert_eq!(
+        parsed.enabled, defaults.enabled,
+        "an omitted key keeps rig's default"
+    );
+    assert_eq!(
+        parsed.keep_recent_tokens, defaults.keep_recent_tokens,
+        "an omitted key keeps rig's default"
     );
     Ok(())
 }
 
+/// WHEN `[compaction]` sets a key this cycle removed, THEN THE parse SHALL refuse
+/// it and name the key: rig's table denies unknown fields, so no alias and no
+/// silent drop exists.
 #[test]
-fn compaction_config_validate() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, Option<u32>, bool)> = vec![
-        ("valid pct", Some(35), true),
-        ("zero", Some(0), true),
-        ("hundred", Some(100), true),
-        ("pct above 100", Some(101), false),
-    ];
-
+fn compaction_settings_refuse_every_removed_key() -> Result<()> {
     // -- Exec & Check
-    for (name, pct, expect_ok) in cases {
-        let config = CompactionConfig {
-            reserve_pct: pct,
-            ..CompactionConfig::default()
+    for key in REMOVED {
+        let body = format!("{key} = 1");
+        let error = match toml::from_str::<CompactionSettings>(&body) {
+            Ok(_) => return Err(format!("the removed `{key}` key must be refused").into()),
+            Err(e) => e.to_string(),
         };
-        let result = config.validate();
-        if expect_ok {
-            assert!(result.is_ok(), "{name}: {result:?}");
-        } else {
-            let err = match result {
-                Ok(_) => return Err(format!("{name} should fail validation").into()),
-                Err(e) => e,
-            };
-            assert!(err.contains("reserve_pct"), "{name}: got {err}");
-        }
+        assert!(
+            error.contains(key),
+            "the parse error must name `{key}`, got: {error}"
+        );
     }
     Ok(())
 }

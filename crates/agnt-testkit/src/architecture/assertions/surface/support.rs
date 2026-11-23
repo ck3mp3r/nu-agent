@@ -24,21 +24,41 @@ const ASSERTION: &str = "ARCH-6";
 /// One public item: its source label, its declaration line and its name.
 pub(super) type SurfaceItem = (String, usize, String);
 
+/// Which half of the census a report covers: the two halves differ in what can
+/// consume them, so they read different evidence.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Half {
+    /// A declared `pub` item. Only a path reaches it: a receiver call names a
+    /// method, which is no free item's consumer.
+    Declared,
+    /// A `pub` member of an inherent impl. A path or a gated receiver call
+    /// reaches it, because a member is reached through a value more often than
+    /// through its type.
+    ImplMembers,
+}
+
 /// The violations `surface` yields: every recorded declaration no other crate
 /// reaches, keyed per crate as the baseline files are.
 pub(super) fn report(
     ws: &Workspace,
     surface: BTreeMap<String, Vec<SurfaceItem>>,
+    half: Half,
 ) -> Vec<Violation> {
     let references = cross_crate_references(ws);
-    let methods = cross_crate_method_names(ws);
+    let methods = match half {
+        Half::Declared => None,
+        Half::ImplMembers => Some(cross_crate_method_names(ws)),
+    };
     let mut violations = Vec::new();
-    for (krate, items) in &surface {
-        if is_dev_only(ws, krate) {
+    for (crate_dir, items) in &surface {
+        if is_dev_only(ws, crate_dir) {
             continue;
         }
-        let mut consumed = consumed_names(&references, &krate.replace('-', "_"));
-        consumed.extend(called_names(&methods, &krate.replace('-', "_")));
+        let krate = crate_dir.replace('-', "_");
+        let mut consumed = consumed_names(&references, &krate);
+        if let Some(methods) = &methods {
+            consumed.extend(called_names(methods, &krate, &references));
+        }
         for (label, line, name) in items {
             if consumed.contains(name) {
                 continue;
@@ -46,7 +66,7 @@ pub(super) fn report(
             violations.push(Violation {
                 assertion: ASSERTION,
                 site: format!("{label}:{line}"),
-                detail: format!("`{name}` has no consumer outside `{krate}`"),
+                detail: format!("`{name}` has no consumer outside `{crate_dir}`"),
             });
         }
     }

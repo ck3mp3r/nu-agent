@@ -127,7 +127,7 @@ async fn test_stream_text_burst_never_costs_an_event() -> Result<()> {
         let _ = bus
             .stream()
             .publish(SessionRecord::Compaction(CompactionRecord::Completed {
-                source: CompactionSource::Auto,
+                source: Some(CompactionSource::Auto),
                 summary: format!("summary {index}"),
             }));
     }

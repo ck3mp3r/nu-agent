@@ -1,8 +1,9 @@
 use super::*;
 
-use rig::agent::{AgentHook, DispatchEvent};
-use rig::effect::{EffectId, EffectKind};
-use rig::test_utils::HookTestHarness;
+use agnt_kernel::NoticeKind;
+use agnt_kernel::bus::NarrationEvent;
+use futures::StreamExt;
+use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 /// The first detection in a turn attempt skips with a message that both
 /// reports the detection fact and challenges the model to reconsider.
@@ -10,38 +11,54 @@ use rig::test_utils::HookTestHarness;
 async fn first_detection_skips_with_steering_message() -> TestResult<()> {
     // -- Setup & Fixtures
     let bus = Bus::default();
-    let harness = HookTestHarness::new()
-        .with_streaming(true)
-        .with_agent_name("doom-loop")
-        .with_hook(doom_loop_chain(&bus));
-    let kind = EffectKind::ToolCall {
-        name: "read_file".to_string(),
-        args: "{\"path\": \"same\"}".to_string(),
-    };
+    // Subscribe before the run starts: narration sends are not buffered.
+    let mut narration_rx = bus.narration().subscribe();
+    let args = serde_json::json!({ "x": 1, "y": 2 });
+    // One turn of identical calls: the last of them is the first detection.
+    let mut calls = (0..DOOM_LOOP_THRESHOLD)
+        .map(|index| MockStreamEvent::tool_call(format!("tc{index}"), "add", args.clone()))
+        .collect::<Vec<_>>();
+    calls.push(MockStreamEvent::final_response_with_default_usage());
+    let model = MockCompletionModel::from_stream_turns([
+        calls,
+        vec![
+            MockStreamEvent::text("steered"),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ])
+    .erase();
+    let agent = rig::agent::AgentBuilder::new(model)
+        .add_hook(doom_loop_chain(&bus))
+        .tool(rig::test_utils::MockAddTool)
+        .build();
     let pinned = [
-        "Doom loop detected: 'read_file' called 5 times with identical arguments",
-        "Are you really sure you need so many tool calls?",
-        "Reconsider your approach",
+        format!(
+            "Doom loop detected: 'add' called {DOOM_LOOP_THRESHOLD} times with identical arguments"
+        ),
+        "Are you really sure you need so many tool calls?".to_string(),
+        "Reconsider your approach".to_string(),
     ];
 
-    // -- Exec & Check
-    let mut last = None;
-    for call in 1..=DOOM_LOOP_THRESHOLD {
-        harness.set_turn(call);
-        let event = DispatchEvent {
-            id: EffectId::from_raw(call as u64),
-            kind: &kind,
-            turn: call,
-            call_id: None,
-            context: None,
-        };
-        last = Some(harness.hooks().on_dispatch(harness.context(), event).await);
+    // -- Exec: drive the turn through the gate the chain wires
+    let mut stream = agent.prompt("run").max_turns(16).stream();
+    while stream.next().await.is_some() {}
+
+    // -- Check: the detection's warning carries the pinned steering text
+    let mut message = None;
+    while let Ok(event) = narration_rx.try_recv() {
+        if let NarrationEvent::SystemMessage {
+            kind: NoticeKind::Warning,
+            text,
+        } = event
+        {
+            message = Some(text);
+            break;
+        }
     }
-    let last = Some(last.ok_or("threshold call should produce an action")?);
-    let message = skip_reason(&last).ok_or("should be a skip denial")?;
+    let message = message.ok_or("the first detection must warn")?;
     for text in &pinned {
         assert!(
-            message.contains(text),
+            message.contains(text.as_str()),
             "first-detection skip message must contain the pinned steering text {text:?}, got: {message}"
         );
     }

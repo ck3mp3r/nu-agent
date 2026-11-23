@@ -82,7 +82,7 @@ impl PeerCache {
         peers.get(name).cloned()
     }
 
-    pub fn list(&self) -> Vec<Peer> {
+    pub(crate) fn list(&self) -> Vec<Peer> {
         let peers = self.read();
         peers.values().cloned().collect()
     }

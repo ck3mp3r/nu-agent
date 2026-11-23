@@ -11,13 +11,3 @@ pub enum Role {
     #[serde(rename = "ROLE_AGENT")]
     Agent,
 }
-
-impl Role {
-    /// Human-readable label for display contexts (TUI, logs).
-    pub fn label(&self) -> &'static str {
-        match self {
-            Role::User => "user",
-            Role::Agent => "agent",
-        }
-    }
-}

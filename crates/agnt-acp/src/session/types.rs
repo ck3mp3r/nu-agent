@@ -80,11 +80,6 @@ pub struct SessionChannels<'a> {
 }
 
 impl AcpSession {
-    /// The session id handed to the ACP client.
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
     /// The working directory the session was created with.
     pub fn cwd(&self) -> &Path {
         &self.cwd
@@ -101,13 +96,8 @@ impl AcpSession {
         }
     }
 
-    /// The conversation runtime that drives this session.
-    pub fn runtime(&self) -> &Arc<AsyncMutex<AgentConversationRuntime>> {
-        &self.runtime
-    }
-
     /// The session's cumulative LLM usage, readable without the runtime lock.
-    pub fn usage(&self) -> agnt_runtime::hook::TurnUsageTotals {
+    pub(crate) fn usage(&self) -> agnt_runtime::hook::TurnUsageTotals {
         self.usage.totals()
     }
 }

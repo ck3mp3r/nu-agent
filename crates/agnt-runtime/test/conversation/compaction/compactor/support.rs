@@ -15,7 +15,7 @@ pub(super) use rig::DynModel;
 pub(super) use rig::catalog::ModelSpec;
 pub(super) use rig::operation::Completion;
 pub(super) use rig::test_utils::{MockCompletionModel, MockStreamEvent};
-pub(super) use rig_memory::{CompactReason, CompactionPolicy, Store, summary_author};
+pub(super) use rig_memory::{CompactionSettings, Store, summarized_in_log, summary_author};
 
 pub(super) use std::sync::Arc;
 pub(super) use tempfile::TempDir;
@@ -29,7 +29,7 @@ pub(super) const CONV: &str = "conv-1";
 /// The leading text of every compaction summary message, as rig-memory writes
 /// it.
 pub(super) const SUMMARY_PREFIX: &str =
-    "The conversation before this point was compacted into this summary:";
+    "The conversation history before this point was compacted into the following summary:";
 
 // region:    --- Test Support
 
@@ -40,13 +40,13 @@ pub(super) fn test_spec() -> Result<ModelSpec> {
         .ok_or_else(|| "openai should resolve to a registered provider id".into())
 }
 
-/// A policy that keeps nothing recent, so a short conversation is still
-/// summarized.
-pub(super) fn test_policy() -> CompactionPolicy {
-    CompactionPolicy {
-        keep_recent: 0,
-        keep_asked: 0,
-        ..CompactionPolicy::default()
+/// Settings that keep about the seed's last exchange (two short messages), so a
+/// compaction of the seed summarizes the older half with one history call and
+/// splits no turn.
+pub(super) fn test_settings() -> CompactionSettings {
+    CompactionSettings {
+        keep_recent_tokens: 8,
+        ..CompactionSettings::default()
     }
 }
 
@@ -65,7 +65,7 @@ pub(super) fn make_compactor(chunks: &[&str], bus: Bus) -> Result<NuCompactor> {
     Ok(NuCompactor::new(
         stream_model(chunks).erase(),
         bus,
-        test_policy(),
+        test_settings(),
         Some(test_spec()?),
     ))
 }

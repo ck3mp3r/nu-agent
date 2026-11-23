@@ -238,14 +238,14 @@ fn test_file_backend_probe_succeeds_with_writable_data_dir() -> Result<()> {
     let probed = FileBackend::probe_in(&path);
 
     // -- Check
-    let backend = probed.map_err(|e| format!("probe should succeed: {e}"))?;
-    let path = backend.path().to_string_lossy();
+    probed.map_err(|e| format!("probe should succeed: {e}"))?;
+    let held = path.to_string_lossy();
     assert!(
-        path.contains(APP_DIR_NAME),
+        held.contains(APP_DIR_NAME),
         "probe path lives under the application directory"
     );
     assert!(
-        path.contains("secrets.json"),
+        held.contains("secrets.json"),
         "probe path points at secrets.json"
     );
     Ok(())

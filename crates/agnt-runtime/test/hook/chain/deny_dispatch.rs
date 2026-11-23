@@ -1,8 +1,11 @@
-//! The permission-deny branch's `Started` + `Completed(success=false)` pair.
+//! The permission-deny branch: the gate opens the call's row and rig settles it
+//! once.
 //!
-//! The deny branch publishes the pair itself because the call never runs. rig
-//! then closes the denied dispatch's scope, so `on_outcome` reports the
-//! skipped result as a second `Completed` — the test pins both, in order.
+//! A policy denial is a skip, not a stop. The gate publishes `ToolStarted`
+//! before the permission check runs, rig reports the skipped outcome, and
+//! `on_outcome` closes the row with the denial reason as its result text — so the
+//! record stream carries one `Started` and one `Completed`, never a pair plus a
+//! settle.
 
 use super::*;
 
@@ -55,25 +58,39 @@ impl crate::hook::permission_resolver::AsyncPermissionResolver for DenyAllResolv
     }
 }
 
-/// The tool-event shape the assertions compare: `(name, success, error_kind,
-/// message)`, with the last three `None` for a `ToolStarted`.
-type ToolEventSummary = (String, Option<bool>, Option<String>, Option<String>);
+/// Whether `record` opens a call's row.
+fn opens_the_row(record: &SessionRecord) -> bool {
+    matches!(record, SessionRecord::Tool(ToolRecord::Started { .. }))
+}
 
-fn tool_event_summary(record: &SessionRecord) -> Option<ToolEventSummary> {
-    match record {
-        SessionRecord::Tool(ToolRecord::Started { call }) => {
-            Some((call.name.0.clone(), None, None, None))
-        }
-        SessionRecord::Tool(ToolRecord::Completed { call, outcome }) => Some((
-            call.name.0.clone(),
-            Some(outcome.status == ToolStatus::Success),
-            outcome
-                .kind
-                .map(|kind| tool_error_kind_text(kind).to_string()),
-            outcome.message.clone(),
-        )),
-        _ => None,
-    }
+/// The denial settlement the assertions read: the closed call's name, status,
+/// result text, message, and error kind.
+type Settled = (String, ToolStatus, String, Option<String>, Option<String>);
+
+/// The one completion the deny branch settles with: rig's skipped outcome.
+fn denial_settlement(events: &[SessionRecord]) -> Result<Settled> {
+    let settled: Vec<&ToolRecord> = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionRecord::Tool(record @ ToolRecord::Completed { .. }) => Some(record),
+            _ => None,
+        })
+        .collect();
+    let [record] = settled.as_slice() else {
+        return Err(format!("a denied call must settle exactly once, got {settled:?}").into());
+    };
+    let ToolRecord::Completed { call, outcome } = record else {
+        return Err(format!("the settlement must be a completion, got {record:?}").into());
+    };
+    Ok((
+        call.name.0.clone(),
+        outcome.status,
+        outcome.text.clone(),
+        outcome.message.clone(),
+        outcome
+            .kind
+            .map(|kind| tool_error_kind_text(kind).to_string()),
+    ))
 }
 
 /// The text a tool-error kind prints, so a converted assertion can compare the
@@ -94,11 +111,11 @@ fn tool_error_kind_text(kind: agnt_kernel::ToolErrorKind) -> &'static str {
     }
 }
 
-/// The deny branch publishes `ToolStarted` then `ToolCompleted(success=false)`
-/// carrying `error_kind: Some("denied")` and the resolver's reason as the
-/// message — the pair the live transcript renders as the not-run ⊘ block.
+/// A denied call settles once: the gate opens the row with `ToolStarted`, rig
+/// reports the skipped outcome, and `on_outcome` closes the row with the denial
+/// reason as the result text the drawer renders as the body.
 #[tokio::test]
-async fn on_dispatch_deny_arm_emits_pair_with_denied_kind() -> Result<()> {
+async fn on_dispatch_deny_arm_settles_the_call_once() -> Result<()> {
     // -- Setup & Fixtures
     let bus = Bus::default();
     let hook = build_hook_with(bus.clone(), DenyAllResolver);
@@ -126,28 +143,31 @@ async fn on_dispatch_deny_arm_emits_pair_with_denied_kind() -> Result<()> {
     let mut stream = agent.prompt("run").max_turns(16).stream();
     while stream.next().await.is_some() {}
 
-    // -- Check: the deny branch's pair, then rig's skipped-result report.
-    let mut tool_events = Vec::new();
+    // -- Check: one started record, then the one completion that settles it.
+    let mut events = Vec::new();
     while let Ok(event) = stream_rx.try_recv() {
-        if let Some(summary) = tool_event_summary(&event) {
-            tool_events.push(summary);
-        }
+        events.push(event);
     }
     assert_eq!(
-        tool_events,
-        vec![
-            ("add".to_string(), None, None, None),
-            (
-                "add".to_string(),
-                Some(false),
-                Some("denied".to_string()),
-                Some(DENY_REASON.to_string()),
-            ),
-            // rig closes the denied dispatch's scope, so `on_outcome` reports
-            // the skipped result too: no kind, no message.
-            ("add".to_string(), Some(false), None, None),
-        ],
-        "the deny branch must publish its Started+Completed pair with the denied kind and the reason"
+        tool_event_kinds(&events),
+        vec!["started", "completed"],
+        "the denied call must publish one started record and exactly one completion"
+    );
+    assert_eq!(
+        events.iter().filter(|event| opens_the_row(event)).count(),
+        1,
+        "the gate must open the call's row exactly once"
+    );
+    assert_eq!(
+        denial_settlement(&events)?,
+        (
+            "add".to_string(),
+            ToolStatus::Cancelled,
+            DENY_REASON.to_string(),
+            None,
+            None,
+        ),
+        "the skipped outcome carries the reason as the result text, and nothing else"
     );
     Ok(())
 }
@@ -278,8 +298,8 @@ fn apply_mode_args(path: &std::path::Path) -> serde_json::Value {
 
 /// A policy denial records the call's argument-sourced preview on the gate
 /// record, so the live transcript renders the same diff rehydration builds for
-/// the not-run row. The tool pair carries no preview row: the record is the
-/// channel the preview rides.
+/// the not-run row. The tool settlement carries no preview row: the record is
+/// the channel the preview rides.
 #[tokio::test]
 async fn on_dispatch_deny_arm_emits_preview_for_previewable_call() -> Result<()> {
     // -- Setup & Fixtures
@@ -291,11 +311,11 @@ async fn on_dispatch_deny_arm_emits_preview_for_previewable_call() -> Result<()>
     // -- Exec
     let events = drive_denied_call(DenyAllResolver, "edit", args).await?;
 
-    // -- Check: the pair carries no preview row; the gate record does.
+    // -- Check: the settlement carries no preview row; the gate record does.
     assert_eq!(
         tool_event_kinds(&events),
-        vec!["started", "completed", "completed"],
-        "the deny branch's pair carries no preview row"
+        vec!["started", "completed"],
+        "a denied call settles once, and the settlement carries no preview row"
     );
 
     // -- Check: the preview carries the diff the gate computed, as data.
@@ -341,7 +361,7 @@ async fn on_dispatch_deny_arm_emits_no_preview_for_non_previewable_tool() -> Res
     // -- Check
     assert_eq!(
         tool_event_kinds(&events),
-        vec!["started", "completed", "completed"],
+        vec!["started", "completed"],
         "a non-Previewable tool must publish no preview"
     );
     Ok(())
@@ -371,7 +391,7 @@ async fn on_dispatch_deny_arm_emits_no_preview_for_invalid_edit_args() -> Result
     // -- Check
     assert_eq!(
         tool_event_kinds(&events),
-        vec!["started", "completed", "completed"],
+        vec!["started", "completed"],
         "a noop edit must publish no preview"
     );
     Ok(())

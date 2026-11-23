@@ -1,13 +1,14 @@
-//! The undo of a compaction: rig-memory's restore, minus pass one's internal
-//! reply.
+//! The undo of a compaction: the newest summary replaced back by the entries it
+//! replaced.
 //!
-//! `rig_memory::undo_summary` puts back the entries the newest compaction's
-//! summary replaced. An in-place compaction's reply is one of the model's own
-//! answers to its internal summary call, so it must not come back into the
-//! transcript: S3's splice removes that entry after the summary lands, and the
-//! same identification removes it again when the restore put it back.
+//! rig-memory 0.47 has no undo of its own; what it has is the record the undo
+//! needs. A summary's splice took the entries it read out of the conversation,
+//! and the log keeps them as they were just before it, keyed by the summary's
+//! id ([`rig_memory::summarized_in_log`]). The newest leading summary is where a
+//! compaction landed ([`rig_memory::summarized_prefix`]); putting its originals
+//! back in its place is the exact inverse of that one splice.
 
-use rig::conversation::{Conversation, MessageId};
+use rig::conversation::Conversation;
 use rig_memory::summary_author;
 
 use agnt_kernel::bus::LifecycleEvent;
@@ -15,6 +16,25 @@ use agnt_kernel::{CompactionRecord, CompactionSource, NoticeKind, NoticeRecord, 
 
 use crate::bus::{LifecycleTx, Stream};
 use crate::session::CachedMemory;
+
+// region:    --- Types
+
+/// Why the undo put nothing back.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UndoError {
+    /// The conversation has no compaction left to undo.
+    #[error("there is no compaction to undo")]
+    Nothing,
+    /// The session's log does not hold what it replaced, such as before the
+    /// compaction was saved.
+    #[error("the session's log does not hold what it replaced")]
+    NotInLog,
+    /// The session's log could not be read.
+    #[error(transparent)]
+    Load(#[from] rig_memory::SessionError),
+}
+
+// endregion: --- Types
 
 // region:    --- Functions
 
@@ -72,58 +92,36 @@ pub(crate) async fn uncompact(
 
 // region:    --- Support
 
-/// Load the conversation, undo its newest compaction, drop pass one's reply
-/// from what the undo put back, and save.
+/// Load the conversation, put back what its newest compaction replaced, and
+/// save.
 ///
-/// Nothing is written when the undo refused: `undo_summary` changes nothing on
-/// its error paths, so the loaded copy is dropped unsaved.
+/// Nothing is written when the undo refused: the refusal is decided before the
+/// first splice, so the loaded copy is dropped unsaved.
 fn undo(store: &dyn rig_memory::Store, log: &str) -> Result<(), String> {
     let mut conversation =
         rig_memory::load(store, log).map_err(|e| format!("Uncompaction load error: {e}"))?;
-    // The summary the newest compaction landed is pass one's reply text: the
-    // reply entry is identified by the same text S3's cleanup uses.
-    let reply = newest_summary(&conversation);
-    let undone = rig_memory::undo_summary(&mut conversation, store, log, summary_author())
-        .map_err(|e| e.to_string())?;
-    if let Some(reply) = reply {
-        remove_restored_reply(&mut conversation, &undone.restored, &reply);
-    }
+    undo_newest(&mut conversation, store, log).map_err(|e| e.to_string())?;
     rig_memory::save(store, log, &mut conversation)
         .map_err(|e| format!("Uncompaction save error: {e}"))?;
     Ok(())
 }
 
-/// The text of the newest compaction's summary, `None` when the conversation
-/// holds no compaction.
-fn newest_summary(conversation: &Conversation) -> Option<String> {
-    rig_memory::Compacted::of(conversation)
-        .last()
-        .map(|(_, compacted)| compacted.state.summary)
-        .filter(|summary| !summary.is_empty())
-}
-
-/// Remove pass one's reply from the entries the undo restored.
-///
-/// Only the restored entries are considered: an entry the compaction kept was
-/// never pass one's reply to take. The reply is found the way S3's cleanup
-/// finds it — an entry carrying no author whose own text is the reply's — and
-/// its paired tool records go with it, so no result answers a call that is
-/// gone.
-fn remove_restored_reply(conversation: &mut Conversation, restored: &[MessageId], reply: &str) {
-    let found = conversation
-        .entries()
-        .rev()
-        .find(|entry| {
-            restored.contains(&entry.id)
-                && entry.author.is_none()
-                && super::supersede::is_reply_entry(entry.message, reply)
-        })
-        .map(|entry| (entry.index, super::supersede::reply_calls(entry.message)));
-    let Some((at, calls)) = found else {
-        return;
+/// Put the entries the newest leading summary replaced back in its place.
+fn undo_newest(
+    conversation: &mut Conversation,
+    store: &dyn rig_memory::Store,
+    log: &str,
+) -> Result<(), UndoError> {
+    let Some(newest) = rig_memory::summarized_prefix(conversation).checked_sub(1) else {
+        return Err(UndoError::Nothing);
     };
-    conversation.splice(at..at + 1, Vec::new(), summary_author());
-    super::supersede::remove_paired_tool_records(conversation, at, &calls);
+    let Some(summary) = conversation.id(newest) else {
+        return Err(UndoError::Nothing);
+    };
+    let mut replaced = rig_memory::summarized_in_log(store, log)?;
+    let originals = replaced.remove(&summary).ok_or(UndoError::NotInLog)?;
+    conversation.restore(newest..=newest, originals, summary_author());
+    Ok(())
 }
 
 // endregion: --- Support

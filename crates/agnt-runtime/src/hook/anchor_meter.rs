@@ -1,22 +1,20 @@
 //! The compaction trigger's meter: the usage a provider reported for the last
-//! reply, the request that reply answered, and the entry it counted through.
+//! reply and the entry it counted through.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig::completion::Usage;
 use rig::conversation::MessageId;
-use rig_memory::{Anchor, RequestStart};
+use rig_memory::Anchor;
 
 // region:    --- Types
 
 /// What the compaction decision meters the next request with.
 ///
-/// rig keeps an anchor valid only while the request it describes is still the
-/// one about to be sent, checked by a fingerprint that holds in the process that
-/// made it. Our turn loads a fresh conversation per run, so the fingerprint
-/// degrades to `whole_tokens()` across runs; the cells that make the pair are
-/// kept together so the decision reads one consistent triple and the completion
-/// that settles writes the usage the decision's entry describes.
+/// The anchor is rig's: the usage the provider reported, and the entry it counted
+/// through. The cells that make the pair are kept together so the decision reads
+/// one consistent pair and the completion that settles writes the usage the
+/// decision's entry describes.
 #[derive(Clone, Default)]
 pub struct AnchorMeter {
     cell: Arc<Mutex<MeterCell>>,
@@ -26,10 +24,8 @@ pub struct AnchorMeter {
 /// hand each other.
 #[derive(Clone, Copy, Default)]
 struct MeterCell {
-    /// The usage a provider reported for the reply to `sent`, through `through`.
+    /// The usage a provider reported for the reply through `through`.
     anchor: Option<Anchor>,
-    /// The request the anchor describes: what it started with.
-    sent: Option<RequestStart>,
     /// The last entry of the conversation that request sent.
     through: Option<MessageId>,
     /// The tokens the last reported usage counted: the wire's total, else input
@@ -43,18 +39,16 @@ struct MeterCell {
 // region:    --- Implementations
 
 impl AnchorMeter {
-    /// The anchor and the request start the next decision meters with.
-    pub fn metering(&self) -> (Option<Anchor>, Option<RequestStart>) {
-        let cell = self.lock_cell();
-        (cell.anchor, cell.sent)
+    /// The anchor the next decision meters with, `None` until a completion
+    /// settles against a recorded request.
+    pub fn anchor(&self) -> Option<Anchor> {
+        self.lock_cell().anchor
     }
 
-    /// Record the request the run is about to send: what it starts with and the
-    /// entry it counts through, which a completion's usage lands on.
-    pub fn record_request(&self, sent: RequestStart, through: MessageId) {
-        let mut cell = self.lock_cell();
-        cell.sent = Some(sent);
-        cell.through = Some(through);
+    /// Record the entry the run's request counts through, which a completion's
+    /// usage lands on.
+    pub fn record_request(&self, through: MessageId) {
+        self.lock_cell().through = Some(through);
     }
 
     /// Record the usage a provider reported, through the entry the decision

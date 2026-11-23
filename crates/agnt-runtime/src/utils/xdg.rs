@@ -90,25 +90,6 @@ pub fn cache_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
     Ok(PathBuf::from(home).join(".cache"))
 }
 
-/// Get the XDG config directory
-///
-/// Checks XDG_CONFIG_HOME first, falls back to ~/.config
-///
-/// # Examples
-///
-/// ```no_run
-/// use agnt_runtime::utils::xdg;
-///
-/// fn main() -> Result<(), xdg::XdgError> {
-///     let config_dir = xdg::config_dir()?;
-///     println!("Config directory: {config_dir:?}");
-///     Ok(())
-/// }
-/// ```
-pub fn config_dir() -> Result<PathBuf, XdgError> {
-    config_dir_with(&process_env())
-}
-
 /// Get the XDG config directory from an explicit environment map.
 pub fn config_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
     if let Some(val) = non_empty(env, "XDG_CONFIG_HOME") {

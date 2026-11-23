@@ -159,6 +159,7 @@ fn user_rows(state: &AppState) -> Vec<&MessageEntry> {
 
 // region:    --- Modules
 
+mod parity;
 mod projection;
 mod replay;
 

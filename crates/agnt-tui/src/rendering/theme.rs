@@ -176,7 +176,7 @@ impl ThemeName {
         }
     }
 
-    pub fn all() -> [ThemeName; 4] {
+    pub(crate) fn all() -> [ThemeName; 4] {
         [
             ThemeName::CatppuccinMocha,
             ThemeName::CatppuccinLatte,

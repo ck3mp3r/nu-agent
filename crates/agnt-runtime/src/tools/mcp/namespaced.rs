@@ -13,77 +13,6 @@ use tokio::sync::RwLock;
 /// Default per-call timeout for MCP tools (matches rig's DEFAULT_MCP_TOOL_TIMEOUT).
 const DEFAULT_MCP_TOOL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// A wrapper around a DynamicTool that namespaces the tool name with a server prefix.
-///
-/// This ensures rig's ToolServer sees namespaced names (e.g., `server__tool`) instead of
-/// raw MCP tool names, preventing name collisions across MCP servers.
-pub struct NamespacedTool {
-    inner: DynamicTool,
-    namespaced_name: String,
-    max_tool_result_bytes: usize,
-}
-
-impl NamespacedTool {
-    /// Create a new NamespacedTool wrapping an inner DynamicTool.
-    ///
-    /// # Arguments
-    /// * `inner` - The tool to wrap
-    /// * `server_prefix` - The server name prefix (e.g., "nu", "context7")
-    /// * `delimiter` - The delimiter to use between prefix and tool name (e.g., "__")
-    /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
-    pub fn new(
-        inner: DynamicTool,
-        server_prefix: &str,
-        delimiter: &str,
-        max_tool_result_bytes: usize,
-    ) -> Self {
-        let raw_name = inner.name().to_string();
-        let namespaced_name = format!("{server_prefix}{delimiter}{raw_name}");
-        Self {
-            inner,
-            namespaced_name,
-            max_tool_result_bytes,
-        }
-    }
-
-    /// The namespaced tool name.
-    pub fn name(&self) -> String {
-        self.namespaced_name.clone()
-    }
-
-    /// The original tool description.
-    pub fn description(&self) -> String {
-        self.inner.definition().description
-    }
-
-    /// The tool parameters schema.
-    pub fn parameters(&self) -> serde_json::Value {
-        self.inner.definition().parameters
-    }
-
-    /// Execute the tool with the given JSON args string.
-    pub async fn call(&self, args: String) -> Result<String, ToolExecutionError> {
-        // We need to execute through the inner tool. Since DynamicTool doesn't expose
-        // a direct execute method, we use a ToolContext and execute via ToolSet.
-        let mut context = rig::tool::ToolContext::new();
-        let mut toolset = rig::tool::ToolSet::default();
-        let raw_name = self.inner.name().to_string();
-        toolset.add_dynamic_tool(self.inner.clone());
-        let result = toolset.execute(&raw_name, &args, &mut context).await;
-
-        if result.is_success() {
-            Ok(truncate_tool_output(
-                result.output().render(),
-                self.max_tool_result_bytes,
-            ))
-        } else if let Some(error) = result.error() {
-            Err(error.clone())
-        } else {
-            // Refusal or skipped — no output available
-            Ok(String::new())
-        }
-    }
-}
 /// Build a DynamicTool that calls an MCP server tool via its ServerSink.
 ///
 /// This replaces the old pattern of wrapping rig's (now private) `McpTool` in a
@@ -398,3 +327,7 @@ pub enum McpClientError {
 #[cfg(test)]
 #[path = "../../../test/tools/mcp/namespaced.rs"]
 mod namespaced_test;
+
+#[cfg(test)]
+#[path = "../../../test/tools/mcp/namespaced_support.rs"]
+mod namespaced_support;

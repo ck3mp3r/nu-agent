@@ -3,7 +3,7 @@
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::executor_test_support::*;
-use super::test_utils::{MockResolver, message_text, test_config};
+use super::test_utils::{MockResolver, message_text, test_config, truncated_reply};
 use super::*;
 use crate::config::Config;
 

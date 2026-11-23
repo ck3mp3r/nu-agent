@@ -34,7 +34,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// The registry lock is held only long enough to clone the session handle;
     /// the turn then runs under the session's own runtime lock, so
     /// [`Self::cancel`] can interleave.
-    pub async fn prompt<S>(
+    pub(crate) async fn prompt<S>(
         &self,
         session_id: &str,
         prompt_text: String,

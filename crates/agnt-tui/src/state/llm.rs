@@ -44,7 +44,7 @@ impl LlmState {
     /// Fold an `InferenceChunk` event: re-render the streamed assistant block
     /// from the accumulated text the event carries, in the block of the call
     /// the event names.
-    pub fn chunk(
+    pub(crate) fn chunk(
         &mut self,
         store: &mut TranscriptStore,
         scroll: &mut ScrollState,

@@ -246,7 +246,6 @@ pub(super) fn run_command(
                 .max_tool_result_bytes
                 .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
             bus: bus.clone(),
-            merged_compaction: agnt_runtime::config::CompactionConfig::default(),
             audit_log_path: paths.audit_log_path.clone(),
         })
         .await?;

@@ -81,7 +81,7 @@ impl SpinnerState {
         }
     }
 
-    pub fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         if self.enabled && self.active && !self.suspended {
             self.frame_index = (self.frame_index + 1) % self.frames.len();
         }

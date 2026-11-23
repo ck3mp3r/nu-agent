@@ -16,12 +16,20 @@
 //! `agnt_storage`'s `transcript()`. Same-crate use is not evidence either: the
 //! property is about surface across a crate boundary.
 //!
-//! A method reached through a receiver is evidence too, on its name alone: a
-//! call site `<expr>.<name>(...)` records `<name>`, and an item another crate
-//! calls that way is consumed. The receiver's type is not attributed, so a
-//! method call in one crate suppresses a row of that name in every crate it does
-//! not itself declare — the over-count is deliberate, and the cost is recorded
-//! in the ARCH-6 review entry.
+//! A method reached through a receiver is member evidence and never item
+//! evidence. A call site `<expr>.<name>(...)` records `<name>` on its own, with
+//! no receiver type to attribute it to, so the credit is gated by a cross-crate
+//! path: a calling crate's method names credit a member row in `K` only when that
+//! crate also references `K` — writes at least one path into it. A crate that
+//! names no path into `K` cannot consume `K`'s surface, so its same-named call
+//! leaves every one of `K`'s rows standing. A free item is reachable through a
+//! path alone, so a receiver call never credits a declared item: it names a
+//! method, not a declaration.
+//!
+//! The gate has a residual over-count, and it is recorded: a same-named method
+//! call in a crate that DOES reference `K` still suppresses `K`'s member row,
+//! although its receiver may be no type of `K`'s. The cost is recorded in the
+//! ARCH-6 review entry.
 //!
 //! An associated function called through an imported name is evidence the same
 //! way. `use agnt_kernel::InferenceId;` binds the name, so a later
@@ -29,8 +37,8 @@
 //! walk resolves each file's `use` trees to the crates they name, and attributes
 //! that call to the declaring crate. A name the file never imported attributes
 //! nothing — a local type's `Thing::mint()` is not evidence of another crate's
-//! `mint`. The suppression is by name, like the receiver half, so it costs the
-//! same over-count the review entry records.
+//! `mint`. The suppression is by name, so it costs the same over-count the
+//! path-segment rule records below.
 //!
 //! Blind spots, recorded rather than closed: a glob import
 //! (`use agnt_runtime::types::*`) names no item, a macro-generated reference is
@@ -46,7 +54,7 @@
 //!   `impl` crate-wide, by self-type name against the crate's surfaced types, so
 //!   the type's declaration file is not consulted.
 //!
-//! Three rules the walk applies, stated so a reader can check them against a row:
+//! Four rules the walk applies, stated so a reader can check them against a row:
 //!
 //! - Associated functions are surface too. Two walks make one census: the item
 //!   walk reads declarations, and the member walk
@@ -59,6 +67,10 @@
 //!   `agnt_storage::transcript` consumes a row named `transcript` whether or not
 //!   the item is what the path reaches. Measured when the method evidence
 //!   landed: 65 of 934 members (7.0%) were suppressed this way.
+//! - A receiver call credits a member, never an item, and only across a
+//!   reference. The call names its method with no crate segment, so the credit is
+//!   admissible only from a crate that writes a path into the declaring crate. A
+//!   caller that references nothing in `K` leaves every `K` row standing.
 //! - An associated call is attributed by the crate its leading name was imported
 //!   from. `InferenceId::mint()` after `use agnt_kernel::InferenceId;` consumes
 //!   `mint` in `agnt_kernel`; a leading name the file did not import attributes
@@ -84,7 +96,7 @@ use crate::architecture::report::Violation;
 use crate::architecture::sources::Workspace;
 
 use census::{member_surface, surface};
-use support::report;
+use support::{Half, report};
 
 // endregion: --- Modules
 
@@ -94,7 +106,7 @@ use support::report;
 /// THEN the item SHALL have no cross-crate consumer and the assertion SHALL
 /// report its declaration site, unless a baseline row records it.
 pub fn arch_6_public_surface_consumer_census(ws: &Workspace) -> Vec<Violation> {
-    report(ws, surface(ws))
+    report(ws, surface(ws), Half::Declared)
 }
 
 /// WHEN a `pub` impl member on a census-visible type has no cross-crate
@@ -106,7 +118,7 @@ pub fn arch_6_public_surface_consumer_census(ws: &Workspace) -> Vec<Violation> {
 /// their own and are therefore outside the walk; an inherent `impl`'s `pub`
 /// members are the record's subject.
 pub fn arch_6_impl_member_census(ws: &Workspace) -> Vec<Violation> {
-    report(ws, member_surface(ws))
+    report(ws, member_surface(ws), Half::ImplMembers)
 }
 
 // endregion: --- Functions

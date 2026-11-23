@@ -21,10 +21,6 @@ model = "ollama/gemma4:31b"
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434"
-
-[compaction]
-reserve_pct = 20
-keep_recent = 20000
 ```
 
 Use it:
@@ -35,10 +31,10 @@ Use it:
 
 ## Documentation
 
-- `docs/configuration.md` - config structure, env vars, precedence
-- `docs/mcp.md` - MCP servers, discovery, filtering
-- `docs/usage.md` - commands, examples, and TUI transcript rendering behavior
-- `docs/contribution-guardrails.md` - contributor guardrails for permission/TUI/tool-handler changes
+- `docs/content/docs/user/configuration.md` - config structure, env vars, precedence ([site](https://ck3mp3r.github.io/nu-agent/docs/user/configuration/))
+- `docs/content/docs/integration/mcp.md` - MCP servers, discovery, filtering
+- `docs/content/docs/user/usage.md` - commands, examples, and TUI transcript rendering behavior ([site](https://ck3mp3r.github.io/nu-agent/docs/user/usage/))
+- `docs/content/docs/architecture/contribution-guardrails.md` - contributor guardrails for permission/TUI/tool-handler changes
 
 ## Module/Test Layout Convention
 

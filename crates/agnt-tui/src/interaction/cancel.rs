@@ -17,7 +17,7 @@ impl Default for CancelController {
 }
 
 impl CancelController {
-    pub fn request_cancel(&self) -> bool {
+    pub(crate) fn request_cancel(&self) -> bool {
         !self.requested.swap(true, Ordering::SeqCst)
     }
 

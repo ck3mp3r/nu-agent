@@ -22,8 +22,8 @@ mod not_run;
 mod outcome;
 mod wiring;
 
-pub(crate) use compaction::PendingClearance;
-pub use compaction::{CompactionPath, run_compaction};
+pub use compaction::CompactionPath;
+pub(crate) use compaction::run_compaction;
 pub use in_place::PendingSummary;
 pub(crate) use in_place::Supersede;
 pub use not_run::{
@@ -39,7 +39,7 @@ use std::sync::{Arc, Mutex};
 use agnt_kernel::bus::CancelRx;
 
 use crate::bus::Bus;
-use crate::conversation::compaction::CompactionConfig;
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::turn_tools::TurnToolLog;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -98,8 +98,9 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     memory: crate::conversation::state::memory::MemoryOf,
     /// The session/conversation id this hook compacts.
     conversation_id: String,
-    /// Hook-driven compaction machinery: compactor, policy, threshold.
-    compaction: CompactionConfig,
+    /// Hook-driven compaction machinery: the compactor, carrying rig's
+    /// compaction settings and the spec it is fitted to.
+    compaction: NuCompactor,
     /// The wire serving this turn's completions. The pricing fallback uses its
     /// spec, so a completion is priced at the rates of the model that served
     /// it — not at the compaction model's.
@@ -125,9 +126,8 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     unpriced_warnings: UnpricedWarnings,
     /// Why this turn's run stopped, recorded when a guard or the user stops it.
     stop: StopLedger,
-    /// The in-place summary this turn decided on, waiting for the patched call's
-    /// reply. Shared across the turn's attempts, so a retried run keeps the
-    /// plan the first attempt made.
+    /// The summary this turn asked a side-call for, waiting for the between-runs
+    /// splice. Shared across the turn's attempts, so the turn asks at most once.
     pending_summary: PendingSummary,
     /// The completion call whose deltas stream now: minted when the call begins,
     /// read by every delta it publishes. Shared with the turn executor, which

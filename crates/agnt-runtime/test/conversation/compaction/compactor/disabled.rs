@@ -10,16 +10,16 @@ async fn disabled_compactor_emits_failed_and_returns_error() -> Result<()> {
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.stream().subscribe();
-    let compactor = NuCompactor::new(stream_model(&["summary"]).erase(), bus, test_policy(), None);
+    let compactor = NuCompactor::new(
+        stream_model(&["summary"]).erase(),
+        bus,
+        test_settings(),
+        None,
+    );
 
     // -- Exec
     let result = compactor
-        .compact(
-            Arc::clone(&store),
-            CONV,
-            &CompactReason::Threshold,
-            CompactionSource::Auto,
-        )
+        .compact(Arc::clone(&store), CONV, false, CompactionSource::Auto)
         .await;
 
     // -- Check

@@ -4,10 +4,9 @@ use std::time::Duration;
 use nu_protocol::LabeledError;
 use rig::catalog::{Catalog, ModelFacts, ModelSpec as RigModelSpec};
 use rig::http_client::{HttpClientExt, ReqwestClient};
+use rig::providers::auth::{AuthError, DeviceCodeHandler, FileTokenStore};
 use rig::providers::copilot;
-use rig::providers::copilot::auth::{
-    AuthError, AuthSource, Authenticator, DeviceCodeHandler, FileTokenStore,
-};
+use rig::providers::copilot::auth::{AuthSource, Authenticator};
 use rig::providers::registry::ProviderId;
 
 use crate::config::copilot_tokens::copilot_token_dir;

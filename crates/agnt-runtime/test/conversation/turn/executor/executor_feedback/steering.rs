@@ -103,7 +103,7 @@ async fn successful_feedback_retry_delivers_feedback_exactly_once() -> Result<()
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -192,7 +192,7 @@ async fn no_session_turn_gets_feedback_steering() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("unreachable".to_string()),
             MockStreamEvent::final_response_with_default_usage(),

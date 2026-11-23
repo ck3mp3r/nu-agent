@@ -27,10 +27,10 @@ const DOTENV_FILE: &str = ".env";
 
 /// Load `.env` files into the process environment.
 ///
-/// Loads the user-level file first, then the project-level `./.env`, so a
-/// project value overrides a user-level value for keys not already set in the
-/// process environment. Missing files are ignored. Malformed lines are logged
-/// and skipped — this function never fails.
+/// Loads the user-level file first, then the project-level `./.env`. A variable already
+/// present in the environment is never overwritten, so a user-level value wins over a
+/// project-level value, and the process environment wins over both. Missing files are
+/// ignored. Malformed lines are logged and skipped — this function never fails.
 ///
 /// The user-level path is [`Paths::dotenv_path`], resolved before config.toml is
 /// read; an unresolvable path (no `HOME`, no XDG base) simply skips that file.

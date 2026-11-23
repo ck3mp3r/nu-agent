@@ -18,7 +18,7 @@ async fn output_budget_raise_applies_multiplier_on_retry() -> Result<()> {
 
     // Attempt 1 fails with OutputBudget; attempt 2 succeeds.
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -83,8 +83,8 @@ async fn output_budget_raise_compounds_on_consecutive_failures() -> Result<()> {
 
     // Attempts 1 and 2 fail with OutputBudget; attempt 3 succeeds.
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -150,7 +150,7 @@ async fn output_budget_raise_disabled_keeps_max_tokens_unchanged() -> Result<()>
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -206,7 +206,7 @@ async fn output_budget_raise_no_base_max_tokens_no_raise() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -264,7 +264,7 @@ async fn output_budget_raise_base_at_cap_no_raise() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),

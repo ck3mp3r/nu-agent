@@ -26,7 +26,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     ///
     /// The id is generated here and handed to the runtime as its persisted
     /// session id, so the conversation is stored under the id the client sees.
-    pub async fn new_session(
+    pub(crate) async fn new_session(
         &self,
         cwd: impl Into<PathBuf>,
         mcp_servers: Vec<McpServerConfig>,
@@ -44,7 +44,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// conversation as `session/update` notifications, and the session is
     /// registered so the next prompt runs against the restored history.
     /// Returns [`AcpError::SessionNotFound`] when the store has no such session.
-    pub async fn load_session<S: SessionUpdateSink>(
+    pub(crate) async fn load_session<S: SessionUpdateSink>(
         &self,
         session_id: &str,
         cwd: impl Into<PathBuf>,

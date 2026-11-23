@@ -1,8 +1,6 @@
 use crate::command::logging::{environment_level, install_logging};
 use crate::plugin::AgentPlugin;
-use agnt_runtime::config::CompactionConfig;
-use agnt_runtime::conversation::runtime_build::build_compaction_policy;
-use agnt_runtime::rig_memory::NearWindow;
+use agnt_runtime::config::CompactionSettings;
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::session::prefix::dir_prefix;
 use agnt_runtime::types::{AssistantContent, Message, UserContent};
@@ -36,7 +34,7 @@ impl AgentSessionInspect {
         engine: &C,
         call: &EvaluatedCall,
         rig: &RigStoreConfig,
-        compaction: &CompactionConfig,
+        compaction: &CompactionSettings,
     ) -> Result<Value, LabeledError> {
         let session_id: String = call.req(0)?;
 
@@ -119,75 +117,19 @@ impl AgentSessionInspect {
             })
             .collect();
 
-        // Convert the resolved compaction policy to a Nushell Value (record).
-        // The policy is not persisted in the store format: it is the resolved
-        // policy the runtime compacts with, built from the loaded config.
-        let policy = build_compaction_policy(compaction);
+        // The compaction settings to a Nushell Value (record).
+        // They are not persisted in the store format: they are rig's resolved
+        // `[compaction]` settings, the values the runtime compacts with.
         let mut config_record = Record::new();
+        config_record.push("enabled", Value::bool(compaction.enabled, call.head));
         config_record.push(
-            "keep_recent",
-            Value::int(policy.keep_recent as i64, call.head),
+            "reserve_tokens",
+            Value::int(compaction.reserve_tokens as i64, call.head),
         );
         config_record.push(
-            "keep_asked",
-            Value::int(policy.keep_asked as i64, call.head),
+            "keep_recent_tokens",
+            Value::int(compaction.keep_recent_tokens as i64, call.head),
         );
-        // The knob, not the stored policy's reserve: the room a decision keeps
-        // free is derived per turn from this percent and that turn's model.
-        config_record.push(
-            "reserve_pct",
-            Value::int(
-                i64::from(
-                    compaction
-                        .reserve_pct
-                        .unwrap_or(agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT),
-                ),
-                call.head,
-            ),
-        );
-        config_record.push(
-            "summary_tokens",
-            Value::int(policy.summarizer.limits.summary_tokens as i64, call.head),
-        );
-        config_record.push(
-            "keep_tokens",
-            Value::int(policy.clearing.keep_tokens as i64, call.head),
-        );
-        config_record.push(
-            "keep_under",
-            Value::int(policy.clearing.keep_under as i64, call.head),
-        );
-        config_record.push(
-            "near_window",
-            Value::string(
-                match policy.near_window {
-                    NearWindow::Summarize => "summarize",
-                    NearWindow::Clear => "clear",
-                },
-                call.head,
-            ),
-        );
-        config_record.push(
-            "tracked",
-            Value::list(
-                policy
-                    .tracked
-                    .iter()
-                    .map(|rule| {
-                        let mut row = Record::new();
-                        row.push("tool", Value::string(rule.tool.to_string(), call.head));
-                        row.push(
-                            "argument",
-                            Value::string(rule.argument.to_string(), call.head),
-                        );
-                        row.push("set", Value::string(rule.set.to_string(), call.head));
-                        Value::record(row, call.head)
-                    })
-                    .collect(),
-                call.head,
-            ),
-        );
-
         // Build the final session record
         let mut session_record = Record::new();
         session_record.push("id", Value::string(id, call.head));

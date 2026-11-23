@@ -6,7 +6,7 @@
 //! received.
 
 use crate::protocol::contracts::{UiMessageSnapshot, project_snapshots};
-use crate::protocol::events::{SessionRecord, ToolRecord, TurnRecord};
+use crate::protocol::events::{CompactionRecord, SessionRecord, ToolRecord, TurnRecord};
 use crate::session::tool_status::ToolStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -81,5 +81,44 @@ fn test_protocol_projection_tool_row_carries_its_result_into_the_outcome() -> Re
         .filter(|record| matches!(record, SessionRecord::Turn(TurnRecord::Completed { .. })))
         .count();
     assert_eq!(boundaries, 2, "one boundary per replayed turn");
+    Ok(())
+}
+
+/// WHEN a compaction snapshot projects, THE projection SHALL answer one
+/// `Completed` record whose `source` is `None` and whose `summary` is the
+/// snapshot text verbatim: the store persists the summary, not where the sweep
+/// came from.
+#[test]
+fn test_protocol_projection_compaction_snapshot_names_no_source() -> Result<()> {
+    // -- Setup & Fixtures: one replayed turn that ended in a compaction.
+    let summary_text = "## Summary\n- the parser rewrite\n- the lexer follow-up";
+    let messages = vec![
+        UiMessageSnapshot::new("user", "rewrite the parser"),
+        UiMessageSnapshot::new("compaction", summary_text),
+    ];
+
+    // -- Exec
+    let (records, _total) = project_snapshots(messages);
+
+    // -- Check: one compaction record, and it names no source.
+    let compactions: Vec<&CompactionRecord> = records
+        .iter()
+        .filter_map(|record| match record {
+            SessionRecord::Compaction(record) => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(compactions.len(), 1, "one record per replayed compaction");
+    let Some(CompactionRecord::Completed { source, summary }) = compactions.first().copied() else {
+        return Err("should be a completed compaction".into());
+    };
+
+    // -- Check: the snapshot names no source, and its text passes on verbatim.
+    assert_eq!(*source, None, "the store carries no source");
+    assert_eq!(
+        summary.as_str(),
+        summary_text,
+        "the summary passes on verbatim"
+    );
     Ok(())
 }

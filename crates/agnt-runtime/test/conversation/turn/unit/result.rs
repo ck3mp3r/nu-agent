@@ -39,6 +39,7 @@ fn turn_error_can_be_constructed() {
     let error = TurnError::CompletionFailed {
         msg: "Test error".to_string(),
         kind: executor::CompletionErrorKind::Unknown,
+        retry_after: None,
         exhaustion: None,
     };
 

@@ -1,38 +1,32 @@
-//! The in-place decision: which turns patch their request, which take the
-//! interim worker scheduling, and which publish nothing.
+//! The threshold decision: which turns schedule the side-call summary, and which
+//! publish nothing.
 
 use super::super::*;
 use super::*;
 
-use crate::hook::chain::in_place::InPlace;
-
-/// WHEN the metered request is over the model's input limit less the policy's
-/// reserve, and the conversation has a part worth summarizing inside the room the
-/// model leaves, THE begin_completion SHALL patch the call in place: the kept
-/// messages plus one user message carrying the summarizer's instruction, the
-/// measured output budget, a stashed plan for the reply, and a Started row.
+/// WHEN the metered request is over the model's input limit less rig's
+/// `reserve_tokens`, THE begin_completion SHALL schedule the side-call summary:
+/// the request goes unpatched, the summary waits for the executor's between-runs
+/// splice, and a Started row is published.
 #[tokio::test]
-async fn decide_compaction_over_threshold_patches_in_place() -> Result<()> {
-    // -- Setup & Fixtures: ~50k tokens of conversation against a 60k limit whose
-    // reserve (20 percent of the limit) leaves 48_000 usable. The kept window
-    // is a quarter of the limit, so
-    // the summarized part is most of the conversation (worth a model call) and
-    // the room left is far above the output floor.
+async fn decide_compaction_over_threshold_schedules_the_side_call() -> Result<()> {
+    // -- Setup & Fixtures: ~57k tokens of conversation against a 60k limit, whose
+    // rig-default reserve of 16_384 tokens leaves 43_616 usable, so the request is
+    // over it.
     let fx = decide_fixture()?;
     let history: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("message {i} {}", "q".repeat(40_000))))
         .collect();
     seed_rig(&fx, &history).await?;
     let mut lifecycle_rx = fx.bus.lifecycle().subscribe();
+    let mut compaction_rx = fx.bus.control().subscribe();
 
     // -- Exec
     let action = decide_compaction(
         &Message::user("current user prompt"),
         "conv-1",
-        InPlace {
-            spec: Some(&fx.spec),
-            pending: &fx.pending,
-        },
+        Some(&fx.spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -45,47 +39,32 @@ async fn decide_compaction_over_threshold_patches_in_place() -> Result<()> {
     )
     .await;
 
-    // -- Check: a patch whose history is the kept messages plus the instruction.
-    let rig::agent::CompletionCallAction::Patch(patch) = action else {
-        return Err(format!(
-            "an over-threshold turn with room to summarize must patch, got {action:?}"
-        )
-        .into());
-    };
-    let sent = patch
-        .history
-        .ok_or("the patch replaces the request's history")?;
-    let instruction = sent
-        .last()
-        .ok_or("the patch sends at least the instruction")?;
-    let rig::message::Message::User { content } = &**instruction else {
-        return Err("the last message the patch sends is the instruction".into());
-    };
-    let text = content
-        .iter()
-        .find_map(|item| match item {
-            rig::message::UserContent::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .ok_or("the instruction is a user text message")?;
+    // -- Check: the turn's own request goes unpatched, no worker compaction is
+    // scheduled, and the side-call's summary waits for the executor.
     assert!(
-        text.starts_with(fx.compaction.policy().summarizer.prompts.in_place.as_ref()),
-        "the instruction must be the summarizer's in-place prompt, got: {text}"
+        matches!(action, rig::agent::CompletionCallAction::Continue),
+        "an over-threshold turn must not patch its request, got {action:?}"
     );
     assert!(
-        sent.len() < history.len(),
-        "the patch must send fewer messages than the conversation holds"
+        matches!(
+            compaction_rx.try_recv(),
+            Err(crate::bus::TryReceiveError::Empty)
+        ),
+        "auto compaction SHALL NOT schedule a worker compaction"
     );
-    let budget = patch
-        .max_tokens
-        .ok_or("the patch asks for an output budget")?;
-    assert!(
-        budget >= 4_096,
-        "the budget must clear the output floor, got {budget}"
+    let settled = fx
+        .pending
+        .take_settled()
+        .ok_or("the side-call's summary must wait for the executor")?;
+    assert_eq!(
+        settled.reply(),
+        "summary",
+        "the side-call's answer must land as the summary"
     );
-    assert!(
-        fx.pending.is_pending(),
-        "the decision must stash the plan the reply answers"
+    assert_eq!(
+        fx.turn_model.requests().len(),
+        1,
+        "the side-call asks the turn's own model exactly once"
     );
     let started = tokio::time::timeout(std::time::Duration::from_secs(5), lifecycle_rx.recv())
         .await
@@ -96,19 +75,18 @@ async fn decide_compaction_over_threshold_patches_in_place() -> Result<()> {
             &started,
             crate::bus::LifecycleEvent::CompactionStarted { source } if *source == CompactionSource::Auto
         ),
-        "the patch must announce a started compaction, got {started:?}"
+        "the side-call must announce a started compaction, got {started:?}"
     );
     Ok(())
 }
 
-/// WHEN the part being summarized is too small a share of the conversation, THEN
-/// THE begin_completion SHALL take the side-call: the request goes unpatched, no
+/// WHEN the conversation is dominated by one enormous last message, THEN THE
+/// begin_completion SHALL take the side-call: the request goes unpatched, no
 /// worker compaction is scheduled, and the summary waits for the executor.
 #[tokio::test]
-async fn decide_compaction_not_worth_summarizing_takes_the_side_call() -> Result<()> {
+async fn decide_compaction_with_a_dominant_last_message_takes_the_side_call() -> Result<()> {
     // -- Setup & Fixtures: three tiny messages and one enormous last message, so
-    // the kept window lands on that message alone and the part being summarized
-    // is a rounding error against the whole.
+    // the kept window lands on that message alone.
     let fx = decide_fixture()?;
     let mut history: Vec<Message> = (0..3).map(|i| Message::user(format!("tiny {i}"))).collect();
     history.push(Message::user("w".repeat(400_000)));
@@ -119,10 +97,8 @@ async fn decide_compaction_not_worth_summarizing_takes_the_side_call() -> Result
     let action = decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&fx.spec),
-            pending: &fx.pending,
-        },
+        Some(&fx.spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -138,7 +114,7 @@ async fn decide_compaction_not_worth_summarizing_takes_the_side_call() -> Result
     // -- Check
     assert!(
         matches!(action, rig::agent::CompletionCallAction::Continue),
-        "a summary that is not worth its call must not patch, got {action:?}"
+        "an over-threshold turn must not patch its request, got {action:?}"
     );
     assert!(
         matches!(
@@ -151,24 +127,22 @@ async fn decide_compaction_not_worth_summarizing_takes_the_side_call() -> Result
         .pending
         .take_settled()
         .ok_or("the side-call's summary must wait for the executor")?;
-    assert!(
-        settled.summary().is_some(),
-        "the side-call's answer must be a usable summary, got {:?}",
-        settled.rejection()
+    assert_eq!(
+        settled.reply(),
+        "summary",
+        "the side-call's answer must land as the summary"
     );
     Ok(())
 }
 
-/// WHEN the kept history leaves less room than the summary needs, THEN THE
-/// begin_completion SHALL take the side-call: the in-place request is impossible
-/// under that model's limit, and plain messages leave nothing to clear.
+/// WHEN the model's input limit is tight, THEN THE begin_completion SHALL take the
+/// side-call and ask the turn's own model exactly once.
 #[tokio::test]
-async fn decide_compaction_without_room_for_the_summary_takes_the_side_call() -> Result<()> {
-    // -- Setup & Fixtures: a 5k limit whose quarter (the kept window) leaves less
-    // than the output floor below itself, and a conversation over the threshold the
-    // 20 percent reserve leaves (4_000 usable). The huge message sits in the
-    // middle, so the cut is a real one — the kept window opens on it — and only the
-    // output budget makes the in-place request impossible.
+async fn decide_compaction_with_a_tight_input_limit_takes_the_side_call() -> Result<()> {
+    // -- Setup & Fixtures: a 5k limit, under rig's 16_384-token reserve, so the
+    // trigger leaves no room at all and any context is over it. The huge message
+    // sits in the middle, so the cut is a real one and the side-call plans a
+    // request of its own.
     let fx = decide_fixture()?;
     let spec = spec_with_input_limit(5_000)?;
     seed_rig(
@@ -186,10 +160,8 @@ async fn decide_compaction_without_room_for_the_summary_takes_the_side_call() ->
     let action = decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&spec),
-            pending: &fx.pending,
-        },
+        Some(&spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -205,7 +177,7 @@ async fn decide_compaction_without_room_for_the_summary_takes_the_side_call() ->
     // -- Check
     assert!(
         matches!(action, rig::agent::CompletionCallAction::Continue),
-        "a request with no room for the summary must not patch, got {action:?}"
+        "an over-threshold turn must not patch its request, got {action:?}"
     );
     assert!(
         matches!(
@@ -226,22 +198,19 @@ async fn decide_compaction_without_room_for_the_summary_takes_the_side_call() ->
     Ok(())
 }
 
-/// WHEN the metered request is over the model's input limit less the policy's
-/// reserve, THE decision SHALL complete the compaction on this turn — in place,
-/// cleared, or by a side-call — and SHALL NOT schedule an `Auto` worker
-/// compaction.
+/// WHEN the metered request is over the model's input limit less rig's
+/// `reserve_tokens`, THE decision SHALL complete the compaction on this turn by a
+/// side-call and SHALL NOT schedule an `Auto` worker compaction.
 #[tokio::test]
 async fn decide_compaction_over_threshold_never_schedules_an_auto_worker() -> Result<()> {
-    // -- Setup & Fixtures: ~50k tokens of conversation against a 60k limit whose
-    // reserve (20 percent of the limit) leaves 48_000 usable, so the request is
+    // -- Setup & Fixtures: ~57k tokens of conversation against a 60k limit, whose
+    // rig-default reserve of 16_384 tokens leaves 43_616 usable, so the request is
     // over it.
     let fx = decide_fixture()?;
     let mut history: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("user message {i} ").repeat(2)))
         .collect();
-    // One enormous last message: the kept window lands on it alone, so the part
-    // being summarized is too small a share of the conversation for an in-place
-    // summary and the side-call answers instead.
+    // One enormous last message, so the conversation is dominated by its tail.
     history.push(Message::user("x".repeat(400_000)));
     seed_rig(&fx, &history).await?;
     let mut compaction_rx = fx.bus.control().subscribe();
@@ -250,10 +219,8 @@ async fn decide_compaction_over_threshold_never_schedules_an_auto_worker() -> Re
     decide_compaction(
         &Message::user("current user prompt"),
         "conv-1",
-        InPlace {
-            spec: Some(&fx.spec),
-            pending: &fx.pending,
-        },
+        Some(&fx.spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -266,7 +233,7 @@ async fn decide_compaction_over_threshold_never_schedules_an_auto_worker() -> Re
     )
     .await;
 
-    // -- Check: the ladder took the turn, and the control channel stayed silent.
+    // -- Check: the decision took the turn, and the control channel stayed silent.
     assert!(
         matches!(
             compaction_rx.try_recv(),
@@ -275,7 +242,7 @@ async fn decide_compaction_over_threshold_never_schedules_an_auto_worker() -> Re
         "auto compaction SHALL NOT publish CompactionRequested"
     );
     assert!(
-        fx.pending.is_pending() || fx.pending.take_settled().is_some(),
+        fx.pending.take_settled().is_some(),
         "an over-threshold turn must decide the compaction itself"
     );
     assert_eq!(
@@ -304,10 +271,8 @@ async fn decide_compaction_under_threshold_publishes_nothing() -> Result<()> {
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&fx.spec),
-            pending: &fx.pending,
-        },
+        Some(&fx.spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -341,10 +306,8 @@ async fn decide_compaction_without_a_spec_publishes_nothing() -> Result<()> {
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: None,
-            pending: &fx.pending,
-        },
+        None,
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -362,9 +325,9 @@ async fn decide_compaction_without_a_spec_publishes_nothing() -> Result<()> {
         matches!(rx.try_recv(), Err(crate::bus::TryReceiveError::Empty)),
         "a model with no known input limit must not fire Requested"
     );
-    let (anchor, sent) = fx.meter.metering();
+    let anchor = fx.meter.anchor();
     assert!(
-        anchor.is_none() && sent.is_none(),
+        anchor.is_none(),
         "a decision that cannot meter must record no request"
     );
     Ok(())
@@ -406,10 +369,8 @@ async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<
     decide_compaction(
         &Message::user("hi"),
         "conv-1",
-        InPlace {
-            spec: Some(&fx.spec),
-            pending: &fx.pending,
-        },
+        Some(&fx.spec),
+        &fx.pending,
         &CompactionPath::new(
             fx.memory.as_ref(),
             &fx.compaction,
@@ -424,7 +385,7 @@ async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<
 
     // -- Check
     assert!(
-        fx.pending.is_pending() || fx.pending.take_settled().is_some(),
+        fx.pending.take_settled().is_some(),
         "the post-turn-2 conversation is over the limit, so the decision must act; \
          a stale first read would not"
     );

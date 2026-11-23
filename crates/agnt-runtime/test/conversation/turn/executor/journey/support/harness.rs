@@ -51,7 +51,7 @@ pub(crate) struct JourneyHarness {
     _temp_dir: tempfile::TempDir, // leading underscore keeps TempDir alive
     pub(crate) memory_state: MemoryState,
     dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
-    compaction_config: crate::conversation::compaction::CompactionConfig,
+    compaction_config: crate::conversation::compaction::compactor::NuCompactor,
     pub(crate) session_id: &'static str,
     config: crate::config::Config,
 }
@@ -67,11 +67,11 @@ impl JourneyHarness {
             panic!("a journey harness must own a temp dir");
         };
         let bus = crate::bus::Bus::default();
-        let compaction_config = crate::conversation::compaction::CompactionConfig {
-            compactor: crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
+        let compaction_config =
+            crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
                 test_utils::shared_mock_model(),
                 bus.clone(),
-                rig_memory::CompactionPolicy::default(),
+                rig_memory::CompactionSettings::default(),
                 crate::conversation::compaction::compactor::resolve_model_spec(
                     "openai",
                     "gpt-4o",
@@ -79,9 +79,7 @@ impl JourneyHarness {
                     Some(1_024),
                     None,
                 ),
-            ),
-            reserve_pct: crate::config::defaults::DEFAULT_RESERVE_PCT,
-        };
+            );
         let memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
         Self {
             _temp_dir: temp_dir,

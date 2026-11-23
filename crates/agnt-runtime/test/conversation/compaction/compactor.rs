@@ -1,18 +1,14 @@
 //! Tests for `NuCompactor`'s rig-memory compaction port.
 //!
-//! The compactor loads the conversation from the rig store, clears old tool
-//! outputs, plans and streams the summary, splices it in through
-//! `rig_memory::apply_summary`, and saves. These tests pin that flow through the
-//! public boundary: the persisted conversation, the `rig.compaction` author, the
-//! bus events, and the error mapping.
+//! The compactor loads the conversation from the rig store, plans and streams the
+//! summary, splices it in through `rig_memory::apply_summary`, and saves. These
+//! tests pin that flow through the public boundary: the persisted conversation,
+//! the `rig.compaction` author, the bus events, and the error mapping.
 //!
 //! The suite is split into topical sub-files. Shared imports and the helper
 //! re-exports live here; each sub-file pulls them in with `use super::*;`.
 
 // region:    --- Modules
-
-#[path = "compactor/clearing.rs"]
-mod clearing;
 
 #[path = "compactor/disabled.rs"]
 mod disabled;

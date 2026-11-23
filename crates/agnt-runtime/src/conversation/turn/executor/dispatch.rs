@@ -92,6 +92,7 @@ where
                         msg,
                         kind,
                         exhaustion,
+                        ..
                     } => (msg, Some(kind), *exhaustion),
                     crate::conversation::turn::TurnError::ToolExecutionFailed { msg } => {
                         (msg, None, None)

@@ -1,5 +1,5 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
-use agnt_runtime::config::CompactionConfig;
+use agnt_runtime::config::CompactionSettings;
 use agnt_runtime::session::prefix::dir_prefix;
 use agnt_runtime::session::{RigStoreConfig, StoreType};
 use agnt_runtime::types::Message;
@@ -49,7 +49,7 @@ async fn test_agent_session_inspect_displays_full_session_details() -> Result<()
     };
     let call = make_call("test-session");
     let result = command
-        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .run_inner(&engine, &call, &rig, &CompactionSettings::default())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -84,7 +84,7 @@ async fn test_agent_session_inspect_returns_error_for_nonexistent_session() -> R
     };
     let call = make_call("nonexistent");
     let result = command
-        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .run_inner(&engine, &call, &rig, &CompactionSettings::default())
         .await;
 
     // -- Check
@@ -130,7 +130,7 @@ async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
     };
     let call = make_call("my-session");
     let result = command
-        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .run_inner(&engine, &call, &rig, &CompactionSettings::default())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -170,7 +170,7 @@ async fn inspect_ignores_sessions_of_another_cwd() -> Result<()> {
     };
     let call = make_call("old-session");
     let result = command
-        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .run_inner(&engine, &call, &rig, &CompactionSettings::default())
         .await;
 
     // -- Check
@@ -194,63 +194,33 @@ async fn test_agent_session_inspect_shows_the_default_compaction_policy() -> Res
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("test-session");
-    let default = agnt_runtime::rig_memory::CompactionPolicy::default();
+    let default = CompactionSettings::default();
 
     // -- Exec
     let result = command
-        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .run_inner(&engine, &call, &rig, &CompactionSettings::default())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
     // -- Check
     assert_eq!(
-        config_int(&result, "keep_recent"),
-        Some(default.keep_recent as i64)
+        config_int(&result, "reserve_tokens"),
+        Some(default.reserve_tokens as i64)
     );
     assert_eq!(
-        config_int(&result, "keep_asked"),
-        Some(default.keep_asked as i64)
+        config_int(&result, "keep_recent_tokens"),
+        Some(default.keep_recent_tokens as i64)
     );
     assert_eq!(
-        config_int(&result, "reserve_pct"),
-        Some(agnt_runtime::config::defaults::DEFAULT_RESERVE_PCT as i64)
-    );
-    // The 32k budget is our deliberate pin (c5t 7eb115fe), not rig's default.
-    assert_eq!(config_int(&result, "summary_tokens"), Some(32_000));
-    assert_eq!(
-        config_int(&result, "keep_tokens"),
-        Some(default.clearing.keep_tokens as i64)
-    );
-    assert_eq!(
-        config_int(&result, "keep_under"),
-        Some(default.clearing.keep_under as i64)
-    );
-    assert_eq!(
-        config_str(&result, "near_window"),
-        Some("summarize".to_string()),
-        "the default near-window behavior is rig-memory's: summarize"
-    );
-    assert_eq!(
-        config_tracked(&result),
-        vec![
-            (
-                "read".to_string(),
-                "path".to_string(),
-                "read-files".to_string()
-            ),
-            (
-                "edit".to_string(),
-                "path".to_string(),
-                "modified-files".to_string()
-            ),
-        ],
-        "the two built-in tracked rules are the rows the policy resolved"
+        config_bool(&result, "enabled"),
+        Some(default.enabled),
+        "an unset block keeps rig's enabled"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn test_agent_session_inspect_shows_the_configured_compaction_policy() -> Result<()> {
+async fn test_agent_session_inspect_shows_the_configured_compaction_settings() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new()?;
     let rig = rig_at(&temp_dir);
@@ -262,18 +232,10 @@ async fn test_agent_session_inspect_shows_the_configured_compaction_policy() -> 
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("test-session");
-    let config = CompactionConfig {
-        keep_recent: Some(5000),
-        reserve_pct: Some(35),
-        clearing: Some(agnt_runtime::rig_memory::ClearToolOutputs {
-            keep_tokens: 9000,
-            keep_under: 250,
-        }),
-        near_window: Some(agnt_runtime::rig_memory::NearWindow::Clear),
-        tracked: Some(vec![agnt_runtime::rig_memory::TrackArgument::new(
-            "grep", "pattern", "grepped",
-        )]),
-        ..CompactionConfig::default()
+    let config = CompactionSettings {
+        enabled: false,
+        reserve_tokens: 40_000,
+        keep_recent_tokens: 5_000,
     };
 
     // -- Exec
@@ -283,28 +245,24 @@ async fn test_agent_session_inspect_shows_the_configured_compaction_policy() -> 
         .map_err(|e| format!("{e:?}"))?;
 
     // -- Check
-    assert_eq!(config_int(&result, "keep_recent"), Some(5000));
-    assert_eq!(config_int(&result, "reserve_pct"), Some(35));
-    assert_eq!(config_int(&result, "keep_tokens"), Some(9000));
-    assert_eq!(config_int(&result, "keep_under"), Some(250));
-    assert_eq!(
-        config_str(&result, "near_window"),
-        Some("clear".to_string()),
-        "a `near_window = \"clear\"` block renders as `clear`"
-    );
-    assert_eq!(
-        config_tracked(&result),
-        vec![(
-            "grep".to_string(),
-            "pattern".to_string(),
-            "grepped".to_string()
-        )],
-        "an explicit tracked list renders its own rules"
-    );
+    assert_eq!(config_int(&result, "keep_recent_tokens"), Some(5_000));
+    assert_eq!(config_int(&result, "reserve_tokens"), Some(40_000));
+    assert_eq!(config_bool(&result, "enabled"), Some(false));
     Ok(())
 }
 
 // -- Test Support
+
+/// One boolean field of an inspected session's `config` record.
+fn config_bool(result: &Value, field: &str) -> Option<bool> {
+    let Value::Record { val, .. } = result else {
+        return None;
+    };
+    let Value::Record { val, .. } = val.get("config")? else {
+        return None;
+    };
+    val.get(field)?.as_bool().ok()
+}
 
 /// One integer field of an inspected session's `config` record.
 fn config_int(result: &Value, field: &str) -> Option<i64> {
@@ -315,42 +273,6 @@ fn config_int(result: &Value, field: &str) -> Option<i64> {
         return None;
     };
     val.get(field)?.as_int().ok()
-}
-
-/// One string field of an inspected session's `config` record.
-fn config_str(result: &Value, field: &str) -> Option<String> {
-    let Value::Record { val, .. } = result else {
-        return None;
-    };
-    let Value::Record { val, .. } = val.get("config")? else {
-        return None;
-    };
-    val.get(field)?.as_str().ok().map(str::to_string)
-}
-
-/// The `(tool, argument, set)` rows of the inspected session's `tracked` field.
-fn config_tracked(result: &Value) -> Vec<(String, String, String)> {
-    let Value::Record { val, .. } = result else {
-        return Vec::new();
-    };
-    let Some(Value::Record { val, .. }) = val.get("config") else {
-        return Vec::new();
-    };
-    let Some(Value::List { vals, .. }) = val.get("tracked") else {
-        return Vec::new();
-    };
-    vals.iter()
-        .filter_map(|row| {
-            let Value::Record { val, .. } = row else {
-                return None;
-            };
-            Some((
-                val.get("tool")?.as_str().ok()?.to_string(),
-                val.get("argument")?.as_str().ok()?.to_string(),
-                val.get("set")?.as_str().ok()?.to_string(),
-            ))
-        })
-        .collect()
 }
 
 /// A file-backed rig store rooted at `temp_dir`.

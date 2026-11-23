@@ -16,8 +16,8 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 const DOCS_PAGES: [&str; 4] = [
     "README.md",
     "crates/agnt-tui/src/runtime/help/help.md",
-    "docs/configuration.md",
-    "docs/usage.md",
+    "docs/content/docs/user/configuration.md",
+    "docs/content/docs/user/usage.md",
 ];
 
 /// Strings no docs page may carry: each names a compaction layer with no code
@@ -70,7 +70,7 @@ fn test_architecture_docs_fiction_ban_flags_a_rogue_page() -> Result<()> {
     }
 
     // -- Exec & Check: the landed wording passes.
-    let landed = "Every key is optional: a key left out keeps the rig default.\n";
+    let landed = "The `[compaction]` block has three keys. Every key is optional: a key left out keeps the built-in default.\n";
     assert!(fiction_violations(rogue, landed).is_empty());
     Ok(())
 }

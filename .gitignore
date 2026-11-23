@@ -54,6 +54,8 @@ result-*
 # Rust
 target/
 coverage/
+# Zola build output
+docs/public/
 Cargo.lock.msrv
 .cargo/*
 !.cargo/config.toml

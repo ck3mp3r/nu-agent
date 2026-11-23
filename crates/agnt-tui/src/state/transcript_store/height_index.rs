@@ -7,7 +7,7 @@
 //! cursors — it measures entries and walks the planner's gap rules.
 
 use agnt_render::RenderBackend;
-use agnt_render::planner::{EntryFamily, LayoutPlanner};
+use agnt_render::planner::{EntryFamily, FramePlan, LayoutPlanner};
 use agnt_render::transcript::entry::TranscriptEntry;
 
 use crate::widgets::RatatuiBackend;
@@ -57,23 +57,67 @@ pub(super) struct HeightIndex {
 }
 
 impl HeightIndex {
-    /// Wholesale rebuild: measure every entry at `width`, then derive the
-    /// offsets from the fresh cache.
+    /// Wholesale rebuild: delegate the whole layout to
+    /// [`LayoutPlanner::plan`] at `width`, then convert the plan into the index.
     ///
+    /// The planner decides the same gap rules the incremental walk re-applies,
+    /// so a full recompute and an incremental update cannot disagree on a row.
     /// Measurement goes through the backend the render loop paints with, so a
-    /// measured row count and a painted row count cannot drift apart. The
+    /// measured row count and a painted row count cannot drift apart — and the
     /// backend's measure reads no theme data by construction, so any theme
     /// yields the same row counts.
+    ///
+    /// The plan measures each entry exactly once through its stateless backend
+    /// parameter, so this path costs one measurement per entry.
     pub(super) fn rebuild(entries: &[TranscriptEntry], width: usize) -> Self {
-        let mut index = Self {
-            metrics: entries
-                .iter()
-                .map(|entry| entry_metrics(entry, width))
-                .collect(),
-            ..Self::default()
-        };
-        index.derive();
-        index
+        let probe = RatatuiBackend::new(u16::try_from(width).unwrap_or(u16::MAX), 0);
+        let plan = LayoutPlanner::plan(entries, width, &probe);
+        Self::from_plan(&plan, entries)
+    }
+
+    /// Convert a [`FramePlan`] into the index.
+    ///
+    /// The plan's rects carry absolute frame rows, so an entry's start row is
+    /// its rect's row minus the gap the plan put before it, and the entry's
+    /// span is that gap plus the rect's own rows.
+    ///
+    /// `content_rows` recovers the measured content by subtracting the padding
+    /// rows the frame clips from the rect: the first entry keeps no top padding
+    /// and the last keeps no bottom padding, exactly as the incremental walk
+    /// clips them.
+    fn from_plan(plan: &FramePlan, entries: &[TranscriptEntry]) -> Self {
+        let last_index = plan.entries.len().saturating_sub(1);
+        let mut starts = Vec::with_capacity(plan.entries.len());
+        let mut indexed = Vec::with_capacity(plan.entries.len());
+        let mut metrics = Vec::with_capacity(plan.entries.len());
+        for (position, planned) in plan.entries.iter().enumerate() {
+            let Some(entry) = entries.get(planned.index) else {
+                break;
+            };
+            let padding = entry.padding();
+            let padding_bottom = if position == last_index { 0 } else { padding.1 };
+            starts.push(planned.rect.row.saturating_sub(planned.gap_before));
+            indexed.push(HeightEntry {
+                gap: planned.gap_before,
+                rows: planned.gap_before + planned.rect.rows,
+                padding_top: planned.rect.content_offset,
+            });
+            metrics.push(EntryMetrics {
+                content_rows: planned
+                    .rect
+                    .rows
+                    .saturating_sub(planned.rect.content_offset)
+                    .saturating_sub(padding_bottom),
+                family: planned.family,
+                padding,
+            });
+        }
+        Self {
+            starts,
+            entries: indexed,
+            total_rows: plan.total_rows,
+            metrics,
+        }
     }
 
     /// Refresh `starts`, `entries`, and `total_rows` from the cached entry

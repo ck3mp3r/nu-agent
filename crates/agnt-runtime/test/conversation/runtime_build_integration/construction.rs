@@ -86,18 +86,11 @@ async fn test_runtime_build_build_runtime_keeps_the_default_compaction_policy() 
     .await
     .map_err(|e| format!("should build runtime: {e:?}"))?;
 
-    // -- Check: no `[compaction]` block, so the knob keeps our default and the
-    // policy keeps the pinned summary budget.
-    let policy = runtime.compaction().policy();
+    // -- Check: no `[compaction]` block, so rig's own defaults stand.
     assert_eq!(
-        runtime.compaction().reserve_pct,
-        crate::config::defaults::DEFAULT_RESERVE_PCT,
-        "an unset reserve_pct keeps our 20 percent"
-    );
-    assert_eq!(
-        policy.summarizer.limits.summary_tokens,
-        crate::config::defaults::COMPACTION_SUMMARY_TOKENS,
-        "an unset summary budget keeps the pinned default"
+        runtime.compaction().settings(),
+        rig_memory::CompactionSettings::default(),
+        "an unset block keeps rig's enabled, 16_384-token reserve and 20_000 kept"
     );
     Ok(())
 }

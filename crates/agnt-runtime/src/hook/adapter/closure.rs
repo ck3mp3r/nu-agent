@@ -63,7 +63,7 @@ impl ClosureToolAdapter {
     /// # Errors
     ///
     /// Returns [`EmptyToolName`] when the adapter's name is empty.
-    pub fn into_dynamic_tool(self) -> Result<DynamicTool, EmptyToolName> {
+    pub(crate) fn into_dynamic_tool(self) -> Result<DynamicTool, EmptyToolName> {
         let name = ToolName::new(self.name.clone())?;
         let description = self.definition.description.clone();
         let parameters = self.definition.parameters.clone();

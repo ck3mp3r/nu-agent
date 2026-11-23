@@ -192,7 +192,7 @@ impl RigStoreConfig {
     }
 
     /// The config of an in-memory store: nothing touches the filesystem.
-    pub fn in_memory() -> Self {
+    pub(crate) fn in_memory() -> Self {
         Self::new(StoreType::Memory)
     }
 

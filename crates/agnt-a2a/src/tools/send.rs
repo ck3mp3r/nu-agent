@@ -24,7 +24,7 @@ pub(crate) fn resolve_send_context(param: Option<&str>) -> Result<Option<String>
     }
 }
 
-pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
+pub(crate) async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
     let target = params
         .get("target")
         .and_then(|v| v.as_str())

@@ -121,12 +121,9 @@ async fn test_session_manager_set_agent_switches_identity() -> Result<()> {
     manager.set_agent(&session_id, "dev").await?;
 
     // -- Check
-    let session = manager
-        .get_session(&session_id)
-        .ok_or("session must exist")?;
-    let runtime = session.runtime().lock().await;
+    let options = manager.agent_config_options(&session_id).await?;
     assert_eq!(
-        runtime.agent_identity(),
+        current_value(&options).as_deref(),
         Some("dev"),
         "the switch must set the agent identity"
     );
@@ -229,12 +226,9 @@ async fn test_session_manager_set_agent_unknown_agent_returns_error_and_keeps_ag
         matches!(err, AcpError::Config(_)),
         "an unknown agent must produce AcpError::Config, got: {err:?}"
     );
-    let session = manager
-        .get_session(&session_id)
-        .ok_or("session must exist")?;
-    let runtime = session.runtime().lock().await;
+    let options = manager.agent_config_options(&session_id).await?;
     assert_eq!(
-        runtime.agent_identity(),
+        current_value(&options).as_deref(),
         Some("dev"),
         "a rejected switch must leave the agent unchanged"
     );

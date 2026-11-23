@@ -13,7 +13,7 @@
 pub use rig::completion::Message;
 pub use rig::completion::message::ToolResult;
 pub use rig::completion::message::{
-    AssistantContent, AssistantMessage, CallId, Document, DocumentData, DocumentSourceKind,
+    AssistantContent, AssistantMessage, CallId, DocumentContent, DocumentData, DocumentSourceKind,
     EmptyToolName, Image, ImageDetail, MimeType, Opaque, ProviderCallId, Text, ToolCall,
     ToolFunction, ToolName, ToolResultContent, UserContent,
 };
@@ -31,9 +31,9 @@ pub use rig::tool::ToolResult as ToolExecutionResult;
 pub use rig::tool::server::{ToolServer, ToolServerHandle};
 pub use rig::tool::{DynamicTool, ToolContext, ToolExecutionError, ToolOutput, ToolSet};
 
-// Copilot provider OAuth device-code auth
-pub use rig::providers::copilot::auth::{
-    AuthError, AuthSource, Authenticator, DeviceCodeHandler, FileTokenStore,
-};
+// Copilot provider OAuth device-code auth: the shared auth types, and the
+// Copilot-specific source and authenticator
+pub use rig::providers::auth::{AuthError, DeviceCodeHandler, FileTokenStore};
+pub use rig::providers::copilot::auth::{AuthSource, Authenticator};
 
 // endregion: --- Types

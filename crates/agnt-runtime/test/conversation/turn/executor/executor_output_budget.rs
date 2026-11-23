@@ -6,7 +6,7 @@
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::executor_test_support::*;
-use super::test_utils::{MockResolver, test_config};
+use super::test_utils::{MockResolver, test_config, truncated_reply};
 use super::*;
 use crate::config::Config;
 
@@ -20,5 +20,8 @@ mod feedback_retry;
 
 #[path = "executor_output_budget/raise.rs"]
 mod raise;
+
+#[path = "executor_output_budget/stale_finish.rs"]
+mod stale_finish;
 
 // endregion: --- Modules

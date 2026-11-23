@@ -64,33 +64,3 @@ pub fn build_response(
 
     response_value
 }
-
-/// Extract a "retry after N seconds" value from an error message string.
-///
-/// Matches common patterns from provider error responses:
-/// - "retry after 5 seconds"
-/// - "retry_after: 10"
-/// - "Retry-After: 30"
-///
-/// Returns the value in milliseconds, or `None` if no recognisable pattern is found.
-pub fn extract_retry_after_ms(msg: &str) -> Option<u64> {
-    let msg_lower = msg.to_lowercase();
-    // Pattern: "retry after N" or "retry-after: N" or "retry_after: N"
-    let patterns = ["retry after ", "retry-after: ", "retry_after: "];
-    for pattern in patterns {
-        let Some(idx) = msg_lower.find(pattern) else {
-            continue;
-        };
-        let after = &msg[idx + pattern.len()..];
-        // Parse the first contiguous digits after the pattern
-        let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if digits.is_empty() {
-            continue;
-        }
-        let Ok(seconds) = digits.parse::<u64>() else {
-            continue;
-        };
-        return Some(seconds.saturating_mul(1000));
-    }
-    None
-}

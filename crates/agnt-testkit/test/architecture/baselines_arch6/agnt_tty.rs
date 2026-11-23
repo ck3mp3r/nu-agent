@@ -15,7 +15,7 @@ pub const ROWS: &[&str] = &[
 pub const MEMBER_ROWS: &[&str] = &[
     "ARCH-6 agnt-tty/src/policy.rs:17: `allows_spinner` has no consumer outside `agnt-tty`",
     "ARCH-6 agnt-tty/src/renderer/backend.rs:43: `with_now_millis` has no consumer outside `agnt-tty`",
-    "ARCH-6 agnt-tty/src/renderer/backend.rs:60: `line_count` has no consumer outside `agnt-tty`",
+    "ARCH-6 agnt-tty/src/renderer/backend.rs:55: `line_count` has no consumer outside `agnt-tty`",
     "ARCH-6 agnt-tty/src/spinner.rs:32: `new_with_charset` has no consumer outside `agnt-tty`",
     "ARCH-6 agnt-tty/src/spinner.rs:46: `is_enabled` has no consumer outside `agnt-tty`",
     "ARCH-6 agnt-tty/src/spinner.rs:50: `is_active` has no consumer outside `agnt-tty`",

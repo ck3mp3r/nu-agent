@@ -14,10 +14,10 @@ async fn output_budget_error_surfaces_user_message() -> Result<()> {
     // attempt 4 exceeds the cap, so the final break carries the OutputBudget
     // kind and the hard-error path surfaces the max_output_tokens message.
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
-        vec![MockStreamEvent::error("The model ran out of output budget")],
-        vec![MockStreamEvent::error("The model ran out of output budget")],
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
+        vec![truncated_reply()],
+        vec![truncated_reply()],
+        vec![truncated_reply()],
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);

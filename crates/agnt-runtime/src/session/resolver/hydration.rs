@@ -70,8 +70,9 @@ impl From<EntryRef<'_>> for StoredEntry {
 /// hydration.
 ///
 /// Each entry is delegated to `hydrate_single_message`. A compaction summary
-/// hydrates as a `"compaction"` snapshot carrying its raw text, so the replayed
-/// log renders the same block the live compaction emits.
+/// hydrates as a `"compaction"` snapshot carrying the summary text, stripped of
+/// rig-memory's storage frame by `SummaryState::read`, so the replayed log
+/// renders the same block the live compaction emits.
 ///
 /// # Arguments
 /// * `entries` - The conversation's entries, as rig reads them: message plus
@@ -298,22 +299,44 @@ fn identity(value: &str) -> Option<String> {
     (!value.trim().is_empty()).then(|| value.to_string())
 }
 
-/// The headline rig-memory puts above the summary it splices in.
+/// The headline rig-memory put above the summary it spliced in before 0.47, a
+/// frame no live store writes now that a legacy store is refused. The frame
+/// 0.47 writes opens with a different line, which
+/// [`rig_memory::SummaryState::read`] strips.
 const SUMMARY_HEADLINE: &str =
     "The conversation before this point was compacted into this summary:";
 
-/// The raw summary `text` carries, when the entry is a compaction summary.
+/// The summary `text` carries, when the entry is a compaction summary.
 ///
 /// The entry author is the primary signal. A store that lost the author (an
 /// older entry, written before it was recorded) is still recognised by the
 /// wrapper shape rig-memory writes. Any other text is the user's own and
 /// yields `None`.
 pub(super) fn compaction_summary(text: &str, author: Option<&Author>) -> Option<String> {
-    let wrapped = summary_body(text);
     if author == Some(&rig_memory::summary_author()) {
-        return Some(wrapped.unwrap_or_else(|| text.to_string()));
+        return Some(authored_summary(text));
     }
-    wrapped
+    summary_body(text)
+}
+
+/// The summary an authored entry holds, without the storage frame around it.
+///
+/// rig's own reader strips the frame it writes and splits the file lists off;
+/// the summary it returns is the model's text, which is what the row shows. A
+/// frame that carries file lists and no summary text reads back with an empty
+/// summary; then the stored `text` is kept whole, so the row never renders
+/// empty.
+fn authored_summary(text: &str) -> String {
+    let state = rig_memory::SummaryState::read(text);
+    // The reader hands back the text itself when it finds no frame of its own:
+    // then a pre-0.47 store wrote the frame the legacy shim reads.
+    if state.summary == text {
+        return summary_body(text).unwrap_or_else(|| text.to_string());
+    }
+    if state.summary.trim().is_empty() {
+        return text.to_string();
+    }
+    state.summary
 }
 
 /// The summary rig-memory's wrapper holds: the text between its `<summary>`

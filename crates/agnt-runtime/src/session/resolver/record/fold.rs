@@ -10,8 +10,8 @@ use nu_protocol::LabeledError;
 use crate::session::settle::SessionFacts;
 use crate::session::tool_status::ToolStatusMap;
 use crate::types::{
-    AssistantContent, CallId, Document, DocumentData, DocumentSourceKind, Image, ImageDetail,
-    Message, MimeType, Text, ToolCall, UserContent,
+    AssistantContent, CallId, DocumentContent, DocumentData, DocumentSourceKind, Image,
+    ImageDetail, Message, MimeType, Text, ToolCall, UserContent,
 };
 use agnt_storage::{
     Entries, MediaKind, MediaOwner, MediaSource, Storage, TranscriptRecord, TranscriptRow,
@@ -246,7 +246,7 @@ fn image_row(owner: MediaOwner, image: &Image) -> TranscriptRow {
 
 /// The media row a document block folds to: its own text when it carries text,
 /// and where its file's bytes are when it carries a file.
-fn document_row(owner: MediaOwner, document: &Document) -> TranscriptRow {
+fn document_row(owner: MediaOwner, document: &DocumentContent) -> TranscriptRow {
     let (source, text) = match &document.data {
         DocumentData::Text(text) => (MediaSource::Unknown, Some(text.clone())),
         DocumentData::File(source) => (media_source(source), None),

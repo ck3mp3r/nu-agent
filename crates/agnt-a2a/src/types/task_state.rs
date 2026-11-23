@@ -40,7 +40,7 @@ impl TaskState {
     }
 
     /// Human-readable label for display contexts (TUI, logs).
-    pub fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             TaskState::Unspecified => "unspecified",
             TaskState::Submitted => "submitted",

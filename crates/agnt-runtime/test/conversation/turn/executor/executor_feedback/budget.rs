@@ -19,7 +19,7 @@ async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<
     let session_id = "test-feedback-cap";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let overflow = || MockStreamEvent::error("The model ran out of output budget");
+    let overflow = || truncated_reply();
     let model = MockCompletionModel::from_stream_turns([
         vec![overflow()],
         vec![overflow()],
@@ -212,8 +212,8 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("The model ran out of output budget")],
-        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![truncated_reply()],
+        vec![truncated_reply()],
         vec![MockStreamEvent::error("429 rate_limit_error")],
     ]);
     let probe = model.clone();

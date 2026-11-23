@@ -2,8 +2,8 @@
 //! splices the summary in through rig-memory's compaction machinery.
 //!
 //! `NuCompactor` is invoked directly by the `HookChain` compaction logic. It
-//! owns the `CompactionPolicy` and the `ModelSpec` the policy plans against, and
-//! it emits TUI events on the bus while the summary streams.
+//! owns rig-memory's `CompactionSettings` and the `ModelSpec` the summary is
+//! fitted to, and it emits TUI events on the bus while the summary streams.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -19,9 +19,9 @@ use rig::catalog::{Catalog, ModelSpec};
 use rig::completion::CompletionRequest;
 use rig::operation::Completion;
 use rig::providers::registry::{Format, ProviderId};
-use rig_memory::{CompactReason, CompactionPolicy, SummaryPlan, summary_author};
+use rig_memory::{CompactionPreparation, CompactionSettings, SummaryState};
 
-use super::engine::{self, Chunks};
+use super::engine;
 
 /// What a compaction that ran left behind.
 #[derive(Debug, Clone)]
@@ -140,8 +140,12 @@ fn input_limit_for(
 pub struct NuCompactor {
     model: Arc<Mutex<DynModel<Completion>>>,
     bus: Bus,
-    policy: CompactionPolicy,
+    settings: CompactionSettings,
     spec: Arc<Mutex<Option<ModelSpec>>>,
+    /// Whether the last completion was refused as too long: the decision
+    /// compacts for even then, since the summary before it may have gone in
+    /// after its prompt.
+    overflowed: Arc<Mutex<bool>>,
 }
 
 impl Clone for NuCompactor {
@@ -149,8 +153,9 @@ impl Clone for NuCompactor {
         Self {
             model: Arc::clone(&self.model),
             bus: self.bus.clone(),
-            policy: self.policy.clone(),
+            settings: self.settings,
             spec: Arc::clone(&self.spec),
+            overflowed: Arc::clone(&self.overflowed),
         }
     }
 }
@@ -160,14 +165,15 @@ impl NuCompactor {
     pub fn new(
         model: DynModel<Completion>,
         bus: Bus,
-        policy: CompactionPolicy,
+        settings: CompactionSettings,
         spec: Option<ModelSpec>,
     ) -> Self {
         Self {
             model: Arc::new(Mutex::new(model)),
             bus,
-            policy,
+            settings,
             spec: Arc::new(Mutex::new(spec)),
+            overflowed: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -180,14 +186,15 @@ impl NuCompactor {
     pub fn from_shared_model(
         model_arc: Arc<Mutex<DynModel<Completion>>>,
         bus: Bus,
-        policy: CompactionPolicy,
+        settings: CompactionSettings,
         spec: Option<ModelSpec>,
     ) -> Self {
         Self {
             model: model_arc,
             bus,
-            policy,
+            settings,
             spec: Arc::new(Mutex::new(spec)),
+            overflowed: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -210,9 +217,21 @@ impl NuCompactor {
         *self.lock_spec() = spec;
     }
 
-    /// The policy this compactor plans with.
-    pub fn policy(&self) -> &CompactionPolicy {
-        &self.policy
+    /// The settings this compactor compacts with: rig's `[compaction]` table.
+    pub(crate) fn settings(&self) -> CompactionSettings {
+        self.settings
+    }
+
+    /// Record that the last completion was refused as too long, so the next
+    /// decision compacts for even when the estimate says the request fits.
+    pub(crate) fn mark_overflowed(&self) {
+        *self.lock_overflowed() = true;
+    }
+
+    /// Take the overflow record, leaving it clear: one refusal schedules one
+    /// compaction.
+    pub(crate) fn take_overflowed(&self) -> bool {
+        std::mem::take(&mut *self.lock_overflowed())
     }
 
     /// The spec this compactor plans against, `None` when compaction is
@@ -240,11 +259,22 @@ impl NuCompactor {
         self.spec.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Compact `conversation_id` in `store` for `reason`.
+    /// The overflow record, recovered if a writer panicked mid-update.
+    fn lock_overflowed(&self) -> MutexGuard<'_, bool> {
+        self.overflowed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Compact `conversation_id` in `store`.
     ///
-    /// Loads the conversation, clears old tool outputs per the policy, plans the
-    /// summary, streams it, splices it in through `apply_summary`, and saves.
-    /// Returns `None` when nothing would be summarized.
+    /// Loads the conversation, prepares the compaction, streams its summary,
+    /// splices it in through `apply_summary`, and saves. Returns `None` when
+    /// nothing would be summarized.
+    ///
+    /// `overflowed` is set when the provider refused the last request as too
+    /// long: rig then compacts for even when the estimate says the request fits
+    /// and nothing was added since the last summary.
     ///
     /// # Errors
     ///
@@ -255,7 +285,7 @@ impl NuCompactor {
         &self,
         store: std::sync::Arc<dyn rig_memory::Store>,
         conversation_id: &str,
-        reason: &CompactReason,
+        overflowed: bool,
         source: CompactionSource,
     ) -> Result<Option<CompactionOutcome>, MemoryError> {
         let spec = self.spec();
@@ -287,46 +317,27 @@ impl NuCompactor {
             }
         };
 
-        // Old tool outputs are cleared before the summary is asked for, so the
-        // summarizer reads the freed context rather than the raw outputs.
-        let cleared = self
-            .policy
-            .clearing
-            .clear_conversation(&mut conversation, summary_author());
-        if cleared.results > 0 {
-            conversation = self
-                .save(
-                    std::sync::Arc::clone(&store),
-                    conversation_id.to_owned(),
-                    conversation,
-                    source,
-                )
-                .await?;
-        }
-
-        let state = rig_memory::summary_state(&conversation);
-        let plan = match self
-            .policy
-            .plan_summary(&conversation, &state, reason, spec)
-        {
-            Ok(Some(plan)) => plan,
-            Ok(None) => return Ok(None),
-            Err(e) => {
-                let message = format!("Compaction plan error: {e}");
-                self.emit_failed(source, &message).await;
-                return Err(MemoryError::backend(message));
-            }
+        let Some(preparation) = rig_memory::prepare_compaction(
+            &conversation,
+            self.settings.keep_recent_tokens,
+            overflowed,
+        ) else {
+            return Ok(None);
         };
 
         // Announce start before the slow summarizer LLM call so the status
         // spinner turns on immediately.
         self.emit_started(source).await;
 
-        let summary = self.stream_summary(&plan, source).await?;
+        let model = self.model();
+        let summary = self.summarize(&model, &preparation, spec, source).await?;
 
-        let mut next_state = plan.state;
-        next_state.summary = summary;
-        if rig_memory::apply_summary(&mut conversation, plan.keep_from, &next_state).is_none() {
+        let state = SummaryState {
+            summary,
+            read_files: preparation.files.read_files.clone(),
+            modified_files: preparation.files.modified_files.clone(),
+        };
+        if rig_memory::apply_summary(&mut conversation, &preparation.replaces, &state).is_none() {
             let message = "Compaction summary could not be spliced in".to_string();
             self.emit_failed(source, &message).await;
             return Err(MemoryError::backend(message));
@@ -345,30 +356,60 @@ impl NuCompactor {
             .iter()
             .map(|message| (**message).clone())
             .collect();
-        self.emit_completed(&next_state.summary, source).await;
+        self.emit_completed(&state.summary, source).await;
         Ok(Some(CompactionOutcome { messages }))
     }
 
-    /// Stream the summary `plan` asks for and return its validated text.
+    /// The one summary engine: rig's prepare -> request -> stream ->
+    /// `summary_text` flow for `preparation`, answering its summary text.
+    ///
+    /// A split turn's earlier part is summarized apart and joined onto the
+    /// history summary by `merge_split_turn`; the history summary is the
+    /// previous one updated, when there is one.
     ///
     /// Emits `SummaryChunk` per text delta and `Failed` on every rejection.
-    async fn stream_summary(
+    pub(crate) async fn summarize(
         &self,
-        plan: &SummaryPlan,
+        model: &DynModel<Completion>,
+        preparation: &CompactionPreparation,
+        spec: &ModelSpec,
         source: CompactionSource,
     ) -> Result<String, MemoryError> {
-        // Lock the shared model and clone it so the LLM call runs against a
-        // stable model; a concurrent `set_model()` then only affects the next
-        // call.
-        let model = self.model();
-        engine::stream_text(
-            self.wires(),
-            &model,
-            plan.request.clone(),
-            source,
-            Chunks::Publish,
-        )
-        .await
+        let previous = preparation.previous.as_ref();
+        // Nothing of its own to summarize: the previous summary stands as the
+        // history, as pi keeps it, and no model call is made for it.
+        let history = if preparation.to_summarize.is_empty() {
+            rig_memory::no_history(previous)
+        } else {
+            let request = match rig_memory::summary_request(
+                &preparation.to_summarize,
+                (previous, ""),
+                spec,
+                None,
+            ) {
+                Ok(request) => request,
+                Err(e) => {
+                    let message = format!("Compaction request error: {e}");
+                    self.emit_failed(source, &message).await;
+                    return Err(MemoryError::backend(message));
+                }
+            };
+            self.complete(model, request, source).await?
+        };
+        if preparation.turn_prefix.is_empty() {
+            return Ok(history);
+        }
+        let request =
+            match rig_memory::turn_prefix_request(&preparation.turn_prefix, "", spec, None) {
+                Ok(request) => request,
+                Err(e) => {
+                    let message = format!("Compaction request error: {e}");
+                    self.emit_failed(source, &message).await;
+                    return Err(MemoryError::backend(message));
+                }
+            };
+        let prefix = self.complete(model, request, source).await?;
+        Ok(rig_memory::merge_split_turn(&history, &prefix))
     }
 
     /// Save `conversation` to `store`, answering it back and emitting `Failed`
@@ -403,9 +444,8 @@ impl NuCompactor {
     /// Run one self-contained compaction call: stream `request` to `model` and
     /// return its validated text.
     ///
-    /// The manual path sends its plan's request; a hook-side side-call sends a
-    /// request it planned itself. `chunks` decides whether the deltas reach the
-    /// surfaces: a summary streams, notes do not.
+    /// The summary engine sends the requests `prepare_compaction` asks for: the
+    /// history summary, and a split turn's earlier part.
     ///
     /// # Errors
     ///
@@ -417,9 +457,8 @@ impl NuCompactor {
         model: &DynModel<Completion>,
         request: CompletionRequest,
         source: CompactionSource,
-        chunks: Chunks,
     ) -> Result<String, MemoryError> {
-        engine::stream_text(self.wires(), model, request, source, chunks).await
+        engine::stream_text(self.wires(), model, request, source).await
     }
 
     /// Emit the compaction pipeline's `Started` rows.

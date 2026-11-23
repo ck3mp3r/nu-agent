@@ -131,7 +131,7 @@ impl SessionPersistence for FakeRuntime {
             .bus
             .stream()
             .publish(SessionRecord::Compaction(CompactionRecord::Completed {
-                source,
+                source: Some(source),
                 summary: "summary".to_string(),
             }));
         let _ = self

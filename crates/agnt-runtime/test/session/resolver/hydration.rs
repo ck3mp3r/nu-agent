@@ -171,6 +171,55 @@ fn hydrate_store_entries_render_each_summary_as_its_own_compaction() -> Result<(
     Ok(())
 }
 
+/// WHEN the store carries the frame rig-memory 0.47 writes, THE hydration SHALL
+/// carry the summary alone into the compaction snapshot: no opening headline, no
+/// `<summary>` lines.
+#[test]
+fn hydrate_store_entries_strip_the_rig_0_47_frame() -> Result<()> {
+    // -- Setup & Fixtures
+    let summary = "## Goal\nShip the resolver fix";
+    let entries = vec![StoredEntry {
+        message: Message::User {
+            content: vec![UserContent::Text(Text::new(rig_frame(summary)))],
+        },
+        author: Some(summary_author()),
+        turn_seq: None,
+    }];
+
+    // -- Exec
+    let snapshots = hydrate_entries(&entries, std::path::Path::new("."));
+
+    // -- Check
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "compaction");
+    assert_eq!(snapshots[0].content(), summary);
+    Ok(())
+}
+
+/// WHEN the frame carries file lists and no summary text, THE hydration SHALL
+/// carry the stored frame whole, so the row never renders empty.
+#[test]
+fn hydrate_store_entries_keep_the_frame_when_the_summary_is_empty() -> Result<()> {
+    // -- Setup & Fixtures
+    let text = rig_frame("\n\n<read-files>\n/src/lib.rs\n</read-files>");
+    let entries = vec![StoredEntry {
+        message: Message::User {
+            content: vec![UserContent::Text(Text::new(text.clone()))],
+        },
+        author: Some(summary_author()),
+        turn_seq: None,
+    }];
+
+    // -- Exec
+    let snapshots = hydrate_entries(&entries, std::path::Path::new("."));
+
+    // -- Check
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "compaction");
+    assert_eq!(snapshots[0].content(), text);
+    Ok(())
+}
+
 /// WHEN the store's entry carries a tool result, THE hydration SHALL carry its
 /// text into the snapshot, and the projection SHALL hand it to the surface as
 /// the completion's payload and text — the data the drawer derives the body
@@ -212,6 +261,15 @@ fn hydrate_store_entries_carry_the_tool_result_text() -> Result<()> {
 fn wrapped_summary(summary: &str) -> String {
     format!(
         "The conversation before this point was compacted into this summary:\n\n\
+         <summary>\n{summary}\n</summary>"
+    )
+}
+
+/// The frame rig-memory 0.47 writes around the summary a compaction splices in:
+/// its `OPENS` and `CLOSES` text (rig-memory-0.47.0 src/compaction.rs:37-40).
+fn rig_frame(summary: &str) -> String {
+    format!(
+        "The conversation history before this point was compacted into the following summary:\n\n\
          <summary>\n{summary}\n</summary>"
     )
 }

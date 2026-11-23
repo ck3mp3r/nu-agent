@@ -26,7 +26,6 @@ use crate::hook::permission_resolver::AsyncPermissionResolver;
 
 use super::core::TurnExecutor;
 use super::error_kind::CompletionErrorKind;
-use super::response::extract_retry_after_ms;
 use super::{PersistStage, TurnRecovery};
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnExhaustion;
@@ -140,7 +139,12 @@ where
 
             match &result {
                 Err((
-                    crate::conversation::turn::TurnError::CompletionFailed { kind, msg, .. },
+                    crate::conversation::turn::TurnError::CompletionFailed {
+                        kind,
+                        msg,
+                        retry_after,
+                        ..
+                    },
                     ctx,
                 )) => {
                     // Hard error path — check if retryable using the pre-classified kind
@@ -256,11 +260,13 @@ where
                             .min(30_000);
                         // Random jitter: ±20% (0.8–1.2× multiplier) per Goose strategy
                         let jitter_factor = 0.8 + (rand::random::<f64>() * 0.4);
-                        let raw_delay = if *kind == CompletionErrorKind::RateLimit {
-                            extract_retry_after_ms(msg).unwrap_or(base_delay)
-                        } else {
-                            base_delay
-                        };
+                        // The wait is the one the failure's report asked for,
+                        // read through rig's own hint reader at the
+                        // classification boundary; the backoff is the floor
+                        // when the provider asked for none.
+                        let raw_delay = (*retry_after)
+                            .map(|wait| wait.as_millis() as u64)
+                            .unwrap_or(base_delay);
                         let delay_ms = (raw_delay as f64 * jitter_factor) as u64;
                         log::warn!(
                             "Retryable error ({kind:?}), attempt {attempt}/{}. Retrying in {delay_ms}ms.",
@@ -294,6 +300,7 @@ where
                             crate::conversation::turn::TurnError::CompletionFailed {
                                 msg: msg.clone(),
                                 kind: kind.clone(),
+                                retry_after: *retry_after,
                                 exhaustion: Some(TurnExhaustion::Retries {
                                     attempts: attempt as usize,
                                 }),
@@ -319,6 +326,7 @@ where
                             crate::conversation::turn::TurnError::CompletionFailed {
                                 msg: msg.clone(),
                                 kind: kind.clone(),
+                                retry_after: *retry_after,
                                 exhaustion: Some(TurnExhaustion::NoOutput),
                             },
                             Box::new(error::TurnContext {

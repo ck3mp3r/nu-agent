@@ -71,6 +71,18 @@ mod executor_dispatch_test;
 mod executor_log_preview_test;
 
 #[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/cancel_mid_run.rs"]
+mod cancel_mid_run_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/hook_stop.rs"]
+mod hook_stop_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/finish_reason.rs"]
+mod finish_reason_test;
+
+#[cfg(all(test, feature = "integration"))]
 #[path = "../../../../test/conversation/turn/executor/journey.rs"]
 mod journey_test;
 

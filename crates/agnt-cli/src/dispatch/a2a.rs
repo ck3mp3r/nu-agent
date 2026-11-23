@@ -11,8 +11,7 @@ use std::sync::Arc;
 use agnt_a2a::{AgentBuilder, Skill};
 use agnt_runtime::config::defaults;
 use agnt_runtime::conversation::builder::{
-    AgentRuntimeBuilder, BuildArtifacts, BuildInput, ToolAssembly, assemble_tool_definitions,
-    merge_compaction_configs,
+    AgentRuntimeBuilder, BuildInput, ToolAssembly, assemble_tool_definitions,
 };
 use agnt_runtime::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
@@ -276,12 +275,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
     let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
 
-    let merged_compaction = merge_compaction_configs(
-        plugin_config.compaction.as_ref(),
-        &agnt_runtime::config::CompactionConfig::default(),
-    );
-
-    let BuildArtifacts { .. } = AgentRuntimeBuilder::new(BuildInput {
+    let () = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
         closure_registry: &closure_registry,
         cwd: cwd.clone(),
@@ -293,7 +287,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
             .max_tool_result_bytes
             .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
         bus: bus.clone(),
-        merged_compaction,
         audit_log_path: paths.audit_log_path.clone(),
     })
     .build()

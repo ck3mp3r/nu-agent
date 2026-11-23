@@ -12,6 +12,9 @@
 #[path = "reducer/cancel.rs"]
 mod cancel;
 
+#[path = "reducer/cancel_sequence.rs"]
+mod cancel_sequence;
+
 #[path = "reducer/event_matrix.rs"]
 mod event_matrix;
 
