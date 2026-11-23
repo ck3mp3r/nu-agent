@@ -15,7 +15,7 @@
 //! excluded word (`MarkdownSection`) is not a term.
 //!
 //! The orchestration terms are the settled bus vocabulary of
-//! `docs/content/docs/architecture/bus-channels.md`: the six concern names, the six payload families, and
+//! `docs/bus-channels.md`: the six concern names, the six payload families, and
 //! the `Bus` type they are reached through. The rendering terms are the drawer's
 //! published vocabulary, measured at landing; three shared English words
 //! (`Theme`, `Markdown`, `Display`) are left out on purpose, because they also
@@ -74,7 +74,7 @@ const ASSERTION: &str = "ARCH-2";
 const RUNTIME_PREFIX: &str = "agnt-runtime/src/";
 const RENDER_PREFIX: &str = "agnt-render/src/";
 
-/// The bus vocabulary, read off `docs/content/docs/architecture/bus-channels.md`.
+/// The bus vocabulary, read off `docs/bus-channels.md`.
 ///
 /// The six concern names, the six payload families that ride them, and the type
 /// that carries the concerns. A drawer naming any of these names the

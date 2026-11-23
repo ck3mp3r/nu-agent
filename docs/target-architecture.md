@@ -10,7 +10,7 @@ toc = true
 
 What the surviving crates must be, and how we prove it. This is not a description of today's tree and it is not a task list. It is the definition of **done** for the core strangler: a set of properties that hold for the crates that remain, and a set of checks that fail the build when one stops holding.
 
-Read `docs/content/docs/architecture/design-choices.md` for the patterns to follow in a single change. This document answers a different question: *is the system we are building toward structurally sound, and how would we know?*
+Read `docs/design-choices.md` for the patterns to follow in a single change. This document answers a different question: *is the system we are building toward structurally sound, and how would we know?*
 
 **The rule this document exists to enforce:** a green test suite certifies behaviour, not structure. A suite written against the current seams certifies the current seams. Every slice is therefore accepted against the assertions below, not against "tests pass".
 
@@ -82,8 +82,8 @@ Each property has one assertion and one observable failure. Assertions are numbe
 
 ### The kernel's own boundary
 
-**ARCH-11.** No field on a kernel record is a rendering: no pre-rendered string, no display section, no label, no kind-as-text. Identity fields are permitted and expected, and they obey the identity contract in `docs/content/docs/architecture/design-choices.md` §2.
-*Measured by:* a field census over kernel records, classified by the consumer test in `docs/content/docs/architecture/design-choices.md` §2: a consumer that *finds* may store; a consumer that *shows* may not. The mechanical parts of the identity contract are checked too — an identity field must be a typed newtype, must not be publicly settable, and on any record that crosses a persistence boundary must be derivable deterministically from the record's own content.
+**ARCH-11.** No field on a kernel record is a rendering: no pre-rendered string, no display section, no label, no kind-as-text. Identity fields are permitted and expected, and they obey the identity contract in `docs/design-choices.md` §2.
+*Measured by:* a field census over kernel records, classified by the consumer test in `docs/design-choices.md` §2: a consumer that *finds* may store; a consumer that *shows* may not. The mechanical parts of the identity contract are checked too — an identity field must be a typed newtype, must not be publicly settable, and on any record that crosses a persistence boundary must be derivable deterministically from the record's own content.
 
 **ARCH-12.** `agnt-kernel` has zero non-test workspace dependencies.
 *Measured by:* `cargo tree`.
@@ -148,7 +148,7 @@ The order is a dependency claim, to be verified against the assertions rather th
 
 | Decision | Blocks |
 |---|---|
-| **Settled.** The four class names stand — `facts` included — because the per-channel contract now exists (`docs/content/docs/architecture/bus-channels.md`): each channel is named after the guarantee it provides (drop policy, ordering, late-subscriber rule), and `ui_state`/`ui_event` are retired | ARCH-2's term list, and the channel split — settled by the D4 landing: `stream`, `cancel`, `control`, `lifecycle`, `narration`, `facts` |
+| **Settled.** The four class names stand — `facts` included — because the per-channel contract now exists (`docs/bus-channels.md`): each channel is named after the guarantee it provides (drop policy, ordering, late-subscriber rule), and `ui_state`/`ui_event` are retired | ARCH-2's term list, and the channel split — settled by the D4 landing: `stream`, `cancel`, `control`, `lifecycle`, `narration`, `facts` |
 | Where allocated identifiers are minted — kernel or composition root | ARCH-11's field census |
 | The transcript record's home and shape (the fold belongs to storage) — **Settled** by the transcript-record landing: storage-owned `TranscriptRecord`/`TranscriptRow`/`TranscriptStamp` + `TranscriptId` (FNV-1a identity with explicit constants), the rehydration read path in the storage service (`Entries::record_transcript`); M3 to M4 | ARCH-6 — no longer blocked by this row (its blocker is now the allowance-row question, per the landing's ARCH-6 note; the ARCH-6 checker slice owns that census); the storage-surface workstream keeps its half |
 | Whether the aggregate runtime keeps five trait impls | ARCH-10's exact form |

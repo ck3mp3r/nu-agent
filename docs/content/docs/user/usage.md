@@ -405,7 +405,7 @@ Nu command rendering:
 - The edit tool's diff display renders in the same code surface. Each diff body line carries a muted line-number gutter (old and new columns) followed by the syntax-highlighted code body, on a line-level tint: added lines get a dim green background, removed lines a dim red one, and context lines stay untinted. Hunk headers (`@@`), file headers (`---`/`+++`), and the no-newline marker render as plain meta rows.
 - Consecutive tool entries carry no separator row: a tool entry is flush, so the displays' own padding rows supply the spacing. A tool entry next to assistant prose keeps one separator row, in either order. A padding row on the frame's first or last row is clipped, so the frame opens and closes on content rows.
 - Other tools keep their existing previews (edit shows a diff, nu shows the command) or none.
-- See `docs/content/docs/architecture/contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
+- See `docs/contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
 
 Lifecycle events emitted by runtime/UI path (all delivered on the single `ui_event` bus channel):
 
@@ -1380,7 +1380,7 @@ truecolor is not guaranteed. The codes are:
 | Code string / number / operator | `32` / `33` / `36` |
 | Code punctuation / comment | `90` / `3;90` |
 
-See also: [Contribution guardrails](@/docs/architecture/contribution-guardrails.md) for contributor-facing invariants and test mapping.
+See also: `docs/contribution-guardrails.md` for contributor-facing invariants and test mapping.
 
 ### Examples
 

@@ -34,7 +34,7 @@ Use it:
 - `docs/content/docs/user/configuration.md` - config structure, env vars, precedence ([site](https://ck3mp3r.github.io/nu-agent/docs/user/configuration/))
 - `docs/content/docs/integration/mcp.md` - MCP servers, discovery, filtering
 - `docs/content/docs/user/usage.md` - commands, examples, and TUI transcript rendering behavior ([site](https://ck3mp3r.github.io/nu-agent/docs/user/usage/))
-- `docs/content/docs/architecture/contribution-guardrails.md` - contributor guardrails for permission/TUI/tool-handler changes
+- `docs/contribution-guardrails.md` - contributor guardrails for permission/TUI/tool-handler changes
 
 ## Module/Test Layout Convention
 

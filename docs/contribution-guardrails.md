@@ -126,7 +126,7 @@ Tests/docs before review:
 | `narration` | `NarrationEvent` | Text for a human. Order-critical with an oldest-droppable tail. |
 | `facts` | `FactRecord` | Latest-wins state snapshots, whole value per field family. |
 
-The delivery contract of each channel (capacity, drop policy, ordering, late-subscriber rule) is `docs/content/docs/architecture/bus-channels.md`. A channel is chosen by what happens when it runs ahead of its consumers.
+The delivery contract of each channel (capacity, drop policy, ordering, late-subscriber rule) is `docs/bus-channels.md`. A channel is chosen by what happens when it runs ahead of its consumers.
 
 Permission display flows through the record, not a dedicated channel:
 

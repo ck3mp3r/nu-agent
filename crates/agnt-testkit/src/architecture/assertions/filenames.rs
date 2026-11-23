@@ -1,7 +1,7 @@
 //! The file-name marker check: a source file's name describes what it holds,
 //! never its implementation status.
 //!
-//! The naming law bans a name that encodes shape — `docs/content/docs/architecture/design-choices.md` §6
+//! The naming law bans a name that encodes shape — `docs/design-choices.md` §6
 //! records the `*_impl` function form. A file name is the same smell, and it is
 //! cheaper to fix: the subject here is a path, not a parsed span, so this is the
 //! one check that walks paths instead of Rust source.

@@ -12,7 +12,7 @@ Patterns this workspace follows. Read this before adding a crate, a layer, an ev
 
 Each rule states what it prevents, so you can recognize the mistake instead of memorizing the rule. **Status** says whether the pattern is enforced in the tree today or is the direction the migration is moving in. Do not cite an unimplemented pattern as if it exists; do not cite an implemented one as if it is still open.
 
-This document is per-change guidance. The properties the **target** must satisfy, the numbered checks that enforce them, and the rule by which a slice is accepted are in `docs/content/docs/architecture/target-architecture.md`.
+This document is per-change guidance. The properties the **target** must satisfy, the numbered checks that enforce them, and the rule by which a slice is accepted are in `docs/target-architecture.md`.
 
 ---
 

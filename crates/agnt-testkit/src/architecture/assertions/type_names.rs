@@ -1,7 +1,7 @@
 //! The type-name marker check: a type name says what the type is, never its
 //! implementation status.
 //!
-//! The naming law bans a name that encodes shape — `docs/content/docs/architecture/design-choices.md` §6
+//! The naming law bans a name that encodes shape — `docs/design-choices.md` §6
 //! records the `*_impl` form. The type-name face of it is a CamelCase segment:
 //! `PeerDiscoveryImpl` carries `Impl`, and `Simple` does not, though it holds the
 //! same letters.
