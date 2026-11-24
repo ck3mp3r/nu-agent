@@ -1,5 +1,37 @@
 use super::*;
 
+/// The clap dump an MCP server writes when its command line is wrong: three
+/// stacked blocks that a status row must never inherit.
+const CLAP_STARTUP_DUMP: &str = "error: unexpected argument '--add-paths' found\n\n  tip: a similar argument exists: \
+     '--add-path'\n\nUsage: nu-mcp --add-path <ADD_PATHS>";
+
+/// A state whose one MCP server is failed with `reason` as its stored reason.
+fn failing_mcp_state(reason: &str) -> Result<AppState> {
+    let mut state = AppState::default();
+    state
+        .status
+        .mcp
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "nu".to_string(),
+            state: McpServerUsabilityState::Failed,
+        }]);
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
+        "nu",
+        McpServerUsabilityState::Failed,
+        Some(reason.to_string())
+    ));
+    Ok(state)
+}
+
+/// The status band's failure line from `state`.
+fn failure_line(state: &mut AppState) -> Result<String> {
+    let line = crate::runtime::status_lines_for_test(state, "openai/gpt-4o-mini")
+        .into_iter()
+        .find(|line| line.starts_with("Failures: "))
+        .ok_or_else(|| "the status content must carry a failure line".to_string())?;
+    Ok(line)
+}
+
 /// The status contract reports the model identity with its busy/idle state and
 /// excludes input-mode, backend, poll, error, and hint lines.
 #[test]
@@ -158,5 +190,71 @@ fn status_contract_mcp_counts_failures_and_narrow_layout() -> Result<()> {
     assert!(!compact_text.contains('|'));
     assert!(compact_narrow_text.contains("..."));
     assert!(!compact_narrow_text.contains('|'));
+    Ok(())
+}
+
+/// The failure line is ONE terminal row: the multi-line clap dump collapses to
+/// a single control-free line before the width clip.
+#[test]
+fn test_status_mcp_failure_line_single_lines_a_multiline_reason() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = failing_mcp_state(CLAP_STARTUP_DUMP)?;
+
+    // -- Exec
+    let line = failure_line(&mut state)?;
+
+    // -- Check
+    assert!(
+        !crate::runtime::status::test::carries_control_byte(&line),
+        "the failure line must carry no control byte, got: {line:?}"
+    );
+    // The line breaks become spaces, so the words stay apart and the 48-cell
+    // reason budget stops inside the first block.
+    assert_eq!(
+        line, "Failures: nu (error: unexpected argument '--add-paths' found …)",
+        "the failure line must normalize the reason to one clipped row"
+    );
+    Ok(())
+}
+
+/// Every status content line is control-free with the multi-line reason in
+/// state: the band paints one content line per terminal row.
+#[test]
+fn test_status_build_status_lines_control_free_with_multiline_reason() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = failing_mcp_state(CLAP_STARTUP_DUMP)?;
+
+    // -- Exec
+    let lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
+
+    // -- Check
+    assert!(
+        !lines.is_empty(),
+        "the status content must not be empty, got: {lines:?}"
+    );
+    for line in &lines {
+        assert!(
+            !crate::runtime::status::test::carries_control_byte(line),
+            "every status content line must be control-free, got: {line:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A single-line reason renders exactly as it did before the control-byte work.
+#[test]
+fn test_status_mcp_failure_line_keeps_single_line_reason_output() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut short_state = failing_mcp_state("timeout")?;
+    let long_reason = "x".repeat(60);
+    let mut long_state = failing_mcp_state(&long_reason)?;
+
+    // -- Exec
+    let short = failure_line(&mut short_state)?;
+    let long = failure_line(&mut long_state)?;
+
+    // -- Check
+    assert_eq!(short, "Failures: nu (timeout)");
+    assert_eq!(long, format!("Failures: nu ({}…)", "x".repeat(47)));
     Ok(())
 }

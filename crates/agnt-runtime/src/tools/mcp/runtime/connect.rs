@@ -141,8 +141,7 @@ pub(crate) async fn connect_server(
             for (k, v) in env {
                 cmd.env(k, v);
             }
-            let transport = rmcp::transport::TokioChildProcess::new(cmd)
-                .map_err(|e| format!("failed to build stdio transport: {e}"))?;
+            let transport = spawn_stdio_transport(cmd, server_name)?;
 
             let (service, raw_tools) =
                 bounded_connect("stdio", connect_deadline, handler.connect(transport)).await?;
@@ -257,6 +256,54 @@ pub(crate) async fn connect_server(
 
 // region:    --- Support
 
+/// Spawn the stdio transport for `cmd` with the child's stderr piped and pumped
+/// into the log.
+///
+/// The child is a foreign program: it writes its own diagnostics — a clap usage
+/// dump, a panic trace, a warning — to stderr. Inheriting stderr would let those
+/// bytes reach the terminal the TUI owns and paint outside the frame, so the
+/// transport pipes them and this seam forwards each line to the log sink, tagged
+/// with its server.
+fn spawn_stdio_transport(
+    cmd: tokio::process::Command,
+    server_name: &str,
+) -> Result<rmcp::transport::TokioChildProcess, String> {
+    let (transport, child_stderr) = rmcp::transport::TokioChildProcess::builder(cmd)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to build stdio transport: {e}"))?;
+    if let Some(child_stderr) = child_stderr {
+        spawn_stderr_pump(server_name.to_string(), child_stderr);
+    }
+    Ok(transport)
+}
+
+/// Pump the child's stderr into the log, one warn per line, tagged with its
+/// server. The task ends at EOF, when the child closes the stream.
+fn spawn_stderr_pump(server_name: String, child_stderr: tokio::process::ChildStderr) {
+    tokio::spawn(async move {
+        let mut reader = tokio::io::BufReader::new(child_stderr);
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            match tokio::io::AsyncBufReadExt::read_until(&mut reader, b'\n', &mut buffer).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buffer);
+                    let line = line.trim_end_matches(['\r', '\n']);
+                    if !line.is_empty() {
+                        log::warn!("MCP server '{server_name}': {line}");
+                    }
+                }
+                Err(e) => {
+                    log::debug!("MCP server '{server_name}': stderr read failed: {e}");
+                    break;
+                }
+            }
+        }
+    });
+}
+
 /// Await one server's startup under `deadline`.
 ///
 /// `connect` covers rmcp's whole startup: the `initialize` request, the
@@ -297,3 +344,11 @@ fn build_tool_definitions(
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../../test/tools/mcp/runtime/connect_stderr.rs"]
+mod connect_stderr_test;
+
+// endregion: --- Tests

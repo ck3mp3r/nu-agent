@@ -5,7 +5,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{rendering::theme::TuiTheme, state::AppState};
 
-use super::format::{compact_token_count, ellipsize, format_pwd, status_indicator, tail_ellipsize};
+use super::format::{
+    compact_token_count, ellipsize, format_pwd, single_line_sanitized, status_indicator,
+    tail_ellipsize,
+};
 
 pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
     let (configured, enabled, disabled, failed) = state.status.mcp.mcp_counts();
@@ -227,13 +230,16 @@ fn format_mcp_failure_line(
 
     let joined = failures
         .into_iter()
-        .map(|(name, reason)| match reason {
-            Some(reason) => format!(
-                "{} ({})",
-                ellipsize(name, max_name_chars),
-                ellipsize(reason, max_reason_chars)
-            ),
-            None => ellipsize(name, max_name_chars),
+        .map(|(name, reason)| {
+            let name = single_line_sanitized(name);
+            match reason {
+                Some(reason) => format!(
+                    "{} ({})",
+                    ellipsize(&name, max_name_chars),
+                    ellipsize(&single_line_sanitized(reason), max_reason_chars)
+                ),
+                None => ellipsize(&name, max_name_chars),
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");

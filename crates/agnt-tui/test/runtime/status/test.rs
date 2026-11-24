@@ -224,6 +224,12 @@ pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static st
     status_indicator(now_millis)
 }
 
+/// True when `text` carries a C0 control byte or DEL: a status-band line is one
+/// terminal row, so its text may carry none.
+pub(crate) fn carries_control_byte(text: &str) -> bool {
+    text.chars().any(|ch| ch < '\u{20}' || ch == '\u{7f}')
+}
+
 #[test]
 fn status_bar_uses_persona_icon_when_set() {
     let mut state = AppState {
@@ -399,6 +405,56 @@ fn test_format_tail_ellipsize_wide_glyphs_keep_cell_budget() -> Result<()> {
     // -- Check: a 6-cell budget leaves 3 cells for the suffix, one 2-cell glyph.
     assert_eq!(out, "...ト");
     assert_eq!(UnicodeWidthStr::width(out.as_str()), 5);
+    Ok(())
+}
+
+/// Every status-band line is clipped through `ellipsize`, so a control byte in
+/// the input must not reach the returned string.
+#[test]
+fn test_status_format_ellipsize_strips_control_bytes() -> Result<()> {
+    // -- Setup & Fixtures: a fitting multi-line input and the same input clipped.
+    let input = "error: bad\n\n  tip: try\tthis\r\nUsage: nu";
+
+    // -- Exec
+    let fitting = ellipsize(input, 200);
+    let clipped = ellipsize(input, 12);
+
+    // -- Check
+    for out in [&fitting, &clipped] {
+        assert!(
+            !carries_control_byte(out),
+            "ellipsize must return a control-free string, got: {out:?}"
+        );
+    }
+    assert!(
+        fitting.contains("error: bad") && fitting.contains("Usage: nu"),
+        "a fitting line keeps its text, got: {fitting:?}"
+    );
+    Ok(())
+}
+
+/// `tail_ellipsize` clips the status band's right-hand segments, so it strips
+/// control bytes for the same one-row contract.
+#[test]
+fn test_status_format_tail_ellipsize_strips_control_bytes() -> Result<()> {
+    // -- Setup & Fixtures: a fitting multi-line input and the same input clipped.
+    let input = "main\nbranch\tname\r\nwith a tail that must be clipped";
+
+    // -- Exec
+    let fitting = tail_ellipsize(input, 200);
+    let clipped = tail_ellipsize(input, 12);
+
+    // -- Check
+    for out in [&fitting, &clipped] {
+        assert!(
+            !carries_control_byte(out),
+            "tail_ellipsize must return a control-free string, got: {out:?}"
+        );
+    }
+    assert!(
+        fitting.contains("mainbranch"),
+        "a fitting segment keeps its text, got: {fitting:?}"
+    );
     Ok(())
 }
 

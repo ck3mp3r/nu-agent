@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -11,12 +11,34 @@ const IDLE_INDICATOR: &str = "○";
 /// decides how often an idle-looking loop repaints.
 pub(crate) const SPINNER_CADENCE_MS: u128 = 150;
 
+/// Collapse every line break and tab to a single space and drop the remaining
+/// C0 control bytes, so a multi-line reason paints on one terminal row.
+pub(crate) fn single_line_sanitized(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' if chars.peek() == Some(&'\n') => {
+                chars.next();
+                out.push(' ');
+            }
+            '\t' | '\n' | '\r' => out.push(' '),
+            ch if is_c0_control(ch) => {}
+            ch => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Nerd Font / Powerline git glyph prepended before the branch label
 /// to denote that the displayed text is a git branch (or detached HEAD SHA).
 /// Width: 2 cells (glyph + space). When the available branch budget is too
 /// narrow to fit even the icon plus a single label character, the icon is
 /// dropped and the raw label is ellipsized as before.
 pub(super) fn tail_ellipsize(input: &str, max_chars: usize) -> String {
+    let input = without_c0_controls(input);
+    let input = input.as_ref();
+
     if UnicodeWidthStr::width(input) <= max_chars {
         return input.to_string();
     }
@@ -47,6 +69,9 @@ pub(in crate::runtime) fn ellipsize(input: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }
+
+    let input = without_c0_controls(input);
+    let input = input.as_ref();
 
     if UnicodeWidthStr::width(input) <= max_chars {
         return input.to_string();
@@ -123,3 +148,21 @@ pub(crate) fn status_indicator(now_millis: Option<u128>) -> &'static str {
         None => IDLE_INDICATOR,
     }
 }
+
+// region:    --- Support
+
+/// True for a C0 control byte or DEL. Neither has a cell of its own, so a
+/// string that carries one cannot be a single terminal row.
+fn is_c0_control(ch: char) -> bool {
+    ch < '\u{20}' || ch == '\u{7f}'
+}
+
+fn without_c0_controls(text: &str) -> Cow<'_, str> {
+    if text.chars().any(is_c0_control) {
+        Cow::Owned(text.chars().filter(|ch| !is_c0_control(*ch)).collect())
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
+// endregion: --- Support
