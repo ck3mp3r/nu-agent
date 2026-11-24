@@ -42,9 +42,6 @@ const MCP_BEARER_PREFIX: &str = "mcp:bearer:";
 /// Environment variable that overrides the vault backend selection.
 const BACKEND_ENV: &str = "AGENT_VAULT_BACKEND";
 
-/// Environment variable that nextest sets in every test process.
-const NEXTEST_ENV: &str = "NEXTEST";
-
 // endregion: --- Constants
 
 // region:    --- Types
@@ -495,8 +492,7 @@ enum BackendChoice {
 /// `keychain` and `auto` share the auto chain: keychain, then file, then
 /// env-only. An unknown value logs a warning and keeps the auto chain.
 ///
-/// Under nextest ([`NEXTEST_ENV`]) an unset `AGENT_VAULT_BACKEND` selects the
-/// env-only backend, so no test probes the OS keychain. An explicit value
+/// An unset `AGENT_VAULT_BACKEND` keeps the auto chain. An explicit value
 /// always wins.
 fn backend_choice(env: &EnvMap) -> BackendChoice {
     match env.get(BACKEND_ENV).map(String::as_str) {
@@ -507,7 +503,6 @@ fn backend_choice(env: &EnvMap) -> BackendChoice {
             log::warn!("Unknown {BACKEND_ENV} value '{other}' — using auto detection");
             BackendChoice::Auto
         }
-        None if env.contains_key(NEXTEST_ENV) => BackendChoice::EnvOnly,
         None => BackendChoice::Auto,
     }
 }

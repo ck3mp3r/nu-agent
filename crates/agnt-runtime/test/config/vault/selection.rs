@@ -98,25 +98,25 @@ fn test_vault_backend_choice_unknown_selects_auto() -> Result<()> {
 }
 
 #[test]
-fn test_vault_auto_detect_with_nextest_selects_env_only() -> Result<()> {
+fn test_vault_backend_choice_ignores_the_test_runner_variable() -> Result<()> {
     // -- Setup & Fixtures
     let env = EnvMap::from([("NEXTEST".to_string(), "1".to_string())]);
 
     // -- Exec
-    let vault = Vault::auto_detect_with(&env, std::path::Path::new("/nonexistent/secrets.json"))
-        .map_err(|e| format!("nextest must not probe: {e}"))?;
+    let choice = backend_choice(&env);
 
     // -- Check
     assert_eq!(
-        vault.backend().kind(),
-        BackendKind::EnvOnly,
-        "NEXTEST with an unset AGENT_VAULT_BACKEND must select the env-only backend without probing"
+        choice,
+        BackendChoice::Auto,
+        "the runner variable NEXTEST must not change the backend choice: with an unset \
+         AGENT_VAULT_BACKEND the auto chain stands"
     );
     Ok(())
 }
 
 #[test]
-fn test_vault_backend_choice_explicit_value_wins_over_nextest() -> Result<()> {
+fn test_vault_backend_choice_maps_each_value() -> Result<()> {
     // -- Setup & Fixtures
     let cases = [
         ("env", BackendChoice::EnvOnly),
@@ -128,31 +128,28 @@ fn test_vault_backend_choice_explicit_value_wins_over_nextest() -> Result<()> {
 
     // -- Exec & Check
     for (value, expected) in cases {
-        let env = EnvMap::from([
-            ("NEXTEST".to_string(), "1".to_string()),
-            ("AGENT_VAULT_BACKEND".to_string(), value.to_string()),
-        ]);
+        let env = EnvMap::from([("AGENT_VAULT_BACKEND".to_string(), value.to_string())]);
         let choice = backend_choice(&env);
         assert_eq!(
             choice, expected,
-            "an explicit AGENT_VAULT_BACKEND={value} must win over NEXTEST"
+            "AGENT_VAULT_BACKEND={value} must map to {expected:?}"
         );
     }
     Ok(())
 }
 
-/// Canary for the NEXTEST guard.
+/// Canary for the harness-provided selector.
 ///
-/// nextest sets `NEXTEST=1` in every test process, so the real process
-/// environment selects the env-only backend and no test probes the OS
-/// keychain. Plain `cargo test` does not set `NEXTEST`; the early return is a
-/// runner precondition, not skipped coverage.
+/// The test profiles in `.config/nextest.toml` set `AGENT_VAULT_BACKEND=env`
+/// for every test process, so the real process environment selects the
+/// env-only backend and no test probes the OS keychain. A runner without that
+/// variable is a precondition failure, not skipped coverage.
 #[test]
-fn test_vault_auto_detect_under_nextest_selects_env_only() -> Result<()> {
+fn test_vault_auto_detect_uses_the_harness_env_var() -> Result<()> {
     // -- Setup & Fixtures
-    if std::env::var_os("NEXTEST").is_none() {
+    let Some(value) = std::env::var_os("AGENT_VAULT_BACKEND") else {
         return Ok(());
-    }
+    };
 
     // -- Exec
     let vault = Vault::auto_detect(std::path::Path::new("/nonexistent/secrets.json"))
@@ -160,9 +157,14 @@ fn test_vault_auto_detect_under_nextest_selects_env_only() -> Result<()> {
 
     // -- Check
     assert_eq!(
+        value.to_str(),
+        Some("env"),
+        "the harness must supply AGENT_VAULT_BACKEND=env to every test process"
+    );
+    assert_eq!(
         vault.backend().kind(),
         BackendKind::EnvOnly,
-        "nextest must select the env-only backend without probing the keychain"
+        "AGENT_VAULT_BACKEND=env must select the env-only backend without probing the keychain"
     );
     Ok(())
 }

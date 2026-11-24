@@ -7,6 +7,7 @@ retries = 0
 fail-fast = true
 slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }
 final-status-level = "slow"
+env = { AGENT_VAULT_BACKEND = "env" }
 
 # The nine tree-sitter grammar tests each pay a per-process grammar load
 # (solo ~11-13 s). Nine-way machine contention stretches loads nonlinearly
@@ -26,6 +27,7 @@ test-threads = 32
 slow-timeout = { period = "20s", terminate-after = 2, grace-period = "5s" }
 global-timeout = "20m"
 final-status-level = "flaky"
+env = { AGENT_VAULT_BACKEND = "env" }
 
 # agnt-a2a hosts the timing-sensitive tests (real servers on ephemeral ports,
 # mDNS responder, SSE timing); keep its retry.
@@ -47,6 +49,7 @@ retries = 0
 fail-fast = false
 global-timeout = "30m"
 final-status-level = "flaky"
+env = { AGENT_VAULT_BACKEND = "env" }
 
 [profile.ci.junit]
 path = "junit.xml"
