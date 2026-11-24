@@ -15,6 +15,7 @@ use crate::tools::mcp::namespaced::{McpClientError, NamespacedClientHandler};
 
 use super::McpRuntime;
 use super::McpSessionHandle;
+use super::collapse_failure_reason;
 use super::http::{build_http_transport_config, build_mcp_http_client};
 use super::servers::{
     compose_exposed_tool_name, register_exposed_name, select_enabled_servers,
@@ -47,6 +48,7 @@ pub async fn connect_servers(
     let mut sessions = Vec::new();
     let mut connected_servers = std::collections::BTreeSet::new();
     let mut discovered_tools = Vec::new();
+    let mut failures = std::collections::BTreeMap::new();
     let mut exposed_name_owner: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for server in select_enabled_servers(servers) {
@@ -66,6 +68,9 @@ pub async fn connect_servers(
                     "MCP server '{}' unavailable at startup: {message}",
                     server.name
                 );
+                // The surface gets the reason, not only the log: one row it
+                // can clip, while the log keeps the whole message.
+                failures.insert(server.name.clone(), collapse_failure_reason(&message));
                 continue;
             }
         };
@@ -83,6 +88,7 @@ pub async fn connect_servers(
         sessions,
         connected_servers,
         discovered_tools,
+        failures,
     })
 }
 

@@ -101,6 +101,9 @@ pub enum UiRequestResponse {
     McpToggle {
         server: String,
         result: Result<McpUsabilityState, String>,
+        /// Why the server is not up after the toggle, when it failed: one
+        /// collapsed row from the runtime's failure record.
+        failure_reason: Option<String>,
         total: usize,
         server_count: usize,
         names_by_server: Vec<(String, Vec<String>)>,

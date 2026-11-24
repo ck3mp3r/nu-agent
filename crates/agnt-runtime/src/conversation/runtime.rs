@@ -406,6 +406,12 @@ where
             .await
     }
 
+    fn mcp_failure_reason(&self, server_name: &str) -> Option<String> {
+        self.mcp_state
+            .mcp_failure_reason(server_name)
+            .map(str::to_string)
+    }
+
     fn llm_visible_mcp_tool_count(&self) -> usize {
         self.mcp_state
             .llm_visible_mcp_tool_count(&self.tools.active_definitions(

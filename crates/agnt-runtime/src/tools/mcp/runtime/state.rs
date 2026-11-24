@@ -16,6 +16,12 @@ impl McpRuntime {
         &self.discovered_tools
     }
 
+    /// The servers whose connect failed, each with the reason it gave: one
+    /// collapsed row per server.
+    pub(crate) fn failures(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.failures
+    }
+
     pub fn lifecycle_projection(
         &self,
         configured_servers: &[McpServerConfig],
@@ -33,10 +39,16 @@ impl McpRuntime {
     ///
     /// Adds the new runtime's sessions, connected-server names, and discovered tools
     /// to this runtime. Used when enabling a previously-unconfigured server.
+    /// A server that is up carries no failure: its recorded reason is dropped
+    /// here, so the reason never outlives the failure it describes.
     pub fn merge(&mut self, other: McpRuntime) {
+        for server_name in &other.connected_servers {
+            self.failures.remove(server_name);
+        }
         self.sessions.extend(other.sessions);
         self.connected_servers.extend(other.connected_servers);
         self.discovered_tools.extend(other.discovered_tools);
+        self.failures.extend(other.failures);
     }
 
     /// Mark a server as disconnected — removes it from `connected_servers`.
@@ -45,5 +57,6 @@ impl McpRuntime {
     /// reconnect requires an agent restart). Tool calls will fail until reconnected.
     pub fn mark_disconnected(&mut self, server_name: &str) {
         self.connected_servers.remove(server_name);
+        self.failures.remove(server_name);
     }
 }

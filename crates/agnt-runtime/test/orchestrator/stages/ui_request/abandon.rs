@@ -280,6 +280,7 @@ async fn abandon_answers_a_toggle_with_the_last_known_facts() -> Result<()> {
             UiRequestResponse::McpToggle {
                 server: "alpha".to_string(),
                 result: Ok(McpUsabilityState::Enabled),
+                failure_reason: None,
                 total: 7,
                 server_count: 2,
                 names_by_server: vec![(
@@ -319,6 +320,7 @@ async fn abandon_answers_a_toggle_with_the_last_known_facts() -> Result<()> {
     let UiRequestResponse::McpToggle {
         server,
         result: Err(text),
+        failure_reason,
         total,
         server_count,
         names_by_server,
@@ -327,6 +329,7 @@ async fn abandon_answers_a_toggle_with_the_last_known_facts() -> Result<()> {
         return Err(format!("the toggle substitute must be a toggle: {answer:?}").into());
     };
     assert_eq!(server, "beta");
+    assert_eq!(failure_reason, None, "an abandoned toggle names no reason");
     assert_eq!(
         text,
         abandonment("MCP toggle"),
@@ -353,6 +356,7 @@ async fn abandon_answers_a_toggle_with_the_last_known_facts() -> Result<()> {
             UiRequestResponse::McpToggle {
                 server,
                 result: Err(text),
+                failure_reason,
                 total,
                 server_count,
                 names_by_server,

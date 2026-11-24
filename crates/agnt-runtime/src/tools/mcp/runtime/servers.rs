@@ -21,6 +21,7 @@ pub(crate) fn project_server_lifecycle(
             enabled: server.enabled,
             connected: connected_servers.contains(&server.name),
             visible_tool_count: 0,
+            failure_reason: None,
         })
         .collect();
 

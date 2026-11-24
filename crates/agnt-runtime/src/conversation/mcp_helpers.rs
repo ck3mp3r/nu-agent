@@ -90,6 +90,7 @@ pub(super) fn rebuild_mcp_lifecycle_projection(
     mcp_server_configs: &[McpServerConfig],
     mcp_registry: &McpToolRegistry,
     tool_definitions: &[ToolDefinition],
+    failures: &std::collections::BTreeMap<String, String>,
 ) -> Vec<McpServerLifecycle> {
     let visible_count_by_server = tool_definitions
         .iter()
@@ -124,26 +125,45 @@ pub(super) fn rebuild_mcp_lifecycle_projection(
                     .get(lifecycle.name.as_str())
                     .copied()
                     .unwrap_or(0);
+                lifecycle.failure_reason = failure_reason_for(&lifecycle, failures);
                 lifecycle
             })
             .collect()
     } else {
         let mut projection = projected_runtime_config
             .iter()
-            .map(|server| McpServerLifecycle {
-                name: server.name.clone(),
-                configured: true,
-                enabled: server.enabled,
-                connected: false,
-                visible_tool_count: visible_count_by_server
-                    .get(server.name.as_str())
-                    .copied()
-                    .unwrap_or(0),
+            .map(|server| {
+                let mut lifecycle = McpServerLifecycle {
+                    name: server.name.clone(),
+                    configured: true,
+                    enabled: server.enabled,
+                    connected: false,
+                    visible_tool_count: visible_count_by_server
+                        .get(server.name.as_str())
+                        .copied()
+                        .unwrap_or(0),
+                    failure_reason: None,
+                };
+                lifecycle.failure_reason = failure_reason_for(&lifecycle, failures);
+                lifecycle
             })
             .collect::<Vec<_>>();
         projection.sort_by(|a, b| a.name.cmp(&b.name));
         projection
     }
+}
+
+/// The reason a server carries: only an enabled server that is not up can have
+/// failed, so a disabled or connected row shows no reason even when one was
+/// recorded for it before.
+fn failure_reason_for(
+    lifecycle: &McpServerLifecycle,
+    failures: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    if !lifecycle.enabled || lifecycle.connected {
+        return None;
+    }
+    failures.get(lifecycle.name.as_str()).cloned()
 }
 
 #[cfg(test)]

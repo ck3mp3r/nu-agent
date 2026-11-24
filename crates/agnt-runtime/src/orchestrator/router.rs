@@ -225,6 +225,7 @@ impl CommandRouter {
             UiRequest::ToggleMcp { server, enable } => {
                 log::debug!("Router: UiRequest ToggleMcp server={server} enable={enable}");
                 let result = runtime.set_mcp_server_enabled(&server, enable).await;
+                let failure_reason = runtime.mcp_failure_reason(&server);
                 let total = runtime.llm_visible_mcp_tool_count();
                 let server_count = runtime.llm_visible_mcp_tool_count_for_server(&server);
                 let names_by_server = runtime.llm_visible_mcp_tool_names_by_server();
@@ -232,6 +233,7 @@ impl CommandRouter {
                     .send(UiRequestResponse::McpToggle {
                         server,
                         result,
+                        failure_reason,
                         total,
                         server_count,
                         names_by_server,

@@ -11,6 +11,8 @@ mod bearer_vault;
 mod connect;
 #[path = "runtime/exposed_names.rs"]
 mod exposed_names;
+#[path = "runtime/failure.rs"]
+mod failure;
 #[path = "runtime/http_auth.rs"]
 mod http_auth;
 #[path = "runtime/server_state.rs"]

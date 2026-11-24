@@ -7,29 +7,49 @@ use agnt_runtime::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSki
 use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
 
 impl RuntimeCoordinator {
+    /// Fold the runtime's server lifecycle: the row each server takes, its
+    /// visible tool count, and — for a server that failed — the reason it gave.
+    /// The reasons are written after the rows so a fresh projection prunes the
+    /// ones it no longer reports.
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
-        let servers = projection
+        let entries = projection
             .into_iter()
             .map(|server| {
-                let name = server.name;
                 self.state
                     .status
                     .mcp
                     .set_mcp_visible_tool_count_by_server_name(
-                        name.as_str(),
+                        server.name.as_str(),
                         server.visible_tool_count,
                     );
-                McpServerState {
-                    name,
-                    state: match (server.enabled, server.connected) {
+                (
+                    server.name,
+                    match (server.enabled, server.connected) {
                         (true, true) => McpServerUsabilityState::Enabled,
                         (true, false) => McpServerUsabilityState::Failed,
                         (false, _) => McpServerUsabilityState::Disabled,
                     },
-                }
+                    server.failure_reason,
+                )
             })
-            .collect();
-        self.state.status.mcp.set_mcp_servers(servers);
+            .collect::<Vec<_>>();
+        self.state.status.mcp.set_mcp_servers(
+            entries
+                .iter()
+                .map(|(name, state, _)| McpServerState {
+                    name: name.clone(),
+                    state: *state,
+                })
+                .collect(),
+        );
+        for (name, state, reason) in entries {
+            if reason.is_some() {
+                self.state
+                    .status
+                    .mcp
+                    .set_mcp_server_state_by_name_with_reason(&name, state, reason);
+            }
+        }
     }
 
     pub(crate) fn set_skills_projection(&mut self, skills: Vec<ProtocolDiscoverableSkill>) {

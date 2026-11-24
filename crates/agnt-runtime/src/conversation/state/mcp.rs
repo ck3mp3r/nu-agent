@@ -5,7 +5,7 @@ use crate::config::vault::Vault;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::{
     config::McpServerConfig,
-    runtime::{McpRuntime, McpServerLifecycle},
+    runtime::{McpRuntime, McpServerLifecycle, collapse_failure_reason},
 };
 use crate::types::ToolDefinition;
 
@@ -22,6 +22,9 @@ pub struct McpState {
     max_tool_result_bytes: usize,
     /// Secret vault, needed to connect OAuth servers enabled mid-session.
     vault: Option<Arc<Vault>>,
+    /// Why a server is not up, one collapsed row per server. Seeded from the
+    /// connect batch's failures and kept current by the toggle.
+    failures: std::collections::BTreeMap<String, String>,
 }
 
 impl McpState {
@@ -35,6 +38,10 @@ impl McpState {
         vault: Option<Arc<Vault>>,
     ) -> Self {
         Self {
+            failures: mcp_runtime
+                .as_ref()
+                .map(|runtime| runtime.failures().clone())
+                .unwrap_or_default(),
             mcp_runtime,
             mcp_lifecycle_projection,
             mcp_server_configs,
@@ -55,6 +62,25 @@ impl McpState {
         &self.mcp_lifecycle_projection
     }
 
+    /// Why this server is not up, when its last connect failed: one collapsed
+    /// row the surface shows. The full text is in the log.
+    pub(crate) fn mcp_failure_reason(&self, server_name: &str) -> Option<&str> {
+        self.failures.get(server_name).map(String::as_str)
+    }
+
+    /// Rebuild the lifecycle projection from the registry and the recorded
+    /// failures: the one place the projection is recomputed, so the reasons the
+    /// panel reads travel with every rebuild.
+    fn refresh_lifecycle_projection(&mut self, tool_definitions: &[ToolDefinition]) {
+        self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
+            self.mcp_runtime.as_ref(),
+            &self.mcp_server_configs,
+            &self.mcp_registry,
+            tool_definitions,
+            &self.failures,
+        );
+    }
+
     pub async fn set_mcp_server_enabled(
         &mut self,
         tool_server_handle: &rig::tool::server::ToolServerHandle,
@@ -73,12 +99,8 @@ impl McpState {
             if let Some(rt) = self.mcp_runtime.as_mut() {
                 rt.mark_disconnected(server_name);
             }
-            self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
-                self.mcp_runtime.as_ref(),
-                &self.mcp_server_configs,
-                &self.mcp_registry,
-                tool_definitions,
-            );
+            self.failures.remove(server_name);
+            self.refresh_lifecycle_projection(tool_definitions);
             return Ok(McpUsabilityState::Disabled);
         }
 
@@ -89,12 +111,7 @@ impl McpState {
         {
             log::debug!("MCP enable: server={server_name} not in config, marking failed");
             self.mcp_registry.set_server_enabled(server_name, false)?;
-            self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
-                self.mcp_runtime.as_ref(),
-                &self.mcp_server_configs,
-                &self.mcp_registry,
-                tool_definitions,
-            );
+            self.refresh_lifecycle_projection(tool_definitions);
             return Ok(McpUsabilityState::Failed);
         }
 
@@ -111,12 +128,8 @@ impl McpState {
             // Case A: Session is alive, tools are registered on the handle.
             // Just re-enable visibility in the registry — no reconnection needed.
             self.mcp_registry.set_server_enabled(server_name, true)?;
-            self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
-                self.mcp_runtime.as_ref(),
-                &self.mcp_server_configs,
-                &self.mcp_registry,
-                tool_definitions,
-            );
+            self.failures.remove(server_name);
+            self.refresh_lifecycle_projection(tool_definitions);
             return Ok(McpUsabilityState::Enabled);
         }
 
@@ -167,35 +180,32 @@ impl McpState {
                     None => self.mcp_runtime = Some(new_rt),
                 }
 
-                self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
-                    self.mcp_runtime.as_ref(),
-                    &self.mcp_server_configs,
-                    &self.mcp_registry,
-                    tool_definitions,
-                );
+                self.failures.remove(server_name);
+                self.refresh_lifecycle_projection(tool_definitions);
 
                 Ok(McpUsabilityState::Enabled)
             }
-            Ok(_) => {
+            Ok(new_rt) => {
+                // The batch isolates a failed server and records why: the
+                // toggle's own reason is that record, and the generic sentence
+                // stands only for a batch that came back empty on purpose.
+                let reason = new_rt
+                    .failures()
+                    .get(server_name)
+                    .cloned()
+                    .unwrap_or_else(|| "returned no sessions".to_string());
                 log::warn!("MCP connect returned no sessions: server={server_name}");
                 self.mcp_registry.set_server_enabled(server_name, false)?;
-                self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
-                    self.mcp_runtime.as_ref(),
-                    &self.mcp_server_configs,
-                    &self.mcp_registry,
-                    tool_definitions,
-                );
+                self.failures.insert(server_name.to_string(), reason);
+                self.refresh_lifecycle_projection(tool_definitions);
                 Ok(McpUsabilityState::Failed)
             }
             Err(e) => {
                 log::warn!("MCP connect failed: server={server_name} error={e}");
                 self.mcp_registry.set_server_enabled(server_name, false)?;
-                self.mcp_lifecycle_projection = rebuild_mcp_lifecycle_projection(
-                    self.mcp_runtime.as_ref(),
-                    &self.mcp_server_configs,
-                    &self.mcp_registry,
-                    tool_definitions,
-                );
+                self.failures
+                    .insert(server_name.to_string(), collapse_failure_reason(&e));
+                self.refresh_lifecycle_projection(tool_definitions);
                 Ok(McpUsabilityState::Failed)
             }
         }

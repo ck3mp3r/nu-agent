@@ -330,6 +330,7 @@ async fn has_pending_reflects_blocking_and_concurrent() {
             UiRequestResponse::McpToggle {
                 server: "test-server".to_string(),
                 result: Ok(McpUsabilityState::Enabled),
+                failure_reason: None,
                 total: 0,
                 server_count: 0,
                 names_by_server: Vec::new(),

@@ -331,3 +331,83 @@ async fn connect_servers_keeps_a_healthy_server_when_one_is_broken() -> Result<(
 }
 
 // endregion: --- Startup resilience pins
+
+// region:    --- Failure carry pins
+
+/// WHEN a server's handshake never answers, THE connect batch SHALL record that
+/// server's name and its reason, so the Mcps panel can show why the server is
+/// not up instead of a bare 🔴.
+#[tokio::test]
+async fn connect_servers_records_a_failed_servers_reason() -> Result<()> {
+    // -- Setup & Fixtures
+    let handle = rig::tool::server::ToolServer::new().run();
+    let temp = tempfile::TempDir::new()?;
+    let servers = vec![silent_server("silent-server")];
+    let deadline = std::time::Duration::from_millis(300);
+
+    // -- Exec
+    let runtime = crate::tools::mcp::runtime::connect_servers(
+        &handle,
+        &servers,
+        Some(temp.path()),
+        20_000,
+        None,
+        deadline,
+    )
+    .await
+    .map_err(|e| format!("a silent server must not abort startup: {e}"))?;
+
+    // -- Check
+    let reason = runtime
+        .failures()
+        .get("silent-server")
+        .ok_or("the isolated failure must be carried, not only logged")?;
+    assert!(
+        reason.contains("initialize handshake did not complete within 300ms"),
+        "the carried reason must name the bound, got: {reason}"
+    );
+    assert!(
+        !reason.contains(['\n', '\r']),
+        "the carried reason must be one row, got: {reason:?}"
+    );
+    Ok(())
+}
+
+/// WHEN one server of the batch fails, THE carry SHALL name only that server:
+/// the healthy neighbour's name stays out of the failures.
+#[tokio::test]
+async fn connect_servers_records_no_failure_for_a_healthy_server() -> Result<()> {
+    // -- Setup & Fixtures
+    let handle = rig::tool::server::ToolServer::new().run();
+    let temp = tempfile::TempDir::new()?;
+    let servers = vec![
+        silent_server("silent-server"),
+        stub_server(temp.path(), "healthy-stub")?,
+    ];
+
+    // -- Exec
+    let runtime = crate::tools::mcp::runtime::connect_servers(
+        &handle,
+        &servers,
+        Some(temp.path()),
+        20_000,
+        None,
+        std::time::Duration::from_millis(300),
+    )
+    .await
+    .map_err(|e| format!("a silent server must not abort startup: {e}"))?;
+
+    // -- Check
+    assert!(
+        runtime.failures().contains_key("silent-server"),
+        "the silent server's failure must be carried"
+    );
+    assert!(
+        !runtime.failures().contains_key("healthy-stub"),
+        "a connected server must carry no failure, got: {:?}",
+        runtime.failures()
+    );
+    Ok(())
+}
+
+// endregion: --- Failure carry pins

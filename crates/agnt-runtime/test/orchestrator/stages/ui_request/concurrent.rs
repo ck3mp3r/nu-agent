@@ -38,6 +38,7 @@ async fn concurrent_response_mcp_toggle_success() {
             UiRequestResponse::McpToggle {
                 server: "test-server".to_string(),
                 result: Ok(McpUsabilityState::Enabled),
+                failure_reason: None,
                 total: 5,
                 server_count: 3,
                 names_by_server: vec![("test-server".to_string(), vec!["tool1".to_string()])],
@@ -92,6 +93,7 @@ async fn concurrent_response_mcp_toggle_error() {
             UiRequestResponse::McpToggle {
                 server: "test-server".to_string(),
                 result: Err("toggle failed".to_string()),
+                failure_reason: None,
                 total: 5,
                 server_count: 3,
                 names_by_server: Vec::new(),

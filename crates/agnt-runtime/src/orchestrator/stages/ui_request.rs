@@ -180,6 +180,7 @@ impl UiRequestStage {
             UiRequest::ToggleMcp { server, .. } => Some(UiRequestResponse::McpToggle {
                 server: server.clone(),
                 result: Err(text()),
+                failure_reason: None,
                 total: self.last_authoritative_visible_count,
                 server_count: self
                     .last_authoritative_counts
@@ -357,6 +358,7 @@ impl UiRequestHandler for UiRequestStage {
             UiRequestResponse::McpToggle {
                 server,
                 result: Ok(state),
+                failure_reason,
                 total,
                 server_count,
                 names_by_server,
@@ -375,12 +377,13 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx.facts.publish(FactRecord::McpServerState {
                     server,
                     state: state.into(),
-                    error: None,
+                    error: failure_reason,
                 });
             }
             UiRequestResponse::McpToggle {
                 server,
                 result: Err(err),
+                failure_reason,
                 total,
                 server_count,
                 names_by_server,
@@ -399,7 +402,10 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx.facts.publish(FactRecord::McpServerState {
                     server,
                     state: McpServerUsability::Failed,
-                    error: Some(err),
+                    // The runtime's recorded reason names the connect failure;
+                    // the error text is the toggle's own report when no connect
+                    // reason was recorded.
+                    error: failure_reason.or(Some(err)),
                 });
             }
             _ => {}

@@ -122,6 +122,7 @@ fn lifecycle_projection_recomputes_from_registry_state_without_runtime() -> Resu
             tool_definition_named("gh__list_prs")?,
             tool_definition_named("k8s__list_pods")?,
         ],
+        &std::collections::BTreeMap::new(),
     );
 
     assert_eq!(projection.len(), 2);
@@ -134,5 +135,88 @@ fn lifecycle_projection_recomputes_from_registry_state_without_runtime() -> Resu
     assert!(!projection[1].enabled);
     assert!(!projection[1].connected);
     assert_eq!(projection[1].visible_tool_count, 0);
+    Ok(())
+}
+
+/// WHEN a server's connect failed, THE lifecycle projection SHALL carry the
+/// recorded reason, and SHALL NOT invent one for a server that never failed.
+#[test]
+fn lifecycle_projection_carries_the_recorded_failure_reason() -> Result<()> {
+    // -- Setup & Fixtures
+    let registry = McpToolRegistry::from_tools(vec![
+        mcp_tool("gh", "gh__list_prs", "list_prs"),
+        mcp_tool("k8s", "k8s__list_pods", "list_pods"),
+    ])
+    .map_err(|e| format!("registry: {e:?}"))?;
+    let configs = vec![
+        mcp_server_config("k8s", true),
+        mcp_server_config("gh", true),
+    ];
+    let failures = std::collections::BTreeMap::from([(
+        "k8s".to_string(),
+        "initialize handshake did not complete within 300ms".to_string(),
+    )]);
+
+    // -- Exec
+    let projection = rebuild_mcp_lifecycle_projection(
+        None,
+        &configs,
+        &registry,
+        &[
+            tool_definition_named("read")?,
+            tool_definition_named("gh__list_prs")?,
+            tool_definition_named("k8s__list_pods")?,
+        ],
+        &failures,
+    );
+
+    // -- Check: the failed server carries its reason.
+    let failed = projection
+        .iter()
+        .find(|server| server.name == "k8s")
+        .ok_or("the projection must list k8s")?;
+    assert!(failed.enabled);
+    assert!(!failed.connected);
+    assert_eq!(
+        failed.failure_reason.as_deref(),
+        Some("initialize handshake did not complete within 300ms")
+    );
+
+    // -- Check: a server that never failed carries none.
+    let healthy = projection
+        .iter()
+        .find(|server| server.name == "gh")
+        .ok_or("the projection must list gh")?;
+    assert_eq!(healthy.failure_reason, None);
+    Ok(())
+}
+
+/// A recorded reason for a server the surface disabled SHALL NOT surface: a
+/// disabled row is not a failure.
+#[test]
+fn lifecycle_projection_drops_a_reason_for_a_disabled_server() -> Result<()> {
+    // -- Setup & Fixtures
+    let registry =
+        McpToolRegistry::from_tools(vec![mcp_tool("k8s", "k8s__list_pods", "list_pods")])
+            .map_err(|e| format!("registry: {e:?}"))?;
+    registry
+        .set_server_enabled("k8s", false)
+        .map_err(|e| format!("disable k8s: {e:?}"))?;
+    let configs = vec![mcp_server_config("k8s", true)];
+    let failures = std::collections::BTreeMap::from([("k8s".to_string(), "boom".to_string())]);
+
+    // -- Exec
+    let projection = rebuild_mcp_lifecycle_projection(
+        None,
+        &configs,
+        &registry,
+        &[tool_definition_named("k8s__list_pods")?],
+        &failures,
+    );
+
+    // -- Check
+    let server = projection.first().ok_or("the projection must list k8s")?;
+    assert!(!server.enabled);
+    assert_eq!(server.failure_reason, None);
     Ok(())
 }

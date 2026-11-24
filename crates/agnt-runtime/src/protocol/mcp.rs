@@ -39,6 +39,12 @@ pub trait McpManagement {
         0
     }
 
+    /// Why the named server is not up, when its last connect failed: one
+    /// collapsed row the surface shows. `None` for a server that never failed.
+    fn mcp_failure_reason(&self, _server_name: &str) -> Option<String> {
+        None
+    }
+
     fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
         0
     }

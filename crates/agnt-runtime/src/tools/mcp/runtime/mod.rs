@@ -6,12 +6,14 @@ use crate::tools::mcp::{client::McpToolDefinition, namespaced::NamespacedClientH
 // region:    --- Modules
 
 mod connect;
+mod failure;
 mod http;
 mod servers;
 mod state;
 mod stdio;
 
 pub use connect::{CONNECT_DEADLINE, connect_servers};
+pub(crate) use failure::collapse_failure_reason;
 
 #[cfg(test)]
 pub(crate) use http::build_http_transport_config;
@@ -29,6 +31,9 @@ pub struct McpRuntime {
     sessions: Vec<McpSessionHandle>,
     connected_servers: std::collections::BTreeSet<String>,
     discovered_tools: Vec<McpToolDefinition>,
+    /// The servers whose connect failed, with the reason each one gave:
+    /// one collapsed row per server, ready for the surface to show.
+    failures: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +43,9 @@ pub struct McpServerLifecycle {
     pub enabled: bool,
     pub connected: bool,
     pub visible_tool_count: usize,
+    /// Why this server is not up, when its last connect failed: one collapsed
+    /// row. The full text stays in the log.
+    pub failure_reason: Option<String>,
 }
 
 pub(super) enum McpSessionHandle {

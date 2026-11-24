@@ -123,6 +123,17 @@ pub(crate) fn mcp_selected_details_lines_for_test(
         .collect()
 }
 
+pub(crate) fn mcp_painted_details_rows_for_test(
+    state: &AppState,
+    details_height: u16,
+    details_width: u16,
+) -> Vec<String> {
+    crate::runtime::panels::mcp_painted_details_rows(state, details_height, details_width)
+        .into_iter()
+        .map(|row| row.to_string())
+        .collect()
+}
+
 pub(crate) fn mcp_table_model_for_test(
     state: &AppState,
     table_width: u16,

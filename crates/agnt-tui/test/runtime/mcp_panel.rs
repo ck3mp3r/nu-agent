@@ -14,6 +14,9 @@ mod details_bottom_pin;
 #[path = "mcp_panel/details_layout.rs"]
 mod details_layout;
 
+#[path = "mcp_panel/details_cut_marker.rs"]
+mod details_cut_marker;
+
 #[path = "mcp_panel/frame_repaint.rs"]
 mod frame_repaint;
 

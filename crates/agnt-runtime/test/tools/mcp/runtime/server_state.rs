@@ -12,6 +12,7 @@ fn discovered_tools_accessor_returns_runtime_tools() {
             description: None,
             parameters: None,
         }],
+        failures: std::collections::BTreeMap::new(),
     };
 
     assert_eq!(runtime.discovered_tools().len(), 1);
@@ -99,6 +100,7 @@ fn lifecycle_projection_table() -> core::result::Result<(), Box<dyn std::error::
             sessions: vec![],
             connected_servers: case.connected,
             discovered_tools: case.discovered_tools,
+            failures: std::collections::BTreeMap::new(),
         };
 
         let projection = runtime.lifecycle_projection(&case.servers);
@@ -159,6 +161,7 @@ fn mark_disconnected_removes_from_connected_servers() {
         connected_servers: std::collections::BTreeSet::from(["my-server".to_string()]),
 
         discovered_tools: vec![],
+        failures: std::collections::BTreeMap::new(),
     };
 
     assert!(
@@ -267,11 +270,13 @@ fn merge_combines_connected_servers_and_discovered_tools() {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["gh".to_string()]),
         discovered_tools: vec![discovered("gh", "list_prs")],
+        failures: std::collections::BTreeMap::new(),
     };
     let other = McpRuntime {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["k8s".to_string()]),
         discovered_tools: vec![discovered("k8s", "list_pods")],
+        failures: std::collections::BTreeMap::new(),
     };
 
     // -- Exec
@@ -297,11 +302,13 @@ fn merge_keeps_existing_state_when_other_is_empty() {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["gh".to_string()]),
         discovered_tools: vec![discovered("gh", "list_prs")],
+        failures: std::collections::BTreeMap::new(),
     };
     let empty = McpRuntime {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::new(),
         discovered_tools: vec![],
+        failures: std::collections::BTreeMap::new(),
     };
 
     // -- Exec
@@ -322,11 +329,13 @@ fn merge_after_mark_disconnected_restores_the_server() {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["gh".to_string()]),
         discovered_tools: vec![],
+        failures: std::collections::BTreeMap::new(),
     };
     let reconnected = McpRuntime {
         sessions: vec![],
         connected_servers: std::collections::BTreeSet::from(["gh".to_string()]),
         discovered_tools: vec![],
+        failures: std::collections::BTreeMap::new(),
     };
 
     // -- Exec

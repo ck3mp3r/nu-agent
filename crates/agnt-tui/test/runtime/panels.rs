@@ -68,8 +68,8 @@ fn test_runtime_panels_mcp_details_rows_wrap_and_cap() -> Result<()> {
     ];
 
     // -- Exec
-    let rows = mcp_details_rows(&lines, 30, 6);
-    let capped = mcp_details_rows(&lines, 30, 2);
+    let rows = mcp_details_rows(&lines, 30, 6, None);
+    let capped = mcp_details_rows(&lines, 30, 2, None);
 
     // -- Check: the fitting rows render verbatim, above and below the wrapped
     // tool row.
@@ -103,7 +103,7 @@ fn test_runtime_panels_mcp_details_rows_wrap_and_cap() -> Result<()> {
         "the cap must cut the stack; rows: {capped:?}"
     );
     assert!(
-        mcp_details_rows(&lines, 30, 0).is_empty(),
+        mcp_details_rows(&lines, 30, 0, None).is_empty(),
         "no cap rows must claim no rows"
     );
     Ok(())

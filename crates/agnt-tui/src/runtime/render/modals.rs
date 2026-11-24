@@ -14,10 +14,10 @@ use crate::runtime::panels::{
 };
 use crate::runtime::{
     command_palette_table_model, command_palette_title, help_panel_lines, help_panel_max_scroll,
-    help_panel_overflow_cue, mcp_details_height_for_inner_height, mcp_details_rows,
-    mcp_panel_title, mcp_selected_details_lines, mcp_table_model, picker_action_keys,
-    picker_details_height_for_inner_height, popup_title, scroll_panel_title, skills_panel_lines,
-    status::format::ellipsize, status_panel_lines,
+    help_panel_overflow_cue, mcp_details_height_for_inner_height, mcp_painted_details_rows,
+    mcp_panel_title, mcp_table_model, picker_action_keys, picker_details_height_for_inner_height,
+    popup_title, scroll_panel_title, skills_panel_lines, status::format::ellipsize,
+    status_panel_lines,
 };
 use crate::{
     runtime::{
@@ -123,12 +123,11 @@ impl RuntimeCoordinator {
                     horizontal: 1,
                 });
                 let details_height = mcp_details_height_for_inner_height(inner.height);
-                // The details rect is sized to the rows that actually render, so
-                // the pane's last row is the popup's bottom inner row and the
-                // table takes every row above it. The ladder value is the cap.
-                let details_lines =
-                    mcp_selected_details_lines(&self.state, details_height, inner.width);
-                let details = mcp_details_rows(&details_lines, inner.width, details_height);
+                // The rows the pane paints, sized to the rect it paints them in:
+                // the ladder is the cap and the marker stands in for a cut
+                // reason. The pane's last row is the popup's bottom inner row
+                // and the table takes every row above it.
+                let details = mcp_painted_details_rows(&self.state, details_height, inner.width);
                 let details_rows = details.len() as u16;
                 // One blank row above the details keeps the table's last row off
                 // the details' first line, the same gap the picker footer

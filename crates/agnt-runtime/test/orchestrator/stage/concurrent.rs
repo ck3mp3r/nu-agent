@@ -59,6 +59,7 @@ async fn concurrent_in_flight_rules_allow_multiple_mcp_toggles() {
             UiRequestResponse::McpToggle {
                 server: "gh".to_string(),
                 result: Ok(McpUsabilityState::Disabled),
+                failure_reason: None,
                 total: 0,
                 server_count: 0,
                 names_by_server: vec![],
@@ -72,6 +73,7 @@ async fn concurrent_in_flight_rules_allow_multiple_mcp_toggles() {
             UiRequestResponse::McpToggle {
                 server: "fs".to_string(),
                 result: Ok(McpUsabilityState::Enabled),
+                failure_reason: None,
                 total: 0,
                 server_count: 0,
                 names_by_server: vec![],

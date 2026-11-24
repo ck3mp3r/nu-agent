@@ -267,12 +267,14 @@ async fn dispatch_ui_request_toggle_mcp() -> core::result::Result<(), Box<dyn st
         UiRequestResponse::McpToggle {
             server,
             result,
+            failure_reason,
             total,
             server_count,
             names_by_server,
         } => {
             assert_eq!(server, "test-server");
             assert_eq!(result, Ok(McpUsabilityState::Disabled));
+            assert_eq!(failure_reason, None);
             assert_eq!(total, 0);
             assert_eq!(server_count, 0);
             assert!(names_by_server.is_empty());

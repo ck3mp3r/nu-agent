@@ -247,7 +247,15 @@ pub(super) struct McpSelectedDetails {
     pub(super) tools_line: String,
     pub(super) tool_names: Vec<String>,
     pub(super) compact_single_line: String,
+    /// The failure reason this server carries, when it has one: the details cut
+    /// marks this line, never the server row or the tools.
+    pub(super) reason: Option<String>,
 }
+
+/// The row that stands in for a failure reason the details ladder could not
+/// show whole: the reason's head stays on screen, and this says where the rest
+/// is. One terminal row, no control byte.
+pub(crate) const MCP_DETAILS_CUT_MARKER: &str = "… full reason in the log";
 
 pub(crate) const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
 
@@ -274,10 +282,11 @@ pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetail
         format!("Tools: {}", tool_names.join(", "))
     };
     let server_line = format!("Server: {} ({})", server.name, server.state.label());
+    let reason = reason.map(str::to_string);
     Some(McpSelectedDetails {
         compact_single_line: format!(
             "{} · {server_line}",
-            match reason {
+            match &reason {
                 Some(full) => format!("Error: {full}"),
                 None => "Error: None".to_string(),
             }
@@ -285,10 +294,11 @@ pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetail
         server_line,
         tools_line,
         tool_names,
-        error_line: match reason {
+        error_line: match &reason {
             Some(full) => format!("Error: {full}"),
             None => "Error: None".to_string(),
         },
+        reason,
     })
 }
 
@@ -432,15 +442,24 @@ pub(super) fn mcp_selected_details_lines(
 /// Rendering these rows without `Paragraph`'s own wrap keeps measurement and
 /// rendering in lockstep — the rows returned here are exactly the rows the pane
 /// paints, so the details rect can be sized to them.
+///
+/// The cut is head-first: the head of the stack is what a reader needs, so the
+/// first rows stay and the tail goes. When the rows the cut drops are part of
+/// the failure reason, the last visible row becomes [`MCP_DETAILS_CUT_MARKER`]:
+/// the reader sees the reason's head and is told the whole text is in the log.
 pub(crate) fn mcp_details_rows(
     lines: &[Line<'static>],
     width: u16,
     max_rows: u16,
+    reason_line: Option<usize>,
 ) -> Vec<Line<'static>> {
     let max_rows = usize::from(max_rows);
     let width_cells = usize::from(width);
     let mut rows: Vec<Line<'static>> = Vec::new();
-    for line in lines {
+    // How many rows the stack holds once the reason's line is wrapped: a cut
+    // that stops short of this dropped some of the reason.
+    let mut reason_rows_end = 0usize;
+    for (index, line) in lines.iter().enumerate() {
         if rows.len() >= max_rows {
             break;
         }
@@ -448,25 +467,72 @@ pub(crate) fn mcp_details_rows(
         // indent the wrap would trim, and re-wrapping them buys nothing.
         if line.width() <= width_cells {
             rows.push(line.clone());
-            continue;
+        } else {
+            // An over-wide line is wrapped by hand so the leading indent (a tool
+            // row's continuation offset) survives on every wrapped row and the body
+            // wraps in the width left after it.
+            let text = line.to_string();
+            let indent_len = text
+                .len()
+                .saturating_sub(text.trim_start_matches(' ').len());
+            let (indent, body) = text.split_at(indent_len);
+            let body_width = width.saturating_sub(indent_len as u16);
+            rows.extend(
+                wrap_at_ascii_spaces(body, body_width)
+                    .into_iter()
+                    .map(|row| Line::from(format!("{indent}{row}"))),
+            );
         }
-        // An over-wide line is wrapped by hand so the leading indent (a tool
-        // row's continuation offset) survives on every wrapped row and the body
-        // wraps in the width left after it.
-        let text = line.to_string();
-        let indent_len = text
-            .len()
-            .saturating_sub(text.trim_start_matches(' ').len());
-        let (indent, body) = text.split_at(indent_len);
-        let body_width = width.saturating_sub(indent_len as u16);
-        rows.extend(
-            wrap_at_ascii_spaces(body, body_width)
-                .into_iter()
-                .map(|row| Line::from(format!("{indent}{row}"))),
-        );
+        if reason_line == Some(index) {
+            reason_rows_end = rows.len();
+        }
     }
-    rows.truncate(max_rows);
+    if rows.len() > max_rows {
+        rows.truncate(max_rows);
+        if reason_rows_end > max_rows {
+            rows.pop();
+            rows.push(mcp_details_cut_marker_row(width));
+        }
+    }
     rows
+}
+
+/// The marker row, clipped to a pane too narrow to hold it whole: the row never
+/// exceeds the pane it stands in.
+fn mcp_details_cut_marker_row(width: u16) -> Line<'static> {
+    let width = usize::from(width);
+    if MCP_DETAILS_CUT_MARKER.chars().count() <= width {
+        return Line::from(MCP_DETAILS_CUT_MARKER);
+    }
+    Line::from(
+        MCP_DETAILS_CUT_MARKER
+            .chars()
+            .take(width)
+            .collect::<String>(),
+    )
+}
+
+/// The rows the MCP details pane paints: the landed ladder wrapped and cut to
+/// the pane, with the marker standing in for a failure reason the cut dropped.
+/// One function owns the whole ladder, so what the pane measures and what it
+/// paints cannot drift apart.
+pub(crate) fn mcp_painted_details_rows(
+    state: &AppState,
+    details_height: u16,
+    details_width: u16,
+) -> Vec<Line<'static>> {
+    let reason_line = mcp_details_reason_line(state, details_height);
+    let lines = mcp_selected_details_lines(state, details_height, details_width);
+    mcp_details_rows(&lines, details_width, details_height, reason_line)
+}
+
+/// The index of the landed details line that carries the selected server's
+/// failure reason, when it carries one: the ladder marks a cut reason, never a
+/// cut server row or a cut tool list.
+pub(super) fn mcp_details_reason_line(state: &AppState, details_height: u16) -> Option<usize> {
+    let details = mcp_selected_details(state)?;
+    details.reason.as_ref()?;
+    Some(usize::from(details_height > 1))
 }
 
 pub(crate) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
