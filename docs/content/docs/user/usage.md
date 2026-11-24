@@ -405,7 +405,6 @@ Nu command rendering:
 - The edit tool's diff display renders in the same code surface. Each diff body line carries a muted line-number gutter (old and new columns) followed by the syntax-highlighted code body, on a line-level tint: added lines get a dim green background, removed lines a dim red one, and context lines stay untinted. Hunk headers (`@@`), file headers (`---`/`+++`), and the no-newline marker render as plain meta rows.
 - Consecutive tool entries carry no separator row: a tool entry is flush, so the displays' own padding rows supply the spacing. A tool entry next to assistant prose keeps one separator row, in either order. A padding row on the frame's first or last row is clipped, so the frame opens and closes on content rows.
 - Other tools keep their existing previews (edit shows a diff, nu shows the command) or none.
-- See `docs/contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
 
 Lifecycle events emitted by runtime/UI path (all delivered on the single `ui_event` bus channel):
 
@@ -657,7 +656,7 @@ the backend:
 | `--store` | Where the session lives |
 |-----------|--------------------------|
 | `sqlite` (default) | `{cache}/{APP_DIR_NAME}/sessions.db` — one database holds every session |
-| `memory` | An in-memory database. Nothing survives the process, so it is for tests and one-shot runs |
+| `memory` | An in-memory database. Nothing survives the process, so it fits one-off runs where nothing may persist |
 
 `APP_DIR_NAME` is `nu-agent-dev` in debug builds and `nu-agent` in release
 builds. One backend writes the store: SQLite, in a file or in memory. Pointing
@@ -1000,7 +999,7 @@ At exit the agent gives a running handler limited grace:
 - Session-class runner in stderr mode: one 250 ms pause in total, after the turn.
 - Session-class runner in TUI and ACP: no exit wait. A handler still running when the process exits is abandoned.
 
-### Mode coverage
+### Hook events by mode
 
 | Event | TUI interactive | TUI single-turn | stderr | ACP |
 |-------|-----------------|-----------------|--------|-----|
@@ -1032,7 +1031,7 @@ At exit the agent gives a running handler limited grace:
 
 `permission_auto_resolved` fires where the policy resolves a tool call without prompting. That is every tool call in stderr mode, and every non-asked call in TUI interactive, TUI single-turn, and ACP mode. It is the only permission event that fires in stderr mode. The event fires once per policy-resolved call, so a hook that declares it runs one subprocess per call; the subprocess spawns only when the hook declares the event.
 
-`compaction_started` and `compaction_completed` fire where compaction runs. The chain's threshold decision fires in every mode, but only two modes consume the request: the TUI interactive loop dispatches it through the orchestrator, for both auto threshold compaction and `/compact`, and an ACP session runs it post-turn, after the turn's drain ends and inside a second drain, so the client sees the events. Stderr mode and TUI single-turn run `run_single_turn`, which bypasses the orchestrator loop: the turn pipeline still publishes the compaction request, but nothing dispatches it, so no compaction runs there. `compaction_failed` is the exception: the turn pipeline's store-open failure and its session-load failure emit it in every mode, even where no compaction attempt runs.
+`compaction_started` and `compaction_completed` fire where compaction runs. The chain's threshold decision fires in every mode, but only two modes consume the request: the TUI interactive loop dispatches it through the orchestrator, for both auto threshold compaction and `/compact`, and an ACP session runs it post-turn, after the turn's drain ends and inside a second drain, so the client sees the events. Stderr mode and TUI single-turn bypass the orchestrator loop: the turn pipeline still publishes the compaction request, but nothing dispatches it, so no compaction runs there. `compaction_failed` is the exception: the turn pipeline's store-open failure and its session-load failure emit it in every mode, even where no compaction attempt runs.
 
 `compaction_completed` carries the summary preview only: the full summary body is unbounded and stays out of the envelope. The streamed `CompactionSummaryChunk` is not a hook event, because one subprocess per streamed chunk is unbounded volume.
 
@@ -1379,8 +1378,6 @@ truecolor is not guaranteed. The codes are:
 | Code variable / constant | `39` / `33` |
 | Code string / number / operator | `32` / `33` / `36` |
 | Code punctuation / comment | `90` / `3;90` |
-
-See also: `docs/contribution-guardrails.md` for contributor-facing invariants and test mapping.
 
 ### Examples
 

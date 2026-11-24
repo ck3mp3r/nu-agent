@@ -27,8 +27,4 @@ content = "Turns persist to SQLite, transcripts replay with their tool previews,
 [[extra.list]]
 title = "One config file"
 content = "Model, price per million tokens, permission per tool, and user hooks in Nushell — all in ~/.config/nu-agent/config.toml."
-
-[[extra.list]]
-title = "Built inside Nix"
-content = '<a href="https://builtwithnix.org/" target="_blank" rel="noopener"><img src="https://builtwithnix.org/badge.svg" /></a>'
 +++

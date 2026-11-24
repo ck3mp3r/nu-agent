@@ -281,7 +281,7 @@ fn usage_docs_describe_edit_mode_preview_apply_contract_and_envelope_fields() ->
     assert!(docs.contains("`compaction_completed`"));
     assert!(docs.contains("`compaction_failed`"));
     assert!(docs.contains("is not a hook event"));
-    assert!(docs.contains("bypasses the orchestrator loop"));
+    assert!(docs.contains("bypass the orchestrator loop"));
     assert!(docs.contains("session-load failure"));
     assert!(docs.contains("runs it post-turn"));
     Ok(())

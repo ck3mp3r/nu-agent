@@ -362,7 +362,7 @@ store_type = "sqlite"    # "sqlite" (default) or "memory"
 One backend writes the store: SQLite. It holds every session in
 `{cache}/{APP_DIR_NAME}/sessions.db`, or in an in-memory database when
 `"memory"` is selected — nothing persists after the process exits there, which
-is useful for ephemeral sessions and testing. The file has no key of its own:
+suits a run you throw away. The file has no key of its own:
 the cache ladder in [Paths](#paths) moves it, and nothing else does.
 
 Precedence for store type: CLI `--store` flag > `AGENT_SESSION_STORE_TYPE` env var > config > built-in default (SQLite).
@@ -917,7 +917,7 @@ The Vault always selects a backend. The agent never fails because a keychain is 
 |---------|---------|----------|
 | Keychain | OS credential store | Desktop systems with a keychain |
 | File | JSON file, mode `0600` | Headless Linux, containers with a mounted data directory |
-| Environment only | Nothing | Docker and CI with environment variables only |
+| Environment only | Nothing | Containers and machines without a keychain |
 
 ### `AGENT_VAULT_BACKEND` override
 
@@ -932,7 +932,7 @@ Set `AGENT_VAULT_BACKEND` to select the backend explicitly. The override replace
 
 An unknown value logs a warning and uses the startup hierarchy.
 
-Under nextest, the agent selects the environment-only backend when `AGENT_VAULT_BACKEND` is unset. nextest sets `NEXTEST=1` in every test process, and the agent reads that variable as a request for the environment-only backend. An explicit `AGENT_VAULT_BACKEND` value always wins. Plain `cargo test` does not set `NEXTEST` and still probes the keychain.
+Set `AGENT_VAULT_BACKEND=env` for a container or a machine without a keychain.
 
 ### `.env` files
 
