@@ -28,6 +28,9 @@ mod splice;
 #[path = "compactor/support.rs"]
 mod support;
 
+#[path = "compactor/vendor.rs"]
+mod vendor;
+
 use support::*;
 
 // endregion: --- Modules

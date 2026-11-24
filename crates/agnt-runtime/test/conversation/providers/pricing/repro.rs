@@ -41,7 +41,7 @@ fn test_providers_build_dyn_model_prices_the_ollama_cloud_repro() -> Result<()> 
     let client = ollama_client();
 
     // -- Exec
-    let model = client.build_dyn_model(
+    let (model, _wire_vendor) = client.build_dyn_model(
         &config.model,
         &config.provider,
         Some(&view),
@@ -109,7 +109,7 @@ fn test_providers_build_dyn_model_prices_the_ollama_cloud_openai_wire_repro() ->
     let client = openai_completions_client();
 
     // -- Exec
-    let model = client.build_dyn_model(
+    let (model, _wire_vendor) = client.build_dyn_model(
         &config.model,
         &config.provider,
         Some(&view),

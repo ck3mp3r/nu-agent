@@ -359,15 +359,22 @@ impl CachedProviderClient {
     /// resolved spec, so `DynModel::spec()` answers with the ladder's prices
     /// instead of the built-in catalog's. With neither, the wire keeps the
     /// built-in catalog's answer.
+    ///
+    /// The pair is the erased model and the name its wire reports: the vendor
+    /// rig files the model's facts and spec under. `None` only for the mock
+    /// variant, whose wire names no vendor.
     pub fn build_dyn_model(
         &self,
         model_name: &str,
         cache_section: &str,
         pricing: Option<&PricingView<'_>>,
         config_pricing: Option<&ModelCost>,
-    ) -> Result<rig::DynModel<rig::operation::Completion>, nu_protocol::LabeledError> {
+    ) -> Result<
+        (rig::DynModel<rig::operation::Completion>, Option<String>),
+        nu_protocol::LabeledError,
+    > {
         log::debug!("build_dyn_model: model={model_name}");
-        let model = match self {
+        let bound = match self {
             CachedProviderClient::Copilot(c) => bind_and_erase(
                 c.completion(model_name),
                 model_name,
@@ -405,9 +412,9 @@ impl CachedProviderClient {
             ),
             // The mock wire names no vendor, and tests price it with
             // `priced_as`, so it takes no bound facts.
-            CachedProviderClient::Mock(m) => m.clone().erase(),
+            CachedProviderClient::Mock(m) => (m.clone().erase(), None),
         };
-        Ok(model)
+        Ok(bound)
     }
 }
 
@@ -443,13 +450,16 @@ impl BindFacts for rig::providers::openai::wire::Chat {
 /// The vendor is the wire's own `describe().name`, so the wire owns the name
 /// its facts are filed under. A parallel per-provider table could drift from
 /// the wire and make `ModelFacts::for_model`'s bound-path check miss silently.
+///
+/// Answers the erased model and that same name: the vendor a consumer files the
+/// model's spec under is the one the wire reported, not one it derived.
 fn bind_and_erase<W, T>(
     model: rig::Model<W, T>,
     model_name: &str,
     cache_section: &str,
     pricing: Option<&PricingView<'_>>,
     config_pricing: Option<&ModelCost>,
-) -> rig::DynModel<rig::operation::Completion>
+) -> (rig::DynModel<rig::operation::Completion>, Option<String>)
 where
     W: rig::wire::Wire<Op = rig::operation::Completion> + BindFacts,
     T: rig::driver::Transport<W>,
@@ -460,7 +470,7 @@ where
     if let Some(facts) = model_facts(&vendor, model_name, cache_section, pricing, config_pricing) {
         model.wire = model.wire.bind_facts(facts);
     }
-    model.erase()
+    (model.erase(), Some(vendor))
 }
 
 /// The facts the wire encodes and prices with: the model's catalog spec

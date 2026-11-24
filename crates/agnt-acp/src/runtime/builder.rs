@@ -215,7 +215,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
 
     // -- Model and compactor share one erased model per consumer
     let mut provider = ProviderState::new(config.clone(), Some(plugin_config.clone()));
-    let compactor_model = provider
+    let (compactor_model, _wire_vendor) = provider
         .build_dyn_model()
         .await
         .map_err(|e| AcpError::Runtime(format!("failed to build compactor model: {e}")))?;

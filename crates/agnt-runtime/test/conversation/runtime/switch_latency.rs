@@ -97,6 +97,12 @@ impl ProviderManager for TestBuildProvider {
     fn startup_plugin_config(&self) -> Option<&PluginConfig> {
         self.inner.startup_plugin_config()
     }
+
+    /// The substitute build answers no wire, so it names no vendor: this
+    /// provider exists to time the switch, not to resolve a spec.
+    fn wire_vendor(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// WHEN a switch runs while the model build never resolves, THEN the switch SHALL

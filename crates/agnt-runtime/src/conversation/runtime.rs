@@ -200,10 +200,14 @@ where
 
     /// The planning spec for the active model, `None` when its provider
     /// resolves to no rig provider id — compaction is then disabled.
+    ///
+    /// The provider is the one the built wire reports ([`ProviderManager::wire_vendor`]),
+    /// so a config spelling rig does not register cannot disable the session.
     fn compaction_spec(&self) -> Option<rig::catalog::ModelSpec> {
         crate::conversation::compaction::compactor::resolve_model_spec_for(
             self.provider.provider_config(),
             self.provider.startup_plugin_config(),
+            self.provider.wire_vendor(),
         )
     }
 
@@ -1316,10 +1320,6 @@ impl AgentConversationRuntime {
             compaction_config.provider,
             compaction_config.model
         );
-        let compaction_spec = crate::conversation::compaction::compactor::resolve_model_spec_for(
-            compaction_config,
-            config.plugin_config.as_ref(),
-        );
         // The compaction settings ARE rig's `[compaction]` table: a missing block
         // leaves rig's own defaults, and a key rig does not define was refused by
         // the loader, not silently dropped here.
@@ -1333,11 +1333,20 @@ impl AgentConversationRuntime {
         // built from it on every turn. It is constructed eagerly at startup so it
         // is ready for any operation (including `/compact` before the first turn),
         // and a switch marks it stale for its next use to rebuild.
-        let dyn_model = provider
+        let (dyn_model, _wire_vendor) = provider
             .build_dyn_model()
             .await
             .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
         let dyn_model = crate::conversation::state::provider::ModelSlot::from_model(dyn_model);
+
+        // The planning spec follows the build: rig files a spec under the vendor
+        // its wire reports, so the resolution takes that name. A config spelling
+        // rig does not register therefore costs the session no compaction.
+        let compaction_spec = crate::conversation::compaction::compactor::resolve_model_spec_for(
+            compaction_config,
+            config.plugin_config.as_ref(),
+            provider.wire_vendor(),
+        );
 
         // The compactor summarizes with the active model: the runtime's own
         // shared model cell, so every model rebuild reaches it, unless a

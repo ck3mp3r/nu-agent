@@ -180,7 +180,7 @@ fn test_providers_build_dyn_model_does_not_borrow_another_vendors_rates() -> Res
     let client = copilot_client();
 
     // -- Exec
-    let model = client.build_dyn_model("gpt-4o", "copilot", Some(&view), None)?;
+    let (model, _wire_vendor) = client.build_dyn_model("gpt-4o", "copilot", Some(&view), None)?;
 
     // -- Check
     assert_eq!(
@@ -213,7 +213,7 @@ fn test_providers_build_dyn_model_residual_leaves_the_wire_unpriced() -> Result<
     );
 
     // -- Exec
-    let model = client.build_dyn_model("llama3.3", "ollama", Some(&view), None)?;
+    let (model, _wire_vendor) = client.build_dyn_model("llama3.3", "ollama", Some(&view), None)?;
 
     // -- Check
     assert_eq!(model.name(), "ollama");
@@ -238,7 +238,8 @@ fn test_providers_build_dyn_model_unlisted_model_takes_the_cache_modalities() ->
     let client = openai_client();
 
     // -- Exec
-    let model = client.build_dyn_model("zzz-unlisted-model", "openai", Some(&view), None)?;
+    let (model, _wire_vendor) =
+        client.build_dyn_model("zzz-unlisted-model", "openai", Some(&view), None)?;
 
     // -- Check
     let spec = model.spec().ok_or("the bound wire must resolve a spec")?;
@@ -259,7 +260,7 @@ fn test_providers_build_dyn_model_without_a_ladder_keeps_the_builtin_catalog() -
     let client = openai_client();
 
     // -- Exec
-    let model = client.build_dyn_model("gpt-4.1", "openai", None, None)?;
+    let (model, _wire_vendor) = client.build_dyn_model("gpt-4.1", "openai", None, None)?;
 
     // -- Check
     let pricing = model
@@ -290,7 +291,8 @@ fn test_providers_build_dyn_model_binds_the_config_price_without_a_cache() -> Re
     );
 
     // -- Exec
-    let model = client.build_dyn_model("llama3.3", "ollama", None, Some(&config_pricing))?;
+    let (model, _wire_vendor) =
+        client.build_dyn_model("llama3.3", "ollama", None, Some(&config_pricing))?;
 
     // -- Check
     let pricing = model
@@ -326,7 +328,8 @@ fn test_providers_build_dyn_model_config_price_beats_the_cache() -> Result<()> {
     let client = openai_client();
 
     // -- Exec
-    let model = client.build_dyn_model("gpt-4o", "openai", Some(&view), Some(&config_pricing))?;
+    let (model, _wire_vendor) =
+        client.build_dyn_model("gpt-4o", "openai", Some(&view), Some(&config_pricing))?;
 
     // -- Check
     let pricing = model
@@ -397,7 +400,8 @@ fn test_providers_build_dyn_model_files_facts_under_the_wires_own_vendor() -> Re
 
     // -- Exec & Check
     for (provider, client, model_name, vendor) in cases {
-        let model = client.build_dyn_model(model_name, provider, Some(&view), None)?;
+        let (model, _wire_vendor) =
+            client.build_dyn_model(model_name, provider, Some(&view), None)?;
         assert_eq!(
             model.name(),
             vendor,

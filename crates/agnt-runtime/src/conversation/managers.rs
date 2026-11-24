@@ -87,6 +87,13 @@ pub trait ProviderManager {
         Output = Result<rig::DynModel<rig::operation::Completion>, LabeledError>,
     > + Send;
 
+    /// The vendor the built wire reports, `None` before a build or after an
+    /// invalidation.
+    ///
+    /// This is the name rig files the model's facts and spec under: a consumer
+    /// that resolves a spec takes it before the config's own spelling.
+    fn wire_vendor(&self) -> Option<&str>;
+
     /// Return the startup plugin config snapshot (used for model-switch resolution).
     fn startup_plugin_config(&self) -> Option<&PluginConfig>;
 }

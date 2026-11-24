@@ -111,9 +111,9 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
         &[
             "ARCH-8 agnt-acp/src/session/types.rs:61: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/builder.rs:508: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:142: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:167: `Bus` is a parameter",
-            "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:188: `Bus` is a parameter",
+            "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:174: `Bus` is a struct field",
+            "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:199: `Bus` is a parameter",
+            "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:220: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/contracts.rs:27: `Bus` is a return type",
             "ARCH-8 agnt-runtime/src/conversation/runtime_build.rs:57: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:415: `Bus` is a struct field",

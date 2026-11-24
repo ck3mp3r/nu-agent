@@ -196,7 +196,8 @@ impl JourneyHarness {
         // (built from the model) routes to this client's model.
         *self.dyn_model.lock().unwrap_or_else(|e| e.into_inner()) = client
             .build_dyn_model(&self.config.model, &self.config.provider, None, None)
-            .map_err(|e| format!("build model from cached client: {e:?}"))?;
+            .map_err(|e| format!("build model from cached client: {e:?}"))?
+            .0;
         let mut executor = TurnExecutor::new(
             &self.config,
             &mut self.memory_state,

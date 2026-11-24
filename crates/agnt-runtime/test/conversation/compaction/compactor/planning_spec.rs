@@ -62,7 +62,7 @@ fn test_conversation_compaction_planning_spec_carries_the_cache_input_limit() ->
     let plugin_config = plugin_config_with("openai", "planning-spec-model", Some(120_000));
 
     // -- Exec
-    let spec = resolve_model_spec_for(&config, Some(&plugin_config))
+    let spec = resolve_model_spec_for(&config, Some(&plugin_config), None)
         .ok_or("openai should resolve to a registered provider id")?;
 
     // -- Check
@@ -91,7 +91,7 @@ fn test_conversation_compaction_planning_spec_without_an_input_row_is_unchanged(
     let plugin_config = plugin_config_with("openai", "planning-spec-model", None);
 
     // -- Exec
-    let spec = resolve_model_spec_for(&config, Some(&plugin_config))
+    let spec = resolve_model_spec_for(&config, Some(&plugin_config), None)
         .ok_or("openai should resolve to a registered provider id")?;
 
     // -- Check
@@ -115,7 +115,7 @@ fn test_conversation_compaction_planning_spec_keeps_the_builtin_catalog_row() ->
     let plugin_config = plugin_config_with("anthropic", "claude-haiku-4-5", Some(120_000));
 
     // -- Exec
-    let spec = resolve_model_spec_for(&config, Some(&plugin_config))
+    let spec = resolve_model_spec_for(&config, Some(&plugin_config), None)
         .ok_or("anthropic should resolve to a registered provider id")?;
 
     // -- Check

@@ -19,6 +19,10 @@ pub struct ProviderState {
     copilot_token_dir: Option<std::path::PathBuf>,
     cached_client: Option<CachedProviderClient>,
     cached_client_key: Option<ClientCacheKey>,
+    /// The vendor the cached client's wire reports: the name rig files the
+    /// model's facts and spec under. `None` before a build, when the client was
+    /// invalidated, and for a wire that names no vendor (the mock).
+    wire_vendor: Option<String>,
 }
 
 impl ProviderState {
@@ -29,6 +33,7 @@ impl ProviderState {
             copilot_token_dir: None,
             cached_client: None,
             cached_client_key: None,
+            wire_vendor: None,
         }
     }
 
@@ -106,12 +111,32 @@ impl ProviderState {
         };
         self.cached_client = Some(client);
         self.cached_client_key = Some(key);
+        // The new client has not built a wire yet: the vendor its wire reports
+        // is unknown until the next build.
+        self.set_wire_vendor(None);
         Ok(())
     }
 
     pub fn invalidate_cache(&mut self) {
         self.cached_client = None;
         self.cached_client_key = None;
+        self.set_wire_vendor(None);
+    }
+
+    /// The vendor the built wire reports, `None` before a build.
+    ///
+    /// This is the name rig files the model's facts and spec under, so a
+    /// consumer that resolves a spec takes it before the config's own spelling.
+    /// Crate-only: the runtime is the one reader, and
+    /// [`ProviderManager::wire_vendor`](crate::conversation::managers::ProviderManager::wire_vendor)
+    /// is the seam it reads through.
+    pub(crate) fn wire_vendor(&self) -> Option<&str> {
+        self.wire_vendor.as_deref()
+    }
+
+    /// Record the vendor the wire a build landed on reports.
+    fn set_wire_vendor(&mut self, vendor: Option<String>) {
+        self.wire_vendor = vendor;
     }
 
     pub fn startup_plugin_config(&self) -> Option<&PluginConfig> {
@@ -143,21 +168,26 @@ impl ProviderState {
     /// so `DynModel::spec()` answers with the ladder's prices. Without a cache
     /// the configured price still applies; with neither, the wire keeps the
     /// built-in catalog's answer.
+    ///
+    /// Answers the model and the vendor its wire reports, and keeps that vendor
+    /// (`Self::wire_vendor`) for the spec resolutions that follow the build.
     pub async fn build_dyn_model(
         &mut self,
-    ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
+    ) -> Result<(rig::DynModel<rig::operation::Completion>, Option<String>), LabeledError> {
         self.ensure_client_cached().await?;
         let client = self
             .cached_client
             .as_ref()
             .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?;
         let (pricing, config_pricing) = self.model_pricing();
-        client.build_dyn_model(
+        let (model, wire_vendor) = client.build_dyn_model(
             &self.config.model,
             self.config.cache_section(),
             pricing.as_ref(),
             config_pricing,
-        )
+        )?;
+        self.set_wire_vendor(wire_vendor.clone());
+        Ok((model, wire_vendor))
     }
 
     /// The price ladder over the startup models cache and the configured price
@@ -342,7 +372,13 @@ impl ProviderManager for ProviderState {
     async fn build_dyn_model(
         &mut self,
     ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
-        self.build_dyn_model().await
+        ProviderState::build_dyn_model(self)
+            .await
+            .map(|(model, _wire_vendor)| model)
+    }
+
+    fn wire_vendor(&self) -> Option<&str> {
+        ProviderState::wire_vendor(self)
     }
 
     fn startup_plugin_config(&self) -> Option<&PluginConfig> {

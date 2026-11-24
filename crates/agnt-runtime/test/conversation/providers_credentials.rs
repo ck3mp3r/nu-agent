@@ -95,9 +95,25 @@ async fn build_dyn_model_erases_every_cached_variant() -> Result<()> {
 
     // -- Exec & Check
     for (name, client) in cases {
-        let model = client
+        let (model, wire_vendor) = client
             .build_dyn_model("test-model", name, None, None)
             .map_err(|e| format!("case '{name}': build_dyn_model must succeed: {e:?}"))?;
+        // The pair's second half is the name the wire reports: the vendor rig
+        // files the model's facts and the planning spec under. A rig rename
+        // fails here instead of disabling a session's compaction silently.
+        let expected_vendor = match name {
+            "copilot" => Some("copilot"),
+            // Both OpenAI-shaped variants share the `openai` dialect.
+            "openai" | "openai-completions" => Some("openai"),
+            "anthropic" => Some("anthropic"),
+            "ollama" => Some("ollama"),
+            _ => None,
+        };
+        assert_eq!(
+            wire_vendor.as_deref(),
+            expected_vendor,
+            "case '{name}': the pair must carry the wire's own name"
+        );
         if name == "mock" {
             let text = drive_erased_model(&model).await?;
             assert_eq!(

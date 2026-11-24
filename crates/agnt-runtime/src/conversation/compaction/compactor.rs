@@ -74,16 +74,17 @@ pub fn resolve_model_spec(
 
 /// The `ModelSpec` a resolved config's compaction policy plans against.
 ///
-/// The one-call form of [`resolve_model_spec`]: it maps the config's provider
-/// key through its declared rig impl — the vendor the wire reports — and sizes
-/// the window from the config's own limits, so a call site cannot forget the
-/// mapping. The input limit comes from `plugin_config`'s models cache, through
-/// `input_limit_for`.
+/// The one-call form of [`resolve_model_spec`]: it names the provider the spec
+/// must be filed under — `wire_vendor` first, the config's own spelling only as
+/// the fallback [`vendor_from_config`] defines — and sizes the window from the
+/// config's own limits, so a call site cannot forget the naming rule. The input
+/// limit comes from `plugin_config`'s models cache, through `input_limit_for`.
 pub fn resolve_model_spec_for(
     config: &Config,
     plugin_config: Option<&PluginConfig>,
+    wire_vendor: Option<&str>,
 ) -> Option<ModelSpec> {
-    let vendor = config.provider_kind.as_deref().unwrap_or(&config.provider);
+    let vendor = wire_vendor.unwrap_or_else(|| vendor_from_config(config));
     let context_window = config
         .model_context_tokens
         .or_else(|| config.max_context_tokens.map(|t| t as usize))
@@ -95,6 +96,37 @@ pub fn resolve_model_spec_for(
         config.max_output_tokens,
         input_limit_for(vendor, config, plugin_config),
     )
+}
+
+/// The vendor a spec resolution falls back on: the config's declared rig impl,
+/// else its provider key, normalized to the name rig registers.
+///
+/// A built model answers through `wire_vendor`, so this covers the window before
+/// that build and nothing else. It exists because the Copilot client accepts
+/// `copilot`, `github-copilot` and `github_copilot`
+/// ([`ProviderState::ensure_client_cached`](crate::conversation::state::provider::ProviderState::ensure_client_cached))
+/// while rig registers only the first.
+///
+/// A rig rename of the Copilot dialect fails the fallback's pin
+/// (`test/conversation/compaction/compactor/vendor.rs`, which compares this
+/// resolution against the wire's own name) instead of disabling compaction
+/// silently. That pin is why this table cannot rot the way a parallel
+/// per-provider name table would: the wire stays the authority
+/// (`CachedProviderClient::bind_and_erase`), and this only covers the moment
+/// before the wire has spoken.
+fn vendor_from_config(config: &Config) -> &str {
+    normalize_vendor(config.provider_kind.as_deref().unwrap_or(&config.provider))
+}
+
+/// Normalize one of the Copilot spellings to the name rig registers.
+///
+/// Any other spelling is returned unchanged, so a provider rig does not know
+/// still resolves to nothing and disables the session's compaction.
+fn normalize_vendor(vendor: &str) -> &str {
+    match vendor {
+        "github-copilot" | "github_copilot" => "copilot",
+        registered => registered,
+    }
 }
 
 /// The most input tokens one request may send to the model `config` names,
