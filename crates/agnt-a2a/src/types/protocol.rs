@@ -8,6 +8,7 @@ use super::error::{
     CONTENT_TYPE_NOT_SUPPORTED, INTERNAL_ERROR, INVALID_PARAMS, INVALID_TASK_STATE, TASK_NOT_FOUND,
     UNSUPPORTED_OPERATION,
 };
+use super::task_state::TaskState;
 
 // ---------------------------------------------------------------------------
 // A2A protocol version (A2A spec §9.2, §14.2)
@@ -183,12 +184,12 @@ impl JsonRpcError {
         }
     }
 
-    /// Create an `Invalid state transition` error.
-    pub fn invalid_state_transition(from: &str, to: &str) -> Self {
+    /// Create an invalid-state-transition error.
+    pub fn invalid_state_transition(from: &TaskState, to: &TaskState) -> Self {
         JsonRpcError {
             code: INVALID_TASK_STATE,
             message: format!("Invalid state transition: {from} → {to}"),
-            data: None,
+            data: Some(serde_json::json!({"from": from, "to": to})),
         }
     }
 

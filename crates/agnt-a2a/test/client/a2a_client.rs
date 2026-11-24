@@ -332,3 +332,135 @@ async fn test_subscribe_task_sse_chunk_split_mid_utf8_char_no_data_loss() -> Res
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Invalid-state-transition error contract
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_parse_a2a_error_value_transition_details_missing_no_fabricated_state() -> Result<()> {
+    // -- Setup & Fixtures
+    // The pre-contract wire body: Debug-formatted states in the message and no
+    // structured details.
+    let message = "Invalid state transition: Working → InputRequired";
+    let body = serde_json::json!({
+        "error": {
+            "code": 400,
+            "status": "INVALID_REQUEST",
+            "message": message,
+        }
+    })
+    .to_string();
+
+    // -- Exec
+    let result = super::a2a_client::parse_response_body(body.as_bytes());
+
+    // -- Check
+    match result {
+        Err(A2aError::JsonRpcError {
+            code, message: raw, ..
+        }) => {
+            assert_eq!(code, 400);
+            assert_eq!(raw, message, "the raw message must survive");
+        }
+        other => {
+            return Err(format!(
+                "details-less transition error must not fabricate a state, got {other:?}"
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_a2a_error_value_transition_details_resolve_states() -> Result<()> {
+    // -- Setup & Fixtures
+    // The message carries no transition text, so only the structured details
+    // can resolve the states.
+    let body = serde_json::json!({
+        "error": {
+            "code": -32_005,
+            "status": "INVALID_TASK_STATE",
+            "message": "The task cannot be canceled in its current state",
+            "details": [{
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "TASK_NOT_CANCELABLE",
+                "domain": "a2a-protocol.org",
+                "metadata": {
+                    "from": "TASK_STATE_WORKING",
+                    "to": "TASK_STATE_INPUT_REQUIRED"
+                }
+            }]
+        }
+    })
+    .to_string();
+
+    // -- Exec
+    let result = super::a2a_client::parse_response_body(body.as_bytes());
+
+    // -- Check
+    match result {
+        Err(A2aError::InvalidStateTransition { from, to }) => {
+            assert_eq!(from, TaskState::Working);
+            assert_eq!(to, TaskState::InputRequired);
+        }
+        other => {
+            return Err(format!(
+                "structured transition details must resolve the states, got {other:?}"
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_parse_a2a_error_value_transition_details_unparseable_no_fabricated_state() -> Result<()> {
+    // -- Setup & Fixtures
+    // Both bodies carry text a message sniffer would type, and details that do
+    // not hold the state pair.
+    let message = "Invalid state transition: TASK_STATE_WORKING → TASK_STATE_INPUT_REQUIRED";
+    let bodies = [
+        serde_json::json!({
+            "error": {
+                "code": -32_005,
+                "status": "INVALID_TASK_STATE",
+                "message": message,
+                "details": "not-a-state-map",
+            }
+        }),
+        serde_json::json!({
+            "error": {
+                "code": 400,
+                "status": "INVALID_REQUEST",
+                "message": message,
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "TASK_NOT_CANCELABLE",
+                    "domain": "a2a-protocol.org",
+                    "metadata": {"from": 42, "to": "TASK_STATE_CANCELED"}
+                }]
+            }
+        }),
+    ];
+
+    for body in bodies {
+        // -- Exec
+        let result = super::a2a_client::parse_response_body(body.to_string().as_bytes());
+
+        // -- Check
+        match result {
+            Err(A2aError::JsonRpcError { message: raw, .. }) => {
+                assert_eq!(raw, message, "the raw message must survive");
+            }
+            other => {
+                return Err(format!(
+                    "unparseable transition details must not fabricate a state, got {other:?}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}

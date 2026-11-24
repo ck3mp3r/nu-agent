@@ -358,8 +358,13 @@ pub(crate) fn parse_response_body(bytes: &[u8]) -> Result<Value, A2aError> {
 }
 
 /// Parse an A2A error JSON object into an `A2aError`.
+///
+/// The invalid-state-transition error is the only kind that carries a state
+/// pair, so its structured `details` classify it — never its message text. An
+/// absent or unparseable pair is a plain `JsonRpcError`: the client never
+/// reconstructs a state it was not told.
 fn parse_a2a_error_value(error: &Value) -> A2aError {
-    let code = error.get("code").and_then(|c| c.as_u64()).unwrap_or(0) as u16;
+    let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
     let msg = error
         .get("message")
         .and_then(|m| m.as_str())
@@ -370,24 +375,33 @@ fn parse_a2a_error_value(error: &Value) -> A2aError {
         .and_then(|s| s.as_str())
         .unwrap_or("UNKNOWN");
 
+    if let Some((from, to)) = state_transition_pair(error) {
+        return A2aError::InvalidStateTransition { from, to };
+    }
+
     match (code, status) {
         (404, "NOT_FOUND") => A2aError::TaskNotFound(msg),
-        _ if msg.contains("Invalid state transition") => {
-            let parts: Vec<&str> = msg.split("→").collect();
-            let from_str = parts
-                .first()
-                .and_then(|s| s.split(':').next_back())
-                .unwrap_or("?")
-                .trim();
-            let to_str = parts.get(1).map(|s| s.trim()).unwrap_or("?");
-            let from = TaskState::try_from(from_str).unwrap_or(TaskState::Working);
-            let to = TaskState::try_from(to_str).unwrap_or(TaskState::Canceled);
-            A2aError::InvalidStateTransition { from, to }
-        }
         _ => A2aError::JsonRpcError {
             code: code as i32,
             message: msg,
             data: error.get("details").cloned(),
         },
     }
+}
+
+/// The state pair of an invalid-state-transition error, read from the
+/// structured `details` the server emits (`details[0].metadata`), or from
+/// `details` itself when the payload is the bare pair.
+///
+/// `None` when the details are missing, are not a map, or do not hold two
+/// parseable task states.
+fn state_transition_pair(error: &Value) -> Option<(TaskState, TaskState)> {
+    let details = error.get("details")?;
+    let pair = match details {
+        Value::Array(entries) => entries.first()?.get("metadata")?,
+        other => other,
+    };
+    let from = serde_json::from_value(pair.get("from")?.clone()).ok()?;
+    let to = serde_json::from_value(pair.get("to")?.clone()).ok()?;
+    Some((from, to))
 }

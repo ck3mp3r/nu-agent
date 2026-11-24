@@ -121,8 +121,8 @@ pub async fn handle_tasks_cancel(
                 400,
                 "INVALID_REQUEST",
                 "TASK_NOT_CANCELABLE",
-                &format!("Invalid state transition: {from:?} → {to:?}"),
-                json!({"taskId": id, "from": format!("{from:?}"), "to": format!("{to:?}")}),
+                &format!("Invalid state transition: {from} → {to}"),
+                json!({"taskId": id, "from": from, "to": to}),
             );
             (StatusCode::BAD_REQUEST, a2a_json_response(err))
         }

@@ -95,10 +95,16 @@ fn json_rpc_error_task_not_found_constructor() {
 
 #[test]
 fn json_rpc_error_invalid_state_transition_constructor() {
-    let err = JsonRpcError::invalid_state_transition("completed", "working");
+    let err = JsonRpcError::invalid_state_transition(&TaskState::Completed, &TaskState::Working);
     assert_eq!(err.code, -32_005);
-    assert_eq!(err.message, "Invalid state transition: completed → working");
-    assert!(err.data.is_none());
+    assert_eq!(
+        err.message,
+        "Invalid state transition: TASK_STATE_COMPLETED → TASK_STATE_WORKING"
+    );
+    assert_eq!(
+        err.data,
+        Some(json!({"from": "TASK_STATE_COMPLETED", "to": "TASK_STATE_WORKING"}))
+    );
 }
 
 #[test]
