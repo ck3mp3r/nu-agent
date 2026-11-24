@@ -204,11 +204,9 @@ impl RuntimeCoordinator {
         }
 
         // ── Status section ───────────────────────────────────────────────
-        let busy_millis = if crate::runtime::status::model_activity_label(&self.state) == "busy" {
-            Some(now_millis)
-        } else {
-            None
-        };
+        let busy_millis = crate::runtime::status::model_activity(&self.state)
+            .is_busy()
+            .then_some(now_millis);
         let right_content = crate::runtime::status::status_right_content(
             self.repo_branch_tracker.as_ref().and_then(|t| t.branch()),
             self.repo_branch_tracker

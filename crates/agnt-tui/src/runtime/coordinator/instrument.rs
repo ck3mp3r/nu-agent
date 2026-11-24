@@ -15,7 +15,7 @@ impl RuntimeCoordinator {
     }
 
     pub(crate) fn has_active_animation(&self) -> bool {
-        crate::runtime::status::model_activity_label(&self.state) == "busy"
+        crate::runtime::status::model_activity(&self.state).is_busy()
             || self.state.transcript.entries().iter().any(|entry| {
                 matches!(
                     entry,

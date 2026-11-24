@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::runtime::status::content::model_activity_label;
+use crate::runtime::status::content::model_activity;
 use crate::test_support::session_switched;
 
 #[test]
@@ -192,7 +192,7 @@ fn switch_settles_the_departed_sessions_compaction_indicator() {
         "the fixture is compacting"
     );
     assert_eq!(
-        model_activity_label(coordinator.state()),
+        model_activity(coordinator.state()).label(),
         "busy",
         "the idle phase still reads busy while a sweep runs"
     );
@@ -206,7 +206,7 @@ fn switch_settles_the_departed_sessions_compaction_indicator() {
         "the departed session's sweep does not cross the boundary"
     );
     assert_eq!(
-        model_activity_label(coordinator.state()),
+        model_activity(coordinator.state()).label(),
         "idle",
         "the busy indicator belongs to the session that left"
     );

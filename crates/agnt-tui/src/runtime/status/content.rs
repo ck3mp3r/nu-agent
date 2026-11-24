@@ -9,7 +9,7 @@ use super::format::{compact_token_count, ellipsize, format_pwd, status_indicator
 
 pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
     let (configured, enabled, disabled, failed) = state.status.mcp.mcp_counts();
-    let model_phase = model_activity_label(state);
+    let model_phase = model_activity(state).label();
     let active_model_identity = state.status.identity.active_model_identity.as_str();
 
     let failure_line = format_mcp_failure_line(state, 64, 48, 100);
@@ -180,14 +180,35 @@ pub(crate) fn status_message_line(
     )))
 }
 
-pub(crate) fn model_activity_label(state: &AppState) -> &'static str {
+/// What the model is doing, as data. The producer decides the variant; the label
+/// the status line paints is the drawer's derivation from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelActivity {
+    Busy,
+    Idle,
+}
+
+impl ModelActivity {
+    pub(crate) fn is_busy(self) -> bool {
+        matches!(self, Self::Busy)
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Busy => "busy",
+            Self::Idle => "idle",
+        }
+    }
+}
+
+pub(crate) fn model_activity(state: &AppState) -> ModelActivity {
     match state.phase {
-        crate::state::UiPhase::Busy | crate::state::UiPhase::AbortPending => "busy",
+        crate::state::UiPhase::Busy | crate::state::UiPhase::AbortPending => ModelActivity::Busy,
         crate::state::UiPhase::Idle => {
             if state.compaction.in_progress() {
-                "busy"
+                ModelActivity::Busy
             } else {
-                "idle"
+                ModelActivity::Idle
             }
         }
     }

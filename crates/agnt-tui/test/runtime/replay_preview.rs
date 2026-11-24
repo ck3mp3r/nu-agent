@@ -9,7 +9,7 @@
 use super::*;
 
 use crate::interaction::reducer::RenderInput;
-use crate::runtime::status::content::model_activity_label;
+use crate::runtime::status::content::model_activity;
 use crate::test_support::{inference_completed, session_switched};
 use agnt_render::transcript::entry::{ToolEntry, TranscriptEntry};
 use agnt_render::transcript::ir::Display;
@@ -300,7 +300,7 @@ fn test_runtime_replay_preview_switch_into_history_lands_at_rest() -> Result<()>
         "no turn cycle survives the replay"
     );
     assert_eq!(
-        model_activity_label(&coordinator.state),
+        model_activity(&coordinator.state).label(),
         "idle",
         "the busy spinner the switch used to strand stays off"
     );
