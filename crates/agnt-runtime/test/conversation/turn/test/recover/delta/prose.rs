@@ -16,7 +16,7 @@ async fn persist_turn_delta_appends_the_streamed_prose_remainder() -> Result<()>
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            report(&full_history, dispatched_after(0)),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -60,7 +60,7 @@ async fn persist_turn_delta_drops_prose_that_does_not_extend_the_committed_text(
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            report(&full_history, dispatched_after(0)),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,

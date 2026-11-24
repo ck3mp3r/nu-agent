@@ -421,6 +421,9 @@ async fn copilot_oauth_keeps_an_explicit_base_url() -> Result<()> {
 
 // region:    --- Modules
 
+#[path = "providers/auth_failure.rs"]
+mod auth_failure;
+
 #[path = "providers/base_spec.rs"]
 mod base_spec;
 

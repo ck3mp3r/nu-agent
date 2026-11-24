@@ -101,7 +101,7 @@ pub(crate) async fn connect_server(
             // it in place, so rmcp's child identity, pipes, and lifecycle are
             // unchanged; a spawn retry is impossible here, which is why the policy
             // probes PATH instead.
-            let mut cmd = crate::child_priority::child_command(&command);
+            let mut cmd = crate::child_priority::ChildPriority::probe().command(&command);
             for arg in args {
                 cmd.arg(arg);
             }

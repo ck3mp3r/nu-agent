@@ -16,6 +16,7 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
         last_total_tokens: 0,
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: vec![],
         streamed_tool_calls: vec![],
     };
@@ -73,6 +74,7 @@ fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
         last_total_tokens: 0,
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: vec![],
         streamed_tool_calls: vec![],
     };

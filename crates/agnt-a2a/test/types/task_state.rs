@@ -65,19 +65,6 @@ fn task_state_display_output() {
 }
 
 #[test]
-fn task_state_label_output() {
-    assert_eq!(TaskState::Unspecified.label(), "unspecified");
-    assert_eq!(TaskState::Submitted.label(), "submitted");
-    assert_eq!(TaskState::Working.label(), "working");
-    assert_eq!(TaskState::InputRequired.label(), "input-required");
-    assert_eq!(TaskState::Completed.label(), "completed");
-    assert_eq!(TaskState::Failed.label(), "failed");
-    assert_eq!(TaskState::Canceled.label(), "canceled");
-    assert_eq!(TaskState::Rejected.label(), "rejected");
-    assert_eq!(TaskState::AuthRequired.label(), "auth-required");
-}
-
-#[test]
 fn task_state_is_terminal() {
     assert!(TaskState::Completed.is_terminal());
     assert!(TaskState::Failed.is_terminal());

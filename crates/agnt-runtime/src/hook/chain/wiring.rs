@@ -10,7 +10,7 @@ use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
     ModelSelectionAction, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
-    OutcomeEvent, TextDelta,
+    OutcomeEvent, RunStart, RunStartAction, TextDelta,
 };
 use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
@@ -75,6 +75,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             stop: StopLedger::default(),
             pending_summary: hook_state.pending_summary,
             inference: crate::hook::CurrentInference::default(),
+            prompt: crate::hook::DispatchedPrompt::default(),
         }
     }
 
@@ -122,6 +123,16 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// publishes it under the call the cell names.
     pub(crate) fn current_inference(&self) -> crate::hook::CurrentInference {
         self.inference.clone()
+    }
+
+    /// Return the cell holding where the run's prompt sits in the history the
+    /// run reports.
+    ///
+    /// Cloned **before** the hook moves into the agent builder: the run stamps
+    /// the place it starts from, and the turn executor anchors a stopped turn's
+    /// recovery on it rather than on the prompt's text.
+    pub(crate) fn dispatched_prompt(&self) -> crate::hook::DispatchedPrompt {
+        self.prompt.clone()
     }
 
     /// Return the compaction trigger's meter.
@@ -219,6 +230,20 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         // registered as the default, so keeping the default candidate is the
         // correct selection. Label-based switching is subtask 506682ea.
         ModelSelectionAction::Continue
+    }
+
+    fn on_run_start(
+        &self,
+        _ctx: &HookContext,
+        event: RunStart<'_>,
+    ) -> impl std::future::Future<Output = RunStartAction> + WasmCompatSend {
+        // The run appends its prompt right after the input history it names
+        // here, and that history is the head of every report the run makes. The
+        // place is recorded from that boundary, never read back out of the
+        // prompt's text: an identical earlier prompt cannot move it, and a
+        // rewrite of the prompt cannot invalidate it.
+        self.prompt.stamp(event.history.len());
+        async { RunStartAction::continue_run() }
     }
 
     fn on_completion_call(

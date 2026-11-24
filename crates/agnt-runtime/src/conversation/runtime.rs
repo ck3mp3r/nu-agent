@@ -822,21 +822,11 @@ where
         let matched_id = if rig_holds(&memory, session_id).await? {
             session_id.to_string()
         } else {
-            let sid = session_id.to_ascii_lowercase();
             let sessions = memory
                 .session_ids()
                 .await
                 .map_err(|e| format!("Failed to list sessions: {e}"))?;
-            sessions
-                .iter()
-                .find(|id| id.to_ascii_lowercase().ends_with(&sid))
-                .or_else(|| {
-                    sessions
-                        .iter()
-                        .find(|id| id.to_ascii_lowercase().contains(&sid))
-                })
-                .cloned()
-                .ok_or_else(|| format!("Session '{session_id}' not found"))?
+            fuzzy_session_id(&sessions, session_id)?
         };
 
         // Phase 3: update state and hydrate. The facts are read once; the same
@@ -902,6 +892,51 @@ fn reset_session_scoped_inputs(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     meter.reset();
+}
+
+/// A fuzzy pass over stored session ids: the narrower suffix pass, then the
+/// substring pass.
+#[derive(Clone, Copy)]
+enum FuzzyPass {
+    Suffix,
+    Contains,
+}
+
+impl FuzzyPass {
+    fn matches(self, id: &str, needle: &str) -> bool {
+        match self {
+            Self::Suffix => id.ends_with(needle),
+            Self::Contains => id.contains(needle),
+        }
+    }
+}
+
+/// The stored session id `session_id` names, matched by suffix first and by
+/// substring second, case-insensitively. A pass that matches more than one id
+/// is ambiguous: it rejects with the candidate ids rather than resolving to
+/// whichever the store happened to list first.
+fn fuzzy_session_id(sessions: &[String], session_id: &str) -> Result<String, String> {
+    let needle = session_id.to_ascii_lowercase();
+    for pass in [FuzzyPass::Suffix, FuzzyPass::Contains] {
+        let mut candidates: Vec<String> = Vec::new();
+        for id in sessions {
+            if pass.matches(&id.to_ascii_lowercase(), &needle) && !candidates.contains(id) {
+                candidates.push(id.clone());
+            }
+        }
+        match candidates.as_slice() {
+            [] => {}
+            [only] => return Ok(only.clone()),
+            many => {
+                return Err(format!(
+                    "Session '{session_id}' is ambiguous; it matches {} sessions: {}",
+                    many.len(),
+                    many.join(", ")
+                ));
+            }
+        }
+    }
+    Err(format!("Session '{session_id}' not found"))
 }
 
 /// Whether the rig-memory store holds a log for `session_id`.
@@ -1251,6 +1286,10 @@ impl AgentConversationRuntime {
         // The active model configuration. `RuntimeBuildParams` carries it in its
         // own `config` field; every model identity below is derived from it.
         let active_config = config.config;
+
+        // The child-priority policy is a startup fact: the degraded warning is
+        // recorded once, here, and each spawn decides from the same PATH value.
+        crate::child_priority::ChildPriority::probe().warn_if_degraded();
 
         // Extract max_tool_result_bytes before the config is consumed below.
         let max_tool_result_bytes = active_config

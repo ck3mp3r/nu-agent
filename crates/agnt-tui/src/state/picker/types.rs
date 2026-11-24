@@ -255,3 +255,18 @@ pub enum PickerRenderKind {
 pub struct PickerContainer {
     pub entries: Vec<PickerEntry>,
 }
+
+impl PickerPayload {
+    /// The variant's name: what a drawer names when it meets a payload it does
+    /// not enumerate. Content never decides behavior; this only names the shape.
+    pub(crate) fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Model { .. } => "Model",
+            Self::Agent { .. } => "Agent",
+            Self::Session { .. } => "Session",
+            Self::Theme => "Theme",
+            Self::Command(_) => "Command",
+            Self::Slash(_) => "Slash",
+        }
+    }
+}

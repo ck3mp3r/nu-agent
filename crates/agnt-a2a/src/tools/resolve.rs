@@ -61,6 +61,32 @@ pub(crate) async fn resolve_task_id<C: A2aHttpClient>(
     }
 }
 
+// region:    --- Support
+
+/// The display label of a task state: the drawer's vocabulary for a state the
+/// wire reports as a `TASK_STATE_*` name.
+trait StateLabel {
+    fn label(&self) -> &'static str;
+}
+
+impl StateLabel for TaskState {
+    fn label(&self) -> &'static str {
+        match self {
+            TaskState::Unspecified => "unspecified",
+            TaskState::Submitted => "submitted",
+            TaskState::Working => "working",
+            TaskState::InputRequired => "input-required",
+            TaskState::Completed => "completed",
+            TaskState::Failed => "failed",
+            TaskState::Canceled => "canceled",
+            TaskState::Rejected => "rejected",
+            TaskState::AuthRequired => "auth-required",
+        }
+    }
+}
+
+// endregion: --- Support
+
 // region:    --- Tests
 #[cfg(test)]
 #[path = "../../test/tools/resolve.rs"]

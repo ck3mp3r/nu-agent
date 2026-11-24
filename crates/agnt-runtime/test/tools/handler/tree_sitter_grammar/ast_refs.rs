@@ -13,16 +13,18 @@ async fn ast_refs_end_to_end_against_a_compiled_grammar() -> Result<()> {
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
 
     // -- Exec
-    let all = AstRefsTool::execute(
+    let all = AstRefsTool::run(
         &serde_json::json!({"path": path, "language": "rust", "name": "Status"}),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("refs must succeed: {e:?}"))?;
-    let capped = AstRefsTool::execute(
+    let capped = AstRefsTool::run(
         &serde_json::json!({
             "path": path,
             "language": "rust",
@@ -31,6 +33,7 @@ async fn ast_refs_end_to_end_against_a_compiled_grammar() -> Result<()> {
         }),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("refs must succeed: {e:?}"))?;

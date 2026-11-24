@@ -8,6 +8,7 @@ use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::executor::ToolExecutor;
+use crate::tools::handler::tree_sitter::GrammarStores;
 use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
@@ -508,6 +509,9 @@ pub struct BuildInput<'a> {
     /// The resolved tool audit log file
     /// ([`Paths::audit_log_path`](crate::config::Paths::audit_log_path)).
     pub audit_log_path: PathBuf,
+    /// The grammar stores the AST tools run against, assembled once by the
+    /// caller beside [`Paths`](crate::config::Paths).
+    pub grammar_stores: Arc<GrammarStores>,
 }
 
 /// Builder that registers all agent tools and wires multi-agent infrastructure.
@@ -539,6 +543,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
             max_tool_result_bytes,
             bus,
             audit_log_path,
+            grammar_stores,
         } = self.input;
 
         // Create the audit log directory ONCE before the prompt loop
@@ -577,6 +582,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
                 cwd.clone(),
                 max_tool_result_bytes,
                 bus.cancel(),
+                Arc::clone(&grammar_stores),
                 tool_server_handle,
             )
             .await;

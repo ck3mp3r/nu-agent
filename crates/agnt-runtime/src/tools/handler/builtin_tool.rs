@@ -1,5 +1,8 @@
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use super::edit::EditTool;
 use super::glob::GlobTool;
@@ -12,7 +15,9 @@ use super::tmux_layout::TmuxLayoutTool;
 use super::tmux_pane::TmuxPaneTool;
 use super::tmux_session::TmuxSessionTool;
 use super::tmux_window::TmuxWindowTool;
-use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
+use super::tree_sitter::{
+    AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool, GrammarStores, GrammarTool,
+};
 use super::{ToolHandlerError, execution_error_for_kind};
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
@@ -41,12 +46,26 @@ pub trait Previewable: BuiltinTool {
     }
 }
 
-pub fn make_dynamic_tool<T: BuiltinTool>(
+/// The future one tool call runs, boxed so both registration seams share one
+/// output path.
+type ToolCallFuture =
+    Pin<Box<dyn Future<Output = Result<JsonValue, ToolHandlerError>> + Send + 'static>>;
+
+/// Build the dynamic tool a registration seam hands to the tool server.
+///
+/// `run` is the tool call itself. Mapping a handler result onto the server's
+/// output shape — the error payload, the truncation, the model output — happens
+/// once, here, for every tool.
+fn dynamic_tool_with<F>(
     def: ToolDefinition,
     cwd: PathBuf,
     max_bytes: usize,
     cancel: &CancelTx,
-) -> DynamicTool {
+    run: F,
+) -> DynamicTool
+where
+    F: Fn(JsonValue, PathBuf, CancelTx) -> ToolCallFuture + Send + Sync + 'static,
+{
     let name = def.name.clone();
     let description = def.description.clone();
     let parameters = def.parameters.clone();
@@ -54,8 +73,9 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
     DynamicTool::new(name, description, parameters, move |args| {
         let cwd = cwd.clone();
         let cancel = cancel.clone();
+        let call = run(args, cwd, cancel);
         Box::pin(async move {
-            let result = match T::execute(&args, &cwd, &cancel).await {
+            let result = match call.await {
                 Ok(result) => result,
                 Err(e) => {
                     // Handler failures keep the failure shape: the details
@@ -91,11 +111,37 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
     })
 }
 
+pub fn make_dynamic_tool<T: BuiltinTool>(
+    def: ToolDefinition,
+    cwd: PathBuf,
+    max_bytes: usize,
+    cancel: &CancelTx,
+) -> DynamicTool {
+    dynamic_tool_with(def, cwd, max_bytes, cancel, |args, cwd, cancel| {
+        Box::pin(async move { T::execute(&args, &cwd, &cancel).await })
+    })
+}
+
+/// Build an AST tool, which runs against the process grammar stores.
+fn make_grammar_tool<T: GrammarTool>(
+    def: ToolDefinition,
+    cwd: PathBuf,
+    max_bytes: usize,
+    cancel: &CancelTx,
+    stores: Arc<GrammarStores>,
+) -> DynamicTool {
+    dynamic_tool_with(def, cwd, max_bytes, cancel, move |args, cwd, cancel| {
+        let stores = Arc::clone(&stores);
+        Box::pin(async move { T::run(&args, &cwd, &cancel, &stores).await })
+    })
+}
+
 pub async fn register_builtin(
     def: ToolDefinition,
     cwd: PathBuf,
     max_bytes: usize,
     cancel: &CancelTx,
+    grammar_stores: Arc<GrammarStores>,
     tool_server: &ToolServerHandle,
 ) {
     let kind = match BuiltinKind::from_str(&def.name) {
@@ -116,10 +162,18 @@ pub async fn register_builtin(
         BuiltinKind::TmuxWindow => make_dynamic_tool::<TmuxWindowTool>(def, cwd, max_bytes, cancel),
         BuiltinKind::TmuxPane => make_dynamic_tool::<TmuxPaneTool>(def, cwd, max_bytes, cancel),
         BuiltinKind::TmuxLayout => make_dynamic_tool::<TmuxLayoutTool>(def, cwd, max_bytes, cancel),
-        BuiltinKind::AstQuery => make_dynamic_tool::<AstQueryTool>(def, cwd, max_bytes, cancel),
-        BuiltinKind::AstNodes => make_dynamic_tool::<AstNodesTool>(def, cwd, max_bytes, cancel),
-        BuiltinKind::AstRefs => make_dynamic_tool::<AstRefsTool>(def, cwd, max_bytes, cancel),
-        BuiltinKind::AstTree => make_dynamic_tool::<AstTreeTool>(def, cwd, max_bytes, cancel),
+        BuiltinKind::AstQuery => {
+            make_grammar_tool::<AstQueryTool>(def, cwd, max_bytes, cancel, grammar_stores)
+        }
+        BuiltinKind::AstNodes => {
+            make_grammar_tool::<AstNodesTool>(def, cwd, max_bytes, cancel, grammar_stores)
+        }
+        BuiltinKind::AstRefs => {
+            make_grammar_tool::<AstRefsTool>(def, cwd, max_bytes, cancel, grammar_stores)
+        }
+        BuiltinKind::AstTree => {
+            make_grammar_tool::<AstTreeTool>(def, cwd, max_bytes, cancel, grammar_stores)
+        }
         _ => return,
     };
     tool_server.add_dynamic_tool(tool);

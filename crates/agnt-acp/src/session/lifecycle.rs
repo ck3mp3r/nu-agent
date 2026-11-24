@@ -181,6 +181,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 cwd: cwd.clone(),
                 mcp_servers,
                 paths: self.paths.clone(),
+                grammar_stores: Arc::clone(&self.grammar_stores),
                 runtime_handle: self.runtime_handle.clone(),
                 rig: self.rig.clone(),
                 session_id: Some(session_id.to_string()),

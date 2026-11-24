@@ -26,7 +26,7 @@ use crate::hook::permission_resolver::AsyncPermissionResolver;
 
 use super::core::TurnExecutor;
 use super::error_kind::CompletionErrorKind;
-use super::{PersistStage, TurnRecovery};
+use super::{PersistStage, TurnRecovery, TurnReport};
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnExhaustion;
 use crate::conversation::turn::TurnResult;
@@ -233,7 +233,7 @@ where
                         self.persist_turn_delta(
                             final_session_id,
                             &prompt,
-                            &ctx.last_known_history,
+                            TurnReport::new(&ctx.last_known_history, ctx.prompt_anchor),
                             ctx.pre_turn_message_count,
                             PersistStage::MidFlight {
                                 keep_head: steering.is_some(),
@@ -278,7 +278,7 @@ where
                         self.persist_turn_delta(
                             final_session_id,
                             &prompt,
-                            &ctx.last_known_history,
+                            TurnReport::new(&ctx.last_known_history, ctx.prompt_anchor),
                             ctx.pre_turn_message_count,
                             PersistStage::MidFlight {
                                 keep_head: steering.is_some(),
@@ -308,6 +308,7 @@ where
                             Box::new(error::TurnContext {
                                 last_known_history: ctx.last_known_history.clone(),
                                 pre_turn_message_count: ctx.pre_turn_message_count,
+                                prompt_anchor: ctx.prompt_anchor,
                                 tool_records: ctx.tool_records.clone(),
                             }),
                         ));
@@ -332,6 +333,7 @@ where
                             Box::new(error::TurnContext {
                                 last_known_history: ctx.last_known_history.clone(),
                                 pre_turn_message_count: ctx.pre_turn_message_count,
+                                prompt_anchor: ctx.prompt_anchor,
                                 tool_records: ctx.tool_records.clone(),
                             }),
                         ));
@@ -361,7 +363,7 @@ where
                         self.persist_turn_delta(
                             final_session_id,
                             &prompt,
-                            messages,
+                            TurnReport::new(messages, ctx.prompt_anchor),
                             ctx.pre_turn_message_count,
                             PersistStage::MidFlight {
                                 keep_head: steering.is_some(),
@@ -387,6 +389,7 @@ where
                         Box::new(error::TurnContext {
                             last_known_history: ctx.last_known_history.clone(),
                             pre_turn_message_count: ctx.pre_turn_message_count,
+                            prompt_anchor: ctx.prompt_anchor,
                             tool_records: ctx.tool_records.clone(),
                         }),
                     ));
@@ -427,7 +430,7 @@ where
                         self.persist_turn_delta(
                             final_session_id,
                             &prompt,
-                            history,
+                            TurnReport::new(history, turn_result.prompt_anchor),
                             turn_result.pre_turn_message_count,
                             PersistStage::MidFlight {
                                 keep_head: steering.is_some(),

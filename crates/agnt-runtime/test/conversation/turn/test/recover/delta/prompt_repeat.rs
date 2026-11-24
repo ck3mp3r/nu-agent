@@ -26,7 +26,8 @@ async fn test_persist_turn_delta_mid_flight_plain_persist_drops_the_prompt() -> 
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            // The retry loaded the prior log and appended the prompt once more.
+            report(&full_history, dispatched_after(prior.len())),
             prior.len(),
             PersistStage::MidFlight { keep_head: false },
             recovery(&[], None),
@@ -64,7 +65,8 @@ async fn test_persist_turn_delta_mid_flight_writes_no_prompt_over_an_older_copy(
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            // The retry loaded the prior log and appended the prompt once more.
+            report(&full_history, dispatched_after(prior.len())),
             prior.len(),
             PersistStage::MidFlight { keep_head: false },
             recovery(&[], None),
@@ -96,7 +98,8 @@ async fn test_persist_turn_delta_mid_flight_anchor_absent_writes_nothing() -> Re
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &[],
+            // The turn reported no history at all.
+            report(&[], None),
             prior.len(),
             PersistStage::MidFlight { keep_head: false },
             recovery(&[], None),
@@ -127,7 +130,8 @@ async fn test_persist_turn_delta_turn_end_anchor_absent_persists_the_pair() -> R
         .persist_turn_delta(
             Some(session_id),
             "the prompt",
-            &full_history,
+            // The turn reported a history that does not hold its prompt.
+            report(&full_history, None),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -197,7 +201,8 @@ async fn test_persist_turn_delta_mid_flight_keeps_steering_and_merged_results() 
         .persist_turn_delta(
             Some(merged_session),
             "q2",
-            &merged_history,
+            // The repair fused the prompt into the row it follows.
+            report(&merged_history, dispatched_after(1)),
             2,
             PersistStage::MidFlight { keep_head: false },
             recovery(&[], None),
@@ -207,7 +212,8 @@ async fn test_persist_turn_delta_mid_flight_keeps_steering_and_merged_results() 
         .persist_turn_delta(
             Some(steered_session),
             "the prompt",
-            &steered_history,
+            // The steered attempt's own prompt row.
+            report(&steered_history, dispatched_after(2)),
             2,
             PersistStage::MidFlight { keep_head: true },
             recovery(&[], None),
@@ -264,7 +270,8 @@ async fn test_persist_turn_delta_turn_end_persists_the_prompt() -> Result<()> {
         .persist_turn_delta(
             Some(session_id),
             "the prompt",
-            &[],
+            // The turn reported nothing: no run dispatched a prompt.
+            report(&[], None),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -305,7 +312,7 @@ async fn test_persist_turn_delta_resend_after_older_turn_persists() -> Result<()
         .persist_turn_delta(
             Some(session_id),
             "fix it",
-            &full_history,
+            report(&full_history, dispatched_after(2)),
             2,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -351,7 +358,7 @@ async fn test_persist_turn_delta_resend_after_older_steering_persists() -> Resul
         .persist_turn_delta(
             Some(session_id),
             "fix it",
-            &full_history,
+            report(&full_history, dispatched_after(4)),
             4,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -407,7 +414,8 @@ async fn test_persist_turn_delta_mid_flight_tool_work_persists_the_exchange_once
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            // The retry loaded the prior log and appended the prompt once more.
+            report(&full_history, dispatched_after(2)),
             2,
             PersistStage::MidFlight { keep_head: false },
             recovery(&records, None),

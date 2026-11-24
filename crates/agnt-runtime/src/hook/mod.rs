@@ -24,6 +24,7 @@ pub mod doom_loop;
 pub mod history_snapshot;
 pub mod output_repetition;
 pub mod permission_resolver;
+pub(crate) mod prompt_anchor;
 pub mod subturn_cap;
 pub mod turn_tools;
 pub mod turn_usage;
@@ -38,6 +39,7 @@ pub use permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,
     PolicyPermissionResolver,
 };
+pub(crate) use prompt_anchor::{DispatchedPrompt, PromptAnchor};
 pub use turn_tools::{TurnToolLog, TurnToolRecord};
 pub use turn_usage::{TurnUsage, TurnUsageTotals};
 

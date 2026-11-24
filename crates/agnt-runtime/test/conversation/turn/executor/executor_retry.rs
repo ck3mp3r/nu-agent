@@ -264,6 +264,7 @@ fn retry_not_attempted_when_no_partial_history() {
     let ctx_empty = TurnContext {
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: Vec::new(),
     };
     let has_partial_history = !ctx_empty.last_known_history.is_empty();
@@ -279,6 +280,7 @@ fn retry_not_attempted_when_no_partial_history() {
     let ctx_non_empty = TurnContext {
         last_known_history: vec![crate::types::Message::user("prompt")],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: Vec::new(),
     };
     let has_partial_history_non_empty = !ctx_non_empty.last_known_history.is_empty();

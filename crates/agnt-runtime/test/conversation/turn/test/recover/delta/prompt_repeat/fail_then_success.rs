@@ -31,7 +31,7 @@ async fn test_persist_turn_delta_fail_then_success_holds_one_prompt() -> Result<
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            report(&full_history, dispatched_after(0)),
             0,
             PersistStage::MidFlight { keep_head: false },
             recovery(&records, None),

@@ -14,7 +14,8 @@ async fn persist_turn_delta_with_an_empty_delta_appends_the_prompt_and_placehold
         .persist_turn_delta(
             Some(session_id),
             "the prompt",
-            &[],
+            // The turn reported nothing: no run dispatched a prompt.
+            report(&[], None),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,

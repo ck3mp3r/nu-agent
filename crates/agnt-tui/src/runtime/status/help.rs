@@ -4,6 +4,7 @@ use agnt_render::transcript::ir::ContentLine;
 
 use crate::rendering::theme::TuiTheme;
 use crate::runtime::panels::wrap_panel_lines;
+use crate::runtime::render::UnhandledPayload;
 use crate::state::{AppState, PickerPayload, PickerRenderKind};
 use crate::widgets::text::hint_style;
 
@@ -62,27 +63,32 @@ pub(crate) fn inline_slash_lines_for_render(
         return Vec::new();
     };
 
+    let unhandled = UnhandledPayload::new("inline slash list");
     picker_state
         .options
         .iter()
         .enumerate()
         .map(|(idx, opt)| {
-            let command = match &opt.payload {
-                PickerPayload::Slash(c) => *c,
-                _ => unreachable!(),
-            };
             let marker = if idx == picker_state.selection {
                 "❯"
             } else {
                 " "
             };
-            let label = command.label();
-            let summary = command.summary();
             let marker_span = if idx == picker_state.selection {
                 Span::styled(marker, theme.focus)
             } else {
                 Span::raw(marker)
             };
+            let PickerPayload::Slash(command) = &opt.payload else {
+                unhandled.warn(&opt.payload);
+                return Line::from(vec![
+                    marker_span,
+                    Span::raw(" "),
+                    Span::raw(opt.display.clone()),
+                ]);
+            };
+            let label = command.label();
+            let summary = command.summary();
             Line::from(vec![
                 marker_span,
                 Span::raw(" "),

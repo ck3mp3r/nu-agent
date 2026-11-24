@@ -9,6 +9,7 @@ use super::*;
 use crate::bus::Bus;
 use crate::conversation::builder::{AgentRuntimeBuilder, BuildInput};
 use crate::tools::closure::{ClosureParameter, ClosureRegistry, CwdEngine, ResolvedClosure};
+use crate::tools::handler::tree_sitter::GrammarStores;
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
 use std::time::Duration;
@@ -98,6 +99,7 @@ async fn build_with(
         max_tool_result_bytes: 20_000,
         bus: Bus::default(),
         audit_log_path: temp.path().join("tool_audit.log"),
+        grammar_stores: std::sync::Arc::new(GrammarStores::default()),
     })
     .build()
     .await

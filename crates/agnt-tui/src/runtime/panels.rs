@@ -7,7 +7,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     rendering::theme::TuiTheme,
-    runtime::{render::frame::picker_column_budgets, status::format::ellipsize},
+    runtime::{
+        render::{UnhandledPayload, frame::picker_column_budgets},
+        status::format::ellipsize,
+    },
     state::{AppState, PickerPayload},
 };
 
@@ -684,12 +687,17 @@ pub(super) fn command_palette_table_model(
     let summary_budget = budgets.get(1).copied().unwrap_or_default();
     let columns = vec!["Action".to_string(), "Summary".to_string()];
 
+    let unhandled = UnhandledPayload::new("command palette");
     let all_rows = actions
         .iter()
         .map(|opt| {
-            let action = match &opt.payload {
-                PickerPayload::Command(a) => *a,
-                _ => unreachable!(),
+            let PickerPayload::Command(action) = &opt.payload else {
+                unhandled.warn(&opt.payload);
+                return [
+                    ellipsize(&opt.display, action_budget),
+                    String::new(),
+                    String::new(),
+                ];
             };
             [
                 ellipsize(action.label(), action_budget),

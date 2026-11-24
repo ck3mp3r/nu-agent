@@ -42,7 +42,9 @@ async fn persist_turn_delta_does_not_repeat_a_stored_result() -> Result<()> {
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            // The run loaded the store's three rows; the repair fused the
+            // prompt into the row it follows.
+            report(&full_history, dispatched_after(3)),
             3,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,

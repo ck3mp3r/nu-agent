@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use crate::conversation::managers::SessionManager;
+use crate::hook::PromptAnchor;
 use crate::hook::turn_tools::TurnToolRecord;
 use crate::session::CachedMemory;
 use crate::types::{
@@ -29,6 +30,24 @@ pub(crate) struct TurnRecovery<'a> {
     pub tool_records: &'a [TurnToolRecord],
     /// The text the turn streamed, when the caller carries it.
     pub streamed_text: Option<&'a str>,
+}
+
+/// The history a stopped turn reported, and where that history holds the
+/// message the turn dispatched.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TurnReport<'a> {
+    /// The history the turn reported: rig's `chat_history` or the hook's snapshot.
+    pub history: &'a [Message],
+    /// Where the run recorded its prompt in that history, `None` when no run
+    /// dispatched one.
+    pub anchor: Option<PromptAnchor>,
+}
+
+impl<'a> TurnReport<'a> {
+    /// The report of `history`, whose prompt the run recorded at `anchor`.
+    pub(crate) fn new(history: &'a [Message], anchor: Option<PromptAnchor>) -> Self {
+        Self { history, anchor }
+    }
 }
 
 /// When in a turn's life its delta is persisted.
@@ -62,12 +81,12 @@ where
 {
     /// Append the delta of an interrupted turn to the session's rig log.
     ///
-    /// `full_history` is the history the turn reported (rig's `chat_history` or
-    /// the hook's snapshot). The delta is anchored by content: it starts at the
-    /// LAST user message whose text is `prompt` or ends with `"\n\n{prompt}"`
-    /// (the steering format), because the turn's prompt is always present in
-    /// the reported history while the pre-turn count can be one ahead of the
-    /// run's own load.
+    /// `report` is the history the turn reported (rig's `chat_history` or the
+    /// hook's snapshot) and the place that history holds the prompt the turn
+    /// dispatched, recorded when the run started: the delta starts there.
+    /// Nothing is matched by text, so an earlier prompt with the same words
+    /// cannot move the anchor, and a steered attempt — which runs with
+    /// `"{feedback}\n\n{prompt}"` — anchors on the message it really sent.
     ///
     /// rig's cancellation repair merges adjacent user messages, so the anchored
     /// message can carry the store's last result row. A result the store
@@ -111,11 +130,15 @@ where
         &self,
         session_id: Option<&str>,
         prompt: &str,
-        full_history: &[Message],
+        report: TurnReport<'_>,
         attempt_start: usize,
         stage: PersistStage<'_>,
         recovery: TurnRecovery<'_>,
     ) {
+        let TurnReport {
+            history: full_history,
+            anchor,
+        } = report;
         let Some(session_id) = session_id else {
             return;
         };
@@ -166,7 +189,7 @@ where
         }
 
         let stored = answered_call_ids(conversation.messages().iter().map(|message| &**message));
-        let anchor = prompt_anchor(full_history, prompt);
+        let anchor = prompt_anchor(full_history, anchor);
         let mut delta: Vec<Message> = match anchor {
             Some(index) => full_history[index..].to_vec(),
             None => {
@@ -312,35 +335,28 @@ where
 
 // region:    --- Support
 
-/// Whether `message` is a user message carrying `prompt` as its text.
+/// The index of the prompt in `full_history`, from the place the run recorded
+/// when it dispatched it.
 ///
-/// The turn's prompt is always present in the reported history: rig's
-/// `CommittedLog[0]` holds it, and the hook's snapshot appends it. A steering
-/// retry runs with `"{feedback}\n\n{prompt}"`, so a message ending with
-/// `"\n\n{prompt}"` counts as the prompt too.
+/// The anchor is data the producing layer stamped: a run appends its prompt
+/// directly after the input history it starts from, and that prefix is the head
+/// of every history it reports.
 ///
-/// A message's text is its text blocks concatenated, as rig's repair merges
-/// adjacent user messages by extending their content. A merged message that
-/// only holds the prompt among other blocks is not the prompt message.
-fn carries_prompt(message: &Message, prompt: &str) -> bool {
-    let Message::User { content } = message else {
-        return false;
-    };
-    let text: String = content
-        .iter()
-        .filter_map(|item| match item {
-            UserContent::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    text == prompt || text.ends_with(&format!("\n\n{prompt}"))
-}
-
-/// The index of the LAST user message in `full_history` that carries `prompt`.
-fn prompt_anchor(full_history: &[Message], prompt: &str) -> Option<usize> {
-    full_history
-        .iter()
-        .rposition(|message| carries_prompt(message, prompt))
+/// rig's cancellation repair fuses adjacent user messages, so a prompt sent
+/// after a stored user row is answered by the fused row one place earlier. The
+/// kinds of the report's rows decide that one step — never the prompt's text.
+/// An anchor past the reported history, or one landing on no user row, is not
+/// found: the recovery then takes its not-found path instead of matching text.
+fn prompt_anchor(full_history: &[Message], anchor: Option<PromptAnchor>) -> Option<usize> {
+    let index = anchor?.index();
+    match full_history.get(index) {
+        Some(Message::User { .. }) => Some(index),
+        // The prompt fused with the user row before it.
+        Some(_) if index > 0 && matches!(full_history[index - 1], Message::User { .. }) => {
+            Some(index - 1)
+        }
+        _ => None,
+    }
 }
 
 /// Drops the delta's leading message's text blocks, and the message itself when

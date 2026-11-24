@@ -29,7 +29,7 @@ async fn persist_turn_delta_writes_the_structural_status_of_every_call() -> Resu
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            report(&full_history, dispatched_after(0)),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,

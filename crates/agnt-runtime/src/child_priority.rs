@@ -20,12 +20,16 @@
 //! hand its `Command` to a library that owns the spawn (rmcp's
 //! `TokioChildProcess`) and never see the spawn error.
 //!
+//! The policy is a value, not a process global: [`ChildPriority::probe`] derives
+//! it at the spawn that needs it, so a spawn never reads a memo that another
+//! process-wide write decided. The startup probe in the composition root records
+//! the degraded warning once.
+//!
 //! Crate-internal on purpose: every planned site lives in this crate, and a `pub`
 //! item no other crate consumes is ARCH-6 surface.
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::sync::OnceLock;
 use tokio::process::Command;
 
 /// The niceness every tool child runs at.
@@ -34,39 +38,64 @@ pub(crate) const CHILD_NICENESS: i32 = 10;
 /// The wrapper that sets a niceness before it execs the payload.
 const NICE_PROGRAM: &str = "nice";
 
-/// The probe result, read once: one PATH read and at most one warning per process.
-static POLICY_ENABLED: OnceLock<bool> = OnceLock::new();
-
-/// A `Command` for a tool child, carrying the child-priority policy.
-///
-/// The caller chains its own `.arg(..)`, `.current_dir(..)`, `.env(..)`, stdio and
-/// `process_group(0)` after this call; the wrapper needs nothing but the program
-/// name.
-pub(crate) fn child_command(program: &str) -> Command {
-    let (wrapped, argv) = wrapped_argv(program, policy_enabled());
-    let mut command = Command::new(wrapped.as_ref());
-    command.args(argv.iter().map(Cow::as_ref));
-    command
+/// The child-priority policy one spawn runs under: whether the `nice` wrapper
+/// will run ahead of the payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChildPriority {
+    nice_on_path: bool,
 }
 
-// region:    --- Support
-
-/// Whether the policy applies in this process, probed once.
-fn policy_enabled() -> bool {
-    *POLICY_ENABLED.get_or_init(|| {
+impl ChildPriority {
+    /// The policy the process environment selects.
+    pub(crate) fn probe() -> Self {
         if !cfg!(unix) {
-            return false;
+            return Self {
+                nice_on_path: false,
+            };
         }
-        let enabled = nice_on_path(std::env::var_os("PATH").unwrap_or_default());
-        if !enabled {
+        Self::from_path(std::env::var_os("PATH").unwrap_or_default())
+    }
+
+    /// The policy one PATH value selects.
+    ///
+    /// Empty entries are skipped: an empty PATH element names the working
+    /// directory in some shells, never this policy's program.
+    pub(crate) fn from_path(path_value: impl AsRef<OsStr>) -> Self {
+        Self {
+            nice_on_path: nice_on_path(path_value),
+        }
+    }
+
+    /// Whether a spawn under this policy is wrapped.
+    pub(crate) fn nice_on_path(self) -> bool {
+        self.nice_on_path
+    }
+
+    /// A `Command` for a tool child, carrying this policy.
+    ///
+    /// The caller chains its own `.arg(..)`, `.current_dir(..)`, `.env(..)`, stdio
+    /// and `process_group(0)` after this call; the wrapper needs nothing but the
+    /// program name.
+    pub(crate) fn command(self, program: &str) -> Command {
+        let (wrapped, argv) = wrapped_argv(program, self.nice_on_path);
+        let mut command = Command::new(wrapped.as_ref());
+        command.args(argv.iter().map(Cow::as_ref));
+        command
+    }
+
+    /// Record a degraded policy once, at startup: children spawn bare and no tool
+    /// call fails for it.
+    pub(crate) fn warn_if_degraded(self) {
+        if cfg!(unix) && !self.nice_on_path() {
             log::warn!(
                 "`{NICE_PROGRAM}` is not on PATH: tool children spawn at the agent's own \
 priority and the child-priority policy stays degraded"
             );
         }
-        enabled
-    })
+    }
 }
+
+// region:    --- Support
 
 /// Whether one PATH value names a `nice` file, so a wrapped spawn will run.
 ///

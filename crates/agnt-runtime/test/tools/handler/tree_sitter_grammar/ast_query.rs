@@ -13,9 +13,10 @@ async fn ast_query_end_to_end_against_a_compiled_grammar() -> Result<()> {
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
 
     // -- Exec
-    let result = AstQueryTool::execute(
+    let result = AstQueryTool::run(
         &serde_json::json!({
             "path": path,
             "language": "rust",
@@ -23,6 +24,7 @@ async fn ast_query_end_to_end_against_a_compiled_grammar() -> Result<()> {
         }),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("query must succeed: {e:?}"))?;
@@ -60,10 +62,11 @@ async fn ast_query_honours_max_matches_include_text_and_capture_filter() -> Resu
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
     let query = "(function_item name: (identifier) @fn-name)";
 
     // -- Exec
-    let truncated = AstQueryTool::execute(
+    let truncated = AstQueryTool::run(
         &serde_json::json!({
             "path": path,
             "language": "rust",
@@ -73,10 +76,11 @@ async fn ast_query_honours_max_matches_include_text_and_capture_filter() -> Resu
         }),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("query must succeed: {e:?}"))?;
-    let filtered = AstQueryTool::execute(
+    let filtered = AstQueryTool::run(
         &serde_json::json!({
             "path": path,
             "language": "rust",
@@ -85,6 +89,7 @@ async fn ast_query_honours_max_matches_include_text_and_capture_filter() -> Resu
         }),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("query must succeed: {e:?}"))?;

@@ -25,6 +25,7 @@ use super::test_utils::{BusEventCollector, TurnTestObservation, message_text, te
 use super::*;
 use crate::conversation::turn::error::TurnContext;
 use crate::conversation::turn::{TurnError, TurnResult};
+use crate::hook::PromptAnchor;
 use crate::types::Message;
 use agnt_kernel::InferenceId;
 use agnt_kernel::NoticeKind;
@@ -46,6 +47,7 @@ fn completed_result(text: &str) -> TurnResult {
         last_total_tokens: 12,
         last_known_history: Vec::new(),
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: Vec::new(),
         streamed_tool_calls: Vec::new(),
     }
@@ -68,6 +70,9 @@ fn cancelled_result(
     text: &str,
     stop_cause: Option<StopCause>,
 ) -> TurnResult {
+    // The prompt this turn dispatched is the first row it reports; a turn
+    // that reported nothing recorded none.
+    let prompt_anchor = (!last_known_history.is_empty()).then(|| PromptAnchor::at(0));
     TurnResult {
         text: text.to_string(),
         usage: rig::completion::request::Usage::default(),
@@ -81,6 +86,7 @@ fn cancelled_result(
         last_total_tokens: 0,
         last_known_history,
         pre_turn_message_count: 0,
+        prompt_anchor,
         tool_records: Vec::new(),
         streamed_tool_calls: Vec::new(),
     }
@@ -90,6 +96,10 @@ fn empty_context() -> Box<TurnContext> {
     Box::new(TurnContext {
         last_known_history: Vec::new(),
         pre_turn_message_count: 0,
+        // The prompt the turn dispatched is the first row of whatever history
+        // the turn reports; an empty report holds none, so the anchor is not
+        // found.
+        prompt_anchor: Some(PromptAnchor::at(0)),
         tool_records: Vec::new(),
     })
 }

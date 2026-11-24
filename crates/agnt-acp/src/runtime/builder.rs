@@ -38,6 +38,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         cwd,
         mcp_servers,
         paths,
+        grammar_stores,
         runtime_handle,
         rig,
         session_id,
@@ -123,6 +124,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             cwd.clone(),
             max_tool_result_bytes,
             bus.cancel(),
+            Arc::clone(&grammar_stores),
             &tool_server_handle,
         )
         .await;

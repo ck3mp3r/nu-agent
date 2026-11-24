@@ -15,7 +15,7 @@ mod retry;
 
 pub use core::*;
 pub use error_kind::*;
-pub(crate) use recover::{PersistStage, TurnRecovery};
+pub(crate) use recover::{PersistStage, TurnRecovery, TurnReport};
 pub use response::*;
 
 #[cfg(all(test, feature = "integration"))]

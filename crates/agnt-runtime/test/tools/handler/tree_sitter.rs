@@ -153,16 +153,21 @@ async fn ast_tools_missing_required_arg_table() -> Result<()> {
         let path = dir.path().join("main.rs");
         std::fs::write(&path, "fn main() {}")?;
         args["path"] = serde_json::json!(path.to_str().ok_or("temp path must be UTF-8")?);
+        let stores = GrammarStores::default();
 
         let err = match tool {
             Tool::Query => {
-                AstQueryTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await
+                AstQueryTool::run(&args, dir.path(), &CancelTx::new("test", 8), &stores).await
             }
             Tool::Nodes => {
-                AstNodesTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await
+                AstNodesTool::run(&args, dir.path(), &CancelTx::new("test", 8), &stores).await
             }
-            Tool::Refs => AstRefsTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await,
-            Tool::Tree => AstTreeTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await,
+            Tool::Refs => {
+                AstRefsTool::run(&args, dir.path(), &CancelTx::new("test", 8), &stores).await
+            }
+            Tool::Tree => {
+                AstTreeTool::run(&args, dir.path(), &CancelTx::new("test", 8), &stores).await
+            }
         }
         .unwrap_err();
         assert_eq!(err.kind, ToolErrorKind::InvalidArgs, "case '{name}': kind");
@@ -185,15 +190,14 @@ async fn missing_config_returns_runtime_error() -> Result<()> {
     let missing_dir = dir.path().join("nonexistent-tree-sitter-dir");
     let previous = std::env::var_os("TREE_SITTER_DIR");
     unsafe { std::env::set_var("TREE_SITTER_DIR", &missing_dir) };
-    let result = AstTreeTool::execute(&args, dir.path(), &CancelTx::new("test", 8)).await;
+    // Fresh stores have scanned nothing, so the missing config is what they
+    // report: a cache another test already filled can no longer hide it.
+    let stores = GrammarStores::default();
+    let result = AstTreeTool::run(&args, dir.path(), &CancelTx::new("test", 8), &stores).await;
     match previous {
         Some(v) => unsafe { std::env::set_var("TREE_SITTER_DIR", v) },
         None => unsafe { std::env::remove_var("TREE_SITTER_DIR") },
     }
-    // The grammar cache is a process-global `OnceLock`: once any test has
-    // loaded a grammar, the missing config is never consulted again and the
-    // tool reports the unknown language instead. Both outcomes are failures
-    // that name tree-sitter, which is what this test pins.
     let err = result.unwrap_err();
     match err.kind {
         ToolErrorKind::Other => assert!(
@@ -214,7 +218,7 @@ async fn missing_config_returns_runtime_error() -> Result<()> {
 
 fn fixture_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/tools/handler/testdata")
+        .join("test/tools/handler/testdata")
         .join(name)
 }
 
@@ -223,7 +227,8 @@ async fn e2e_nonexistent_file_returns_runtime_error() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("nonexistent.rs");
     let args = serde_json::json!({ "path": path.to_str().ok_or("temp path must be UTF-8")?, "language": "rust", "query": "(function_item)" });
-    let err = AstQueryTool::execute(&args, dir.path(), &CancelTx::new("test", 8))
+    let stores = GrammarStores::default();
+    let err = AstQueryTool::run(&args, dir.path(), &CancelTx::new("test", 8), &stores)
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Other);
@@ -329,6 +334,7 @@ async fn ast_tools_end_to_end_table() -> Result<()> {
     ];
 
     // -- Exec & Check
+    let stores = GrammarStores::default();
     for case in cases {
         let dir = tempfile::tempdir()?;
         let path = match case.source {
@@ -345,16 +351,16 @@ async fn ast_tools_end_to_end_table() -> Result<()> {
 
         let result = match &case.expect {
             Expect::QueryNames(_) => {
-                AstQueryTool::execute(&args, cwd, &CancelTx::new("test", 8)).await
+                AstQueryTool::run(&args, cwd, &CancelTx::new("test", 8), &stores).await
             }
             Expect::NodeType(_) => {
-                AstNodesTool::execute(&args, cwd, &CancelTx::new("test", 8)).await
+                AstNodesTool::run(&args, cwd, &CancelTx::new("test", 8), &stores).await
             }
             Expect::RefTexts(_) => {
-                AstRefsTool::execute(&args, cwd, &CancelTx::new("test", 8)).await
+                AstRefsTool::run(&args, cwd, &CancelTx::new("test", 8), &stores).await
             }
             Expect::TreeContains(_) => {
-                AstTreeTool::execute(&args, cwd, &CancelTx::new("test", 8)).await
+                AstTreeTool::run(&args, cwd, &CancelTx::new("test", 8), &stores).await
             }
         }
         .map_err(|e| format!("{e:?}"))?;

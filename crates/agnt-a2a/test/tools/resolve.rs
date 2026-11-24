@@ -1,5 +1,7 @@
+use super::StateLabel;
 use super::resolve_task_id;
 use crate::client::{MockHttpClient, page_body};
+use crate::types::TaskState;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -230,4 +232,21 @@ async fn test_resolve_task_id_ambiguous() -> Result<()> {
         "unexpected error: {err}"
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Display vocabulary the ambiguous-prefix message carries
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_state_label_output() {
+    assert_eq!(TaskState::Unspecified.label(), "unspecified");
+    assert_eq!(TaskState::Submitted.label(), "submitted");
+    assert_eq!(TaskState::Working.label(), "working");
+    assert_eq!(TaskState::InputRequired.label(), "input-required");
+    assert_eq!(TaskState::Completed.label(), "completed");
+    assert_eq!(TaskState::Failed.label(), "failed");
+    assert_eq!(TaskState::Canceled.label(), "canceled");
+    assert_eq!(TaskState::Rejected.label(), "rejected");
+    assert_eq!(TaskState::AuthRequired.label(), "auth-required");
 }

@@ -57,12 +57,12 @@ fn display_task_not_found() {
 #[test]
 fn display_invalid_state_transition() {
     let err = A2aError::InvalidStateTransition {
-        from: TaskState::Completed,
-        to: TaskState::Submitted,
+        from: TaskState::Working,
+        to: TaskState::Canceled,
     };
     assert_eq!(
         err.to_string(),
-        "invalid state transition: Completed → Submitted"
+        "invalid state transition: TASK_STATE_WORKING → TASK_STATE_CANCELED"
     );
 }
 

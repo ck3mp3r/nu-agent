@@ -1,13 +1,16 @@
 # cargo-nextest repository configuration
 # https://nexte.st/docs/configuration/
 
+# Setup scripts are the only nextest mechanism that hands environment
+# variables to test processes: profiles accept no `env` key.
+experimental = ["setup-scripts"]
+
 # Unit tests only (no --features integration): fast feedback, high parallelism.
 [profile.default]
 retries = 0
 fail-fast = true
 slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }
 final-status-level = "slow"
-env = { AGENT_VAULT_BACKEND = "env" }
 
 # The nine tree-sitter grammar tests each pay a per-process grammar load
 # (solo ~11-13 s). Nine-way machine contention stretches loads nonlinearly
@@ -27,7 +30,6 @@ test-threads = 32
 slow-timeout = { period = "20s", terminate-after = 2, grace-period = "5s" }
 global-timeout = "20m"
 final-status-level = "flaky"
-env = { AGENT_VAULT_BACKEND = "env" }
 
 # agnt-a2a hosts the timing-sensitive tests (real servers on ephemeral ports,
 # mDNS responder, SSE timing); keep its retry.
@@ -49,7 +51,24 @@ retries = 0
 fail-fast = false
 global-timeout = "30m"
 final-status-level = "flaky"
-env = { AGENT_VAULT_BACKEND = "env" }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# The vault harness contract: no test probes the OS keychain, so every test
+# process runs with AGENT_VAULT_BACKEND=env. The script writes the variable
+# into $NEXTEST_ENV, which nextest hands to the tests its rule matches.
+[scripts.setup.vault-env]
+command = ['sh', '-c', 'echo AGENT_VAULT_BACKEND=env >> "$NEXTEST_ENV"']
+
+[[profile.default.scripts]]
+filter = 'all()'
+setup = 'vault-env'
+
+[[profile.integration.scripts]]
+filter = 'all()'
+setup = 'vault-env'
+
+[[profile.ci.scripts]]
+filter = 'all()'
+setup = 'vault-env'

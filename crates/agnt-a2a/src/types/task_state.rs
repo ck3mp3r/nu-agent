@@ -38,21 +38,6 @@ impl TaskState {
             TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::Rejected
         )
     }
-
-    /// Human-readable label for display contexts (TUI, logs).
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            TaskState::Unspecified => "unspecified",
-            TaskState::Submitted => "submitted",
-            TaskState::Working => "working",
-            TaskState::InputRequired => "input-required",
-            TaskState::Completed => "completed",
-            TaskState::Failed => "failed",
-            TaskState::Canceled => "canceled",
-            TaskState::Rejected => "rejected",
-            TaskState::AuthRequired => "auth-required",
-        }
-    }
 }
 
 impl fmt::Display for TaskState {

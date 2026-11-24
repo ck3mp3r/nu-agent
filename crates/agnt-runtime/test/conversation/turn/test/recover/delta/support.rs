@@ -25,6 +25,18 @@ pub(super) fn warnings(rx: &mut crate::bus::Subscription<NarrationEvent>) -> Vec
         .collect()
 }
 
+/// The anchor of the prompt a run dispatched after loading `loaded` messages:
+/// the run's own input history, which is the head of the history it reports.
+pub(super) fn dispatched_after(loaded: usize) -> Option<PromptAnchor> {
+    Some(PromptAnchor::at(loaded))
+}
+
+/// The report of a turn that stopped holding `history`, with the place that
+/// history holds the prompt the run dispatched.
+pub(super) fn report<'a>(history: &'a [Message], anchor: Option<PromptAnchor>) -> TurnReport<'a> {
+    TurnReport::new(history, anchor)
+}
+
 /// The recovery a stopped turn reports: its tool records and its streamed text.
 pub(super) fn recovery<'a>(
     records: &'a [TurnToolRecord],

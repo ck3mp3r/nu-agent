@@ -150,6 +150,9 @@ pub struct AcpSessionManager<R: RuntimeBuilder> {
     /// The resolved application paths: the config file every session runtime is
     /// built from, and the persona directory.
     pub(super) paths: Paths,
+    /// The grammar stores every session's AST tools run against. The process
+    /// assembles them once at serve time, beside `paths`.
+    pub(super) grammar_stores: Arc<agnt_runtime::tools::handler::tree_sitter::GrammarStores>,
     pub(super) runtime_handle: tokio::runtime::Handle,
     pub(super) runtime_builder: R,
     pub(super) models_cache: Option<Arc<ModelsCache>>,

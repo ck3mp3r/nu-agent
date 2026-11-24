@@ -15,7 +15,9 @@ use crate::tools::handler::tmux_layout::TmuxLayoutTool;
 use crate::tools::handler::tmux_pane::TmuxPaneTool;
 use crate::tools::handler::tmux_session::TmuxSessionTool;
 use crate::tools::handler::tmux_window::TmuxWindowTool;
-use crate::tools::handler::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
+use crate::tools::handler::tree_sitter::{
+    AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool, GrammarTool,
+};
 use agnt_kernel::PermissionDecision as UiPermissionDecision;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

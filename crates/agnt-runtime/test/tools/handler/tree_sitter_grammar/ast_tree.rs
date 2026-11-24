@@ -12,19 +12,22 @@ async fn ast_tree_end_to_end_against_a_compiled_grammar() -> Result<()> {
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
 
     // -- Exec
-    let full = AstTreeTool::execute(
+    let full = AstTreeTool::run(
         &serde_json::json!({"path": path, "language": "rust"}),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("tree must succeed: {e:?}"))?;
-    let shallow = AstTreeTool::execute(
+    let shallow = AstTreeTool::run(
         &serde_json::json!({"path": path, "language": "rust", "max_depth": 1}),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("tree must succeed: {e:?}"))?;
@@ -62,12 +65,14 @@ async fn ast_tree_with_a_deep_max_depth_renders_leaf_nodes() -> Result<()> {
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
 
     // -- Exec
-    let deep = AstTreeTool::execute(
+    let deep = AstTreeTool::run(
         &serde_json::json!({"path": path, "language": "rust", "max_depth": 64}),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("tree must succeed: {e:?}"))?;

@@ -79,10 +79,11 @@ pub(super) fn run_command(
                 .with_label(e.to_string(), call.head)
         })?;
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
-    // pre-load window logged to the derived default, and the grammar cache
-    // keeps the OS default until this install.
+    // pre-load window logged to the derived default, and the grammar cache is
+    // built from the resolved directory rather than read from the OS default.
     agnt_runtime::logging::LogStore::retarget_process(&paths.log_dir);
-    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    let grammar_stores =
+        Arc::new(agnt_runtime::tools::handler::tree_sitter::GrammarStores::from_paths(&paths));
     let rig = agnt_runtime::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
@@ -247,6 +248,7 @@ pub(super) fn run_command(
                 .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
             bus: bus.clone(),
             audit_log_path: paths.audit_log_path.clone(),
+            grammar_stores: Arc::clone(&grammar_stores),
         })
         .await?;
 

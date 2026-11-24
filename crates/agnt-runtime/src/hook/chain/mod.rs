@@ -133,6 +133,10 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     /// read by every delta it publishes. Shared with the turn executor, which
     /// owes the tail delta of a call that streamed none.
     inference: crate::hook::CurrentInference,
+    /// Where the prompt this run dispatches sits in the history it reports,
+    /// stamped when the run starts. Shared with the turn executor, which
+    /// anchors a stopped turn's recovery on it.
+    prompt: crate::hook::DispatchedPrompt,
 }
 
 // endregion: --- Types

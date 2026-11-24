@@ -101,10 +101,12 @@ mod picker_footer;
 mod picker_table;
 mod row_cache;
 mod stats;
+mod unhandled_payload;
 
 pub(crate) use frame::current_time_millis;
 pub(crate) use picker_footer::PickerFooter;
 pub(super) use picker_table::section_head_count;
+pub(crate) use unhandled_payload::UnhandledPayload;
 pub(crate) mod transcript;
 pub(crate) use row_cache::RowCache;
 

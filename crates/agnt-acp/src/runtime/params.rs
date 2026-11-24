@@ -1,6 +1,7 @@
 //! The inputs one ACP session runtime is built from.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::session::RigStoreConfig;
@@ -24,6 +25,11 @@ pub struct AcpRuntimeParams {
     /// Carries the config file and the persona directory, so the runtime and the
     /// agent selector read them instead of deriving them.
     pub paths: agnt_runtime::config::Paths,
+    /// The grammar stores the session's AST tools run against.
+    ///
+    /// The serve entry point assembles them once for the process and the manager
+    /// clones the `Arc` into every session, so a session never builds its own.
+    pub grammar_stores: Arc<agnt_runtime::tools::handler::tree_sitter::GrammarStores>,
     /// Handle to the process tokio runtime.
     pub runtime_handle: tokio::runtime::Handle,
     /// The rig-memory store config the session's store is made from.

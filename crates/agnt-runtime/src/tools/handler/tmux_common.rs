@@ -17,7 +17,8 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
 /// child-priority policy: a tmux client never pins a worker and never outranks
 /// the UI.
 pub(crate) async fn run_tmux(args: &[&str]) -> Result<String, ToolHandlerError> {
-    let output = crate::child_priority::child_command("tmux")
+    let output = crate::child_priority::ChildPriority::probe()
+        .command("tmux")
         .args(args)
         .output()
         .await

@@ -1,9 +1,10 @@
 //! Grammar-backed AST tool tests.
 //!
-//! The production grammar cache is a process-global `OnceLock`, so these tests
-//! install a private tree-sitter config, a private parser directory, and a
-//! private OS grammar cache holding a copy of the host's compiled `rust`
-//! grammar. The whole module is `#[serial]` because it mutates process
+//! The grammar stores of production are one struct the composition root builds,
+//! so these tests install a private tree-sitter config, a private parser
+//! directory, and a private OS grammar cache holding a copy of the host's
+//! compiled `rust` grammar, then hand the tools their own `GrammarStores`.
+//! The whole module is `#[serial]` because it mutates process
 //! environment variables, which `cargo test` shares across one process. Under
 //! nextest every test runs in its own process, so `#[serial]` has no
 //! cross-process effect there and only costs ordering within a process.

@@ -134,11 +134,7 @@ impl LogIdentity {
 
     /// The file name this identity composes to.
     fn file_name(&self) -> String {
-        let pid = self.pid;
-        match &self.name {
-            Some(name) => format!("{INSTANCE_LOG_PREFIX}{name}-{pid}{INSTANCE_LOG_SUFFIX}"),
-            None => format!("{INSTANCE_LOG_PREFIX}{pid}{INSTANCE_LOG_SUFFIX}"),
-        }
+        instance_log_file_name(self.name.as_deref(), self.pid)
     }
 }
 
@@ -411,6 +407,23 @@ fn fallback_path() -> PathBuf {
     std::env::temp_dir().join(format!("{FALLBACK_LOG_PREFIX}-{}.log", std::process::id()))
 }
 
+/// The file name one instance log carries: the store's one definition of the
+/// format, which the collection scan reads through [`is_instance_log_file_name`].
+fn instance_log_file_name(name: Option<&str>, pid: u32) -> String {
+    match name {
+        Some(name) => format!("{INSTANCE_LOG_PREFIX}{name}-{pid}{INSTANCE_LOG_SUFFIX}"),
+        None => format!("{INSTANCE_LOG_PREFIX}{pid}{INSTANCE_LOG_SUFFIX}"),
+    }
+}
+
+/// Whether `name` is a file name [`instance_log_file_name`] composes.
+///
+/// A legacy `tui-*`/`a2a-*` name does not match, and neither does a name the
+/// composition cannot produce.
+fn is_instance_log_file_name(name: &str) -> bool {
+    name.starts_with(INSTANCE_LOG_PREFIX) && name.ends_with(INSTANCE_LOG_SUFFIX)
+}
+
 /// Whether `path` names an instance log file.
 ///
 /// A legacy `tui-*`/`a2a-*` file does not match: the collection stops seeing it
@@ -418,14 +431,16 @@ fn fallback_path() -> PathBuf {
 fn is_instance_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            name.starts_with(INSTANCE_LOG_PREFIX) && name.ends_with(INSTANCE_LOG_SUFFIX)
-        })
+        .is_some_and(is_instance_log_file_name)
 }
 
 // endregion: --- Support
 
 // region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/logging/names.rs"]
+mod names_test;
 
 #[cfg(test)]
 #[path = "../../test/logging/sink.rs"]

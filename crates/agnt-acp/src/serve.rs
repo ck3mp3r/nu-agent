@@ -54,7 +54,8 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     )
     .map_err(|err| AcpError::Config(format!("failed to resolve application paths: {err}")))?;
     agnt_runtime::logging::LogStore::retarget_process(&paths.log_dir);
-    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    let grammar_stores =
+        Arc::new(agnt_runtime::tools::handler::tree_sitter::GrammarStores::from_paths(&paths));
     let config_dir = paths.config_dir();
     let models_cache = match ModelsCache::load_from(&paths.models_cache_path) {
         Ok(cache) => Some(Arc::new(cache)),
@@ -108,6 +109,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     );
     let sessions: SharedSessions = Arc::new(
         AcpSessionManager::new(rig, paths, tokio::runtime::Handle::current())
+            .with_grammar_stores(grammar_stores)
             .with_models_cache(models_cache)
             .with_client_fs(Arc::clone(&client_fs))
             .with_agent_name(agent)

@@ -23,7 +23,7 @@ use super::core::{
     ExecuteOutcome, NO_OUTPUT_STATEMENT, TURN_STOPPED_NOTICE, TurnExecutor, TurnResponseData,
 };
 use super::error_kind::{CompletionErrorKind, kind_to_user_msg};
-use super::recover::PersistStage;
+use super::recover::{PersistStage, TurnReport};
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
 use crate::conversation::turn::{TurnBudget, TurnExhaustion, TurnFailure};
@@ -61,7 +61,7 @@ where
                 self.persist_turn_delta(
                     final_session_id,
                     &prompt,
-                    &messages,
+                    TurnReport::new(&messages, ctx.prompt_anchor),
                     ctx.pre_turn_message_count,
                     PersistStage::TurnEnd {
                         empty_reply: "[interrupted — turn stopped before responding]",
@@ -106,7 +106,7 @@ where
                         self.persist_turn_delta(
                             final_session_id,
                             &prompt,
-                            messages,
+                            TurnReport::new(messages, ctx.prompt_anchor),
                             ctx.pre_turn_message_count,
                             PersistStage::TurnEnd {
                                 empty_reply: &format!("[Turn failed: {msg}]"),
@@ -160,7 +160,7 @@ where
                 self.persist_turn_delta(
                     final_session_id,
                     &prompt,
-                    &ctx.last_known_history,
+                    TurnReport::new(&ctx.last_known_history, ctx.prompt_anchor),
                     ctx.pre_turn_message_count,
                     PersistStage::TurnEnd {
                         empty_reply: &format!("[Turn failed: {msg}]"),
@@ -194,7 +194,7 @@ where
             self.persist_turn_delta(
                 final_session_id,
                 &prompt,
-                history,
+                TurnReport::new(history, turn_result.prompt_anchor),
                 turn_result.pre_turn_message_count,
                 PersistStage::TurnEnd {
                     empty_reply: "[interrupted — turn stopped before responding]",

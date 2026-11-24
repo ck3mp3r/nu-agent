@@ -22,6 +22,7 @@ fn turn_result_can_be_constructed() {
         last_total_tokens: 0,
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: vec![],
         streamed_tool_calls: vec![],
     };
@@ -207,6 +208,7 @@ fn turn_result_cancelled_flag_propagates() {
         last_total_tokens: 0,
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: vec![],
         streamed_tool_calls: vec![],
     };
@@ -234,6 +236,7 @@ fn turn_result_cancelled_flag_propagates() {
         last_total_tokens: 0,
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: vec![],
         streamed_tool_calls: vec![],
     };

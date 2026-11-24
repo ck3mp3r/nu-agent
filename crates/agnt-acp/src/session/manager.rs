@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 use agnt_runtime::config::ModelsCache;
 use agnt_runtime::config::Paths;
 use agnt_runtime::session::RigStoreConfig;
+use agnt_runtime::tools::handler::tree_sitter::GrammarStores;
 
 use crate::error::{AcpError, Result};
 
@@ -41,6 +42,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             sessions: StdMutex::new(HashMap::new()),
             rig,
             paths,
+            grammar_stores: Arc::new(GrammarStores::default()),
             runtime_handle,
             runtime_builder,
             models_cache: None,
@@ -48,6 +50,16 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             agent_name: None,
             hooks: Vec::new(),
         }
+    }
+
+    /// Attach the grammar stores every session's AST tools run against.
+    ///
+    /// The serve entry point assembles them once from the resolved paths. A
+    /// manager that never receives them keeps the stores whose `None` cache
+    /// directory leaves the OS default in use.
+    pub(crate) fn with_grammar_stores(mut self, stores: Arc<GrammarStores>) -> Self {
+        self.grammar_stores = stores;
+        self
     }
 
     /// Attach the user hooks every session starts a runner for.

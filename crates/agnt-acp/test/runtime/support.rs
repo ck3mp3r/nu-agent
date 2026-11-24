@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::tools::handler::tree_sitter::GrammarStores;
 use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 use super::*;
@@ -52,6 +53,7 @@ pub(super) fn make_params(
         cwd,
         mcp_servers,
         paths: test_paths(&config_path),
+        grammar_stores: std::sync::Arc::new(GrammarStores::default()),
         runtime_handle: tokio::runtime::Handle::current(),
         rig: RigStoreConfig::new(store_type),
         session_id: None,

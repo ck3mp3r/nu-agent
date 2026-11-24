@@ -32,5 +32,7 @@ use support::*;
 use super::*;
 
 use crate::conversation::turn::executor::TurnRecovery;
+use crate::conversation::turn::executor::TurnReport;
+use crate::hook::PromptAnchor;
 use crate::hook::TurnToolRecord;
 use crate::session::tool_status::ToolStatus;

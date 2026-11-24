@@ -22,7 +22,7 @@ pub enum A2aError {
     #[error("task not found: {0}")]
     TaskNotFound(String),
 
-    #[error("invalid state transition: {from:?} → {to:?}")]
+    #[error("invalid state transition: {from} → {to}")]
     InvalidStateTransition { from: TaskState, to: TaskState },
 
     #[error("serialization error: {0}")]

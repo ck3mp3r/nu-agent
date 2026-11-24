@@ -136,6 +136,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             cwd,
             mcp_servers: _,
             paths,
+            grammar_stores: _,
             runtime_handle,
             rig,
             session_id,

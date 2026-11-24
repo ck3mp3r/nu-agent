@@ -12,9 +12,10 @@ async fn ast_nodes_end_to_end_against_a_compiled_grammar() -> Result<()> {
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
 
     // -- Exec
-    let all = AstNodesTool::execute(
+    let all = AstNodesTool::run(
         &serde_json::json!({
             "path": path,
             "language": "rust",
@@ -23,10 +24,11 @@ async fn ast_nodes_end_to_end_against_a_compiled_grammar() -> Result<()> {
         }),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("nodes must succeed: {e:?}"))?;
-    let capped = AstNodesTool::execute(
+    let capped = AstNodesTool::run(
         &serde_json::json!({
             "path": path,
             "language": "rust",
@@ -35,6 +37,7 @@ async fn ast_nodes_end_to_end_against_a_compiled_grammar() -> Result<()> {
         }),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .map_err(|e| format!("nodes must succeed: {e:?}"))?;

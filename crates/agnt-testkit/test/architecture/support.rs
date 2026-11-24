@@ -110,14 +110,14 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
         ARCH_8,
         &[
             "ARCH-8 agnt-acp/src/session/types.rs:61: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/builder.rs:507: `Bus` is a struct field",
+            "ARCH-8 agnt-runtime/src/conversation/builder.rs:508: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:142: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:167: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/compaction/compactor.rs:188: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/contracts.rs:27: `Bus` is a return type",
             "ARCH-8 agnt-runtime/src/conversation/runtime_build.rs:57: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:405: `Bus` is a struct field",
-            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:649: `Bus` is a parameter",
+            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:415: `Bus` is a struct field",
+            "ARCH-8 agnt-runtime/src/conversation/turn/execute.rs:659: `Bus` is a parameter",
             "ARCH-8 agnt-runtime/src/conversation/turn/executor/core.rs:109: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/conversation/turn/proxy.rs:18: `Bus` is a struct field",
             "ARCH-8 agnt-runtime/src/hook/chain/mod.rs:67: `Bus` is a struct field",
@@ -133,7 +133,7 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
     (
         ARCH_9B,
         &[
-            "ARCH-9.b agnt-cli/src/dispatch/a2a.rs:169: reqwest::Client::builder",
+            "ARCH-9.b agnt-cli/src/dispatch/a2a.rs:170: reqwest::Client::builder",
             "ARCH-9.b agnt-cli/src/main.rs:305: rustls::crypto::ring::default_provider::install_default",
             "ARCH-9.b agnt-plugin/src/main.rs:9: rustls::crypto::ring::default_provider::install_default",
             "ARCH-9.b agnt-runtime/src/config/models_cache.rs:109: reqwest::blocking::Client::new",

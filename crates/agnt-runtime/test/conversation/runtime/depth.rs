@@ -2,7 +2,7 @@
 //! leave uncovered: the `execute_turn` early-return branch, the persona
 //! `additional_params` overlay, the `ModelSwitching` trait accessors, the
 //! rig-store splice `run_compaction` persists, and the `load_session`
-//! contains-match fallback.
+//! fuzzy fallback: its single-hit resolution and its ambiguity rejection.
 
 use nu_protocol::Span;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
@@ -212,5 +212,68 @@ async fn load_session_resolves_a_contains_match() -> Result<()> {
     assert_eq!(fixture.runtime.current_session_id(), Some("abc-mid-xyz"));
     assert_eq!(transcript.len(), 1);
     assert_eq!(transcript[0].content(), "contains match");
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_session_rejects_an_ambiguous_suffix_match() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = make_runtime(text_model("unused"))?;
+    seed_session(&fixture, "aaa-shared-tail", &[Message::user("first")]).await?;
+    seed_session(&fixture, "bbb-shared-tail", &[Message::user("second")]).await?;
+
+    // -- Exec
+    // Both ids end with the needle, so the suffix pass cannot choose one: the
+    // resolver must reject instead of taking the store's first hit.
+    let error = fixture
+        .runtime
+        .load_session("shared-tail")
+        .await
+        .err()
+        .ok_or("an ambiguous suffix match must not resolve")?;
+
+    // -- Check
+    assert!(
+        error.contains("ambiguous"),
+        "the rejection must name the ambiguity; got: {error}"
+    );
+    assert!(
+        error.contains("aaa-shared-tail") && error.contains("bbb-shared-tail"),
+        "the rejection must name both candidates; got: {error}"
+    );
+    assert_eq!(
+        fixture.runtime.current_session_id(),
+        Some("test-session"),
+        "a rejected resolve must leave the runtime on the session it held"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_session_rejects_an_ambiguous_contains_match() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = make_runtime(text_model("unused"))?;
+    seed_session(&fixture, "abc-shared-xyz", &[Message::user("first")]).await?;
+    seed_session(&fixture, "def-shared-uvw", &[Message::user("second")]).await?;
+
+    // -- Exec
+    // The needle is neither a suffix nor a prefix of either id, so only the
+    // contains pass matches, and it matches both.
+    let error = fixture
+        .runtime
+        .load_session("shared")
+        .await
+        .err()
+        .ok_or("an ambiguous contains match must not resolve")?;
+
+    // -- Check
+    assert!(
+        error.contains("ambiguous"),
+        "the rejection must name the ambiguity; got: {error}"
+    );
+    assert!(
+        error.contains("abc-shared-xyz") && error.contains("def-shared-uvw"),
+        "the rejection must name both candidates; got: {error}"
+    );
     Ok(())
 }

@@ -24,8 +24,10 @@ use crate::{
         render::frame::{
             ModalPanelKind, modal_rect_for_panel, picker_column_budgets, popup_body_rows,
         },
-        render::picker_table::{PickerTableLayout, render_picker_table, rows_with_sections},
-        render::{PickerFooter, render_modal_frame, render_scroll_text_panel},
+        render::picker_table::{
+            PickerTableLayout, blank_picker_row, render_picker_table, rows_with_sections,
+        },
+        render::{PickerFooter, UnhandledPayload, render_modal_frame, render_scroll_text_panel},
     },
     state::{InfoPanel, PickerPayload},
 };
@@ -257,6 +259,7 @@ impl RuntimeCoordinator {
                 &self.theme,
             );
         } else {
+            let unhandled = UnhandledPayload::new("model picker");
             // Build rows with provider headers
             // The MODEL column takes the table remainder, so its width comes from
             // the constraints the table solver resolves, the same way the agents
@@ -279,16 +282,19 @@ impl RuntimeCoordinator {
                 picker_state.selection,
                 &self.theme,
                 |opt| {
-                    let (identity, configured, context_window, cost) = match &opt.payload {
-                        PickerPayload::Model {
-                            identity,
-                            configured,
-                            context_window,
-                            cost,
-                            ..
-                        } => (identity, *configured, *context_window, cost),
-                        _ => unreachable!(),
+                    let PickerPayload::Model {
+                        identity,
+                        configured,
+                        context_window,
+                        cost,
+                        ..
+                    } = &opt.payload
+                    else {
+                        unhandled.warn(&opt.payload);
+                        return blank_picker_row(MODEL_PICKER_COLUMNS.len());
                     };
+                    let configured = *configured;
+                    let context_window = *context_window;
                     let active = if opt.id == self.state.status.identity.active_model_identity {
                         "*"
                     } else {
@@ -327,7 +333,10 @@ impl RuntimeCoordinator {
                         provider_display_name,
                         ..
                     } => provider_display_name.clone(),
-                    _ => unreachable!(),
+                    other => {
+                        unhandled.warn(other);
+                        opt.section.clone().unwrap_or_default()
+                    }
                 },
             );
 
@@ -419,12 +428,13 @@ impl RuntimeCoordinator {
                 picker_column_budgets(rows[1].width, selection_width, column_spacing, &columns);
             let name_budget = budgets.first().copied().unwrap_or_default();
             let description_budget = budgets.get(1).copied().unwrap_or_default();
+            let unhandled = UnhandledPayload::new("agent picker");
             let table_rows: Vec<Row> = options
                 .iter()
                 .map(|opt| {
-                    let (name, description) = match &opt.payload {
-                        PickerPayload::Agent { name, description } => (name, description),
-                        _ => unreachable!(),
+                    let PickerPayload::Agent { name, description } = &opt.payload else {
+                        unhandled.warn(&opt.payload);
+                        return blank_picker_row(columns.len());
                     };
                     let active = if Some(opt.id.as_str())
                         == self.state.status.identity.active_agent_identity.as_deref()
@@ -509,6 +519,7 @@ impl RuntimeCoordinator {
                 &self.theme,
             );
         } else {
+            let unhandled = UnhandledPayload::new("session picker");
             let sectioned = rows_with_sections(
                 &model.options,
                 model.selected.unwrap_or_default(),
@@ -540,7 +551,10 @@ impl RuntimeCoordinator {
                         Cell::from(agent.clone().unwrap_or_default()),
                         Cell::from(message_count.to_string()),
                     ]),
-                    _ => unreachable!(),
+                    other => {
+                        unhandled.warn(other);
+                        blank_picker_row(4)
+                    }
                 },
                 |opt| match &opt.payload {
                     PickerPayload::Session { created_at, .. } => match created_at {
@@ -550,7 +564,10 @@ impl RuntimeCoordinator {
                         ),
                         None => String::new(),
                     },
-                    _ => unreachable!(),
+                    other => {
+                        unhandled.warn(other);
+                        String::new()
+                    }
                 },
             );
             let header = Row::new(vec!["When", "Title", "Agent", "Msgs"]);

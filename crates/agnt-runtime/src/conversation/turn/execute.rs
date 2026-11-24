@@ -16,6 +16,7 @@ use crate::config::defaults;
 use crate::hook::agent_hook::{HookState, StopLedger};
 use crate::hook::chain::{HookChain, HookEnv};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
+use crate::hook::prompt_anchor::PromptAnchor;
 use crate::hook::turn_tools::TurnToolRecord;
 use crate::types::{Message, Text, ToolCall, ToolDefinition, UserContent};
 use agnt_kernel::NoticeKind;
@@ -72,11 +73,13 @@ pub struct TurnResult {
     /// The retry loop reads it to decide whether a retry has partial history.
     pub last_known_history: Vec<Message>,
     /// Number of messages the session's rig log held when the turn started.
-    /// Recovery anchors the turn's delta on content: it starts at the last
-    /// user message whose text is the turn prompt or ends with the
-    /// `"\n\n{prompt}"` steering suffix. The count's only role is the skip
-    /// guard: a log whose length moved since the turn started is left alone.
+    /// Its only role is the skip guard: a log whose length moved since the turn
+    /// started is left alone.
     pub pre_turn_message_count: usize,
+    /// Where the prompt the turn dispatched sits in the history the turn
+    /// reports, as the run recorded it when it started. Recovery starts the
+    /// turn's delta there. `None` when no run dispatched a prompt.
+    pub(crate) prompt_anchor: Option<PromptAnchor>,
     /// Every tool call the turn dispatched and the result each call settled
     /// with, in dispatch order. Populated from `HookChain::turn_tools()` after
     /// the turn completes. A stop drops the in-flight batch from rig's history,
@@ -255,6 +258,10 @@ where
     // builder, and a stop drops the in-flight batch from rig's history, so the
     // records are the only trace of those calls after the turn.
     let turn_tools_arc = hook.turn_tools();
+    // Where the run puts the prompt it dispatches in the history it reports:
+    // stamped when the run starts, read after the turn so recovery anchors the
+    // delta on the prompt the turn actually sent.
+    let dispatched_prompt = hook.dispatched_prompt();
 
     // Build the prompt message
     let user_message = Message::User {
@@ -348,6 +355,7 @@ where
         let ctx = Box::new(error::TurnContext {
             last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
             pre_turn_message_count,
+            prompt_anchor: dispatched_prompt.anchor(),
             tool_records: turn_tools_arc.records(),
         });
         (err, ctx)
@@ -357,6 +365,7 @@ where
         let ctx = Box::new(error::TurnContext {
             last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
             pre_turn_message_count,
+            prompt_anchor: dispatched_prompt.anchor(),
             tool_records: turn_tools_arc.records(),
         });
         (err, ctx)
@@ -381,6 +390,7 @@ where
         last_total_tokens: response.last_total_tokens,
         last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
         pre_turn_message_count: response.pre_turn_message_count,
+        prompt_anchor: dispatched_prompt.anchor(),
         tool_records: turn_tools_arc.records(),
         streamed_tool_calls: response.streamed_tool_calls,
     })
@@ -856,6 +866,7 @@ fn unstarted() -> Box<error::TurnContext> {
     Box::new(error::TurnContext {
         last_known_history: vec![],
         pre_turn_message_count: 0,
+        prompt_anchor: None,
         tool_records: vec![],
     })
 }

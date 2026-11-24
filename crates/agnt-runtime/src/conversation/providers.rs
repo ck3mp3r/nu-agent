@@ -212,10 +212,10 @@ pub async fn copilot_device_login(
 }
 
 /// Map a rig auth failure to a labeled error, naming the sign-in command when
-/// the failure is a missing credential.
+/// the failure is a missing credential. [`super::copilot_auth`] classifies it.
 fn copilot_auth_error(error: AuthError) -> LabeledError {
     let message = error.to_string();
-    if message.contains("sign-in required") {
+    if super::copilot_auth::is_sign_in_required(&error) {
         return LabeledError::new(format!(
             "{message} Run `agent provider auth login github-copilot` to sign in."
         ));

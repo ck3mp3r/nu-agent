@@ -287,9 +287,8 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
         request_prompt(&requests[first_steered]).ends_with("hello"),
         "the steered prompt keeps the original prompt"
     );
-    // The four below-threshold turns saved their exchanges: 8 rows. Each of the
-    // three conversions persisted its stopped attempt's delta before re-running,
-    // and the terminal stopped attempt appended its delta on top, for 27 more.
+    // The four below-threshold turns saved their exchanges: 8 rows. The four
+    // stopped attempts added 19 more.
     //
     // Every persist is prompt-free, and the trace shows what that leaves. The
     // first stop's delta is the prompt row with the attempt's committed
@@ -300,13 +299,13 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
     // and the terminal stop persists its steered, prompt-form row once with the
     // streamed remainder.
     //
-    // 8 + 27 = 35. That is one fewer than the slice rule left (36, whose head
-    // survived); the log-wide rule also left 35, but by collapsing the whole
-    // prompt-led head, not by dropping only the prompt row.
+    // The deltas start at the place each run recorded for the prompt it
+    // dispatched, so a stopped attempt writes no row the log already held:
+    // 8 + 19 = 27.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        35,
+        27,
         "the four completed turns plus one prompt-free delta per stopped attempt; \
          got {persisted:?}"
     );

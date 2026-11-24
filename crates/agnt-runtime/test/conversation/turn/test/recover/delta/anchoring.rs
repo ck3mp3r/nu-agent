@@ -29,7 +29,8 @@ async fn persist_turn_delta_anchors_the_delta_on_the_prompt() -> Result<()> {
         .persist_turn_delta(
             Some(session_id),
             "q2",
-            &full_history,
+            // The run loaded one message fewer than the persist-time log holds.
+            report(&full_history, dispatched_after(1)),
             2,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -78,7 +79,8 @@ async fn persist_turn_delta_matches_the_steering_augmented_prompt() -> Result<()
         .persist_turn_delta(
             Some(session_id),
             "the prompt",
-            &full_history,
+            // The run loaded the stored row and appended the steered prompt.
+            report(&full_history, dispatched_after(1)),
             1,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,
@@ -99,6 +101,102 @@ async fn persist_turn_delta_matches_the_steering_augmented_prompt() -> Result<()
     Ok(())
 }
 
+/// The delta starts at the place the run recorded for the message it sent, not
+/// at the last row that happens to carry the prompt's words: an older turn's
+/// identical prompt and an older steering row that ends with the prompt both
+/// stay outside the delta.
+#[tokio::test]
+async fn persist_turn_delta_anchors_on_the_dispatched_prompt_not_its_text() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config::default();
+    let mut memory_state = MemoryState::new(RigStoreConfig::in_memory());
+
+    // A turn that sent `q2` after an older turn asked the very same thing.
+    let repeated_session = "test-recover-anchor-repeated";
+    seed(
+        &memory_state,
+        repeated_session,
+        vec![Message::user("q1"), Message::assistant("a1")],
+    )
+    .await?;
+    let repeated_history = vec![
+        Message::user("q1"),
+        Message::assistant("a1"),
+        Message::user("q2"),
+        Message::assistant("partial"),
+        Message::user("q2"),
+        Message::assistant("later"),
+    ];
+
+    // A steered attempt whose older row ends with the prompt's words.
+    let steered_session = "test-recover-anchor-steering-suffix";
+    seed(
+        &memory_state,
+        steered_session,
+        vec![Message::user("q1"), Message::assistant("a1")],
+    )
+    .await?;
+    let steered_history = vec![
+        Message::user("q1"),
+        Message::assistant("a1"),
+        Message::user("feedback line\n\nthe prompt"),
+        Message::assistant("older reply"),
+        Message::user("the prompt"),
+        Message::assistant("partial"),
+    ];
+
+    // -- Exec
+    executor(&config, &mut memory_state)
+        .persist_turn_delta(
+            Some(repeated_session),
+            "q2",
+            report(&repeated_history, dispatched_after(2)),
+            2,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
+            recovery(&[], None),
+        )
+        .await;
+    executor(&config, &mut memory_state)
+        .persist_turn_delta(
+            Some(steered_session),
+            "the prompt",
+            report(&steered_history, dispatched_after(2)),
+            2,
+            PersistStage::TurnEnd {
+                empty_reply: INTERRUPTED_REPLY,
+            },
+            recovery(&[], None),
+        )
+        .await;
+
+    // -- Check
+    let repeated = stored(&memory_state, repeated_session).await?;
+    assert_eq!(
+        repeated.len(),
+        6,
+        "the delta starts at this turn's own prompt row; got {repeated:?}"
+    );
+    assert_eq!(
+        repeated[2],
+        Message::user("q2"),
+        "the delta's head is the prompt the turn sent; got {repeated:?}"
+    );
+    let steered = stored(&memory_state, steered_session).await?;
+    assert_eq!(
+        steered.len(),
+        6,
+        "the steering suffix does not bind the anchor; got {steered:?}"
+    );
+    assert_eq!(
+        steered[2],
+        Message::user("feedback line\n\nthe prompt"),
+        "the delta's head is the row the anchor names, whatever it ends with; got {steered:?}"
+    );
+    Ok(())
+}
+
 /// A history that does not hold the prompt and carries no records falls back to
 /// the prompt and the placeholder reply.
 #[tokio::test]
@@ -114,7 +212,8 @@ async fn persist_turn_delta_falls_back_when_the_prompt_is_absent() -> Result<()>
         .persist_turn_delta(
             Some(session_id),
             "the prompt",
-            &full_history,
+            // No run dispatched this turn's prompt.
+            report(&full_history, None),
             0,
             PersistStage::TurnEnd {
                 empty_reply: INTERRUPTED_REPLY,

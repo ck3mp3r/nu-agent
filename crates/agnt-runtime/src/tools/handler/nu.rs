@@ -44,7 +44,7 @@ impl BuiltinTool for NuTool {
         // the child runs below the agent, and every process it spawns inherits
         // the niceness. `nice` execs `nu` in place, so the pid below is still the
         // group leader the kill signals.
-        let mut command = crate::child_priority::child_command("nu");
+        let mut command = crate::child_priority::ChildPriority::probe().command("nu");
         command
             .current_dir(cwd)
             .arg("-c")

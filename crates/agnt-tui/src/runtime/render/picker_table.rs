@@ -53,6 +53,13 @@ pub(super) fn section_header_row(label: &str, theme: &TuiTheme) -> Row<'static> 
     Row::new(vec![Cell::from(label.to_string())]).style(theme.picker_section_header)
 }
 
+/// A row of `cells` empty cells: what an arm paints for an option whose payload
+/// it does not enumerate. The row keeps the table's row count, and so the
+/// selection index, and claims no content.
+pub(super) fn blank_picker_row(cells: usize) -> Row<'static> {
+    Row::new(vec![Cell::from(""); cells])
+}
+
 /// Whether `next` opens a new section after `previous`: entering any section
 /// does, and a flat option (`None`) never does.
 fn opens_section(previous: Option<&str>, next: Option<&str>) -> bool {

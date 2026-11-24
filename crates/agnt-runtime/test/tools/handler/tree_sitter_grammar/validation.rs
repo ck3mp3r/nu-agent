@@ -13,20 +13,23 @@ async fn ast_tools_report_validation_errors_for_unknown_language_and_bad_query()
     };
     let (dir, path) = write_source()?;
     let path = path.to_str().ok_or("path must be UTF-8")?;
+    let stores = GrammarStores::default();
 
     // -- Exec
-    let unknown_language = AstTreeTool::execute(
+    let unknown_language = AstTreeTool::run(
         &serde_json::json!({"path": path, "language": "cobol"}),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .err()
     .ok_or("an unknown language must fail")?;
-    let bad_query = AstQueryTool::execute(
+    let bad_query = AstQueryTool::run(
         &serde_json::json!({"path": path, "language": "rust", "query": "(not_a_node"}),
         dir.path(),
         &CancelTx::new("test", 8),
+        &stores,
     )
     .await
     .err()

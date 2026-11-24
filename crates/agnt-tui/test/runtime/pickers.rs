@@ -26,6 +26,9 @@ mod support;
 #[path = "pickers/themes.rs"]
 mod themes;
 
+#[path = "pickers/unhandled_payload.rs"]
+mod unhandled_payload;
+
 // The monolith resolved `super::render::frame::*` and the picker cell
 // helpers against `crate::runtime::test`. Sub-files now resolve `super::`
 // against this module root, so `use support::*;` re-exports those names here.

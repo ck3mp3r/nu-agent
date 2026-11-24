@@ -1,7 +1,5 @@
 //! Backend selection and auto-detection tests.
 
-use crate::config::file_backend::FileBackend;
-use crate::config::keychain_backend::KeychainBackend;
 use crate::utils::env_map::EnvMap;
 
 use super::{
@@ -140,14 +138,25 @@ fn test_vault_backend_choice_maps_each_value() -> Result<()> {
 
 /// Canary for the harness-provided selector.
 ///
-/// The test profiles in `.config/nextest.toml` set `AGENT_VAULT_BACKEND=env`
-/// for every test process, so the real process environment selects the
-/// env-only backend and no test probes the OS keychain. A runner without that
-/// variable is a precondition failure, not skipped coverage.
+/// The `vault-env` setup script in `.config/nextest.toml` writes
+/// `AGENT_VAULT_BACKEND=env` into every test process nextest spawns, so the
+/// real process environment selects the env-only backend and no test probes
+/// the OS keychain. Nextest marks its test processes with `NEXTEST=1`; under
+/// that marker an unset variable fails this test, because a silent skip would
+/// leave the no-keychain-probe invariant unguarded. A bare `cargo test` run
+/// carries no marker, and there a missing variable is a documented
+/// precondition: the check steps aside.
 #[test]
 fn test_vault_auto_detect_uses_the_harness_env_var() -> Result<()> {
     // -- Setup & Fixtures
+    let nextest_run = std::env::var_os("NEXTEST").is_some();
     let Some(value) = std::env::var_os("AGENT_VAULT_BACKEND") else {
+        assert!(
+            !nextest_run,
+            "the nextest harness must supply AGENT_VAULT_BACKEND=env to every test process \
+             (setup script `vault-env` in .config/nextest.toml); an unset variable would let \
+             every vault test probe the OS keychain"
+        );
         return Ok(());
     };
 
@@ -166,23 +175,6 @@ fn test_vault_auto_detect_uses_the_harness_env_var() -> Result<()> {
         BackendKind::EnvOnly,
         "AGENT_VAULT_BACKEND=env must select the env-only backend without probing the keychain"
     );
-    Ok(())
-}
-
-#[test]
-fn test_vault_backend_kind_has_three_variants() -> Result<()> {
-    // -- Setup & Fixtures
-    let variants = [
-        VaultBackendKind::Keychain(KeychainBackend),
-        VaultBackendKind::File(FileBackend::new(std::path::PathBuf::from("/nonexistent"))),
-        VaultBackendKind::EnvOnly(EnvOnlyBackend),
-    ];
-
-    // -- Exec
-    let count = variants.len();
-
-    // -- Check
-    assert_eq!(count, 3, "VaultBackendKind should have exactly 3 variants");
     Ok(())
 }
 
