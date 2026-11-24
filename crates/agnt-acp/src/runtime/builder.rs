@@ -18,7 +18,7 @@ use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::handler::builtin_tool::register_builtin;
 use agnt_runtime::tools::mcp::config::McpConfig;
-use agnt_runtime::tools::mcp::runtime::connect_servers;
+use agnt_runtime::tools::mcp::runtime::{CONNECT_DEADLINE, connect_servers};
 use agnt_runtime::types::{Completion, DynModel, EmptyToolName, ToolDefinition};
 
 use crate::engine_stub::AcpEngineStub;
@@ -162,6 +162,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
                 Some(cwd.as_path()),
                 max_tool_result_bytes,
                 plugin_config.vault.as_ref(),
+                CONNECT_DEADLINE,
             )
             .await
             .map_err(|e| AcpError::Runtime(format!("failed to connect MCP servers: {e}")))?,

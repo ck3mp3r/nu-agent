@@ -184,6 +184,7 @@ pub(super) fn run_command(
                         .max_tool_result_bytes
                         .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
                     plugin_config.vault.as_ref(),
+                    agnt_runtime::tools::mcp::runtime::CONNECT_DEADLINE,
                 )
                 .await
                 .map_err(|msg| {

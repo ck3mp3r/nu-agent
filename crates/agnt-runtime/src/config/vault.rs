@@ -10,11 +10,12 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::utils::env_map::{EnvMap, process_env};
 
 use super::file_backend::FileBackend;
-use super::keychain_backend::KeychainBackend;
+use super::keychain_backend::{KEYCHAIN_PROBE_TIMEOUT_SECS, KeychainBackend};
 use rmcp::transport::auth::{
     AuthError, CredentialStore, StateStore, StoredAuthorizationState, StoredCredentials,
 };
@@ -228,7 +229,8 @@ impl Vault<VaultBackendKind> {
     ///
     /// # Errors
     /// - [`VaultError::BackendUnavailable`] when the keychain probe fails with
-    ///   anything other than [`VaultError::NoBackend`]
+    ///   anything other than [`VaultError::NoBackend`], the probe exceeding its
+    ///   5-second bound included
     pub fn auto_detect(secrets_path: &Path) -> Result<Self, VaultError> {
         Self::auto_detect_with(&process_env(), secrets_path)
     }
@@ -523,7 +525,7 @@ fn resolve_backend(
 /// Resolve a backend choice using injectable probes.
 fn resolve_backend_with(
     choice: BackendChoice,
-    keychain_probe: impl FnOnce() -> Result<KeychainBackend, VaultError>,
+    keychain_probe: impl FnOnce() -> Result<KeychainBackend, VaultError> + Send + 'static,
     file_probe: impl FnOnce() -> Result<FileBackend, VaultError>,
 ) -> Result<VaultBackendKind, VaultError> {
     match choice {
@@ -535,7 +537,11 @@ fn resolve_backend_with(
                 Ok(VaultBackendKind::EnvOnly(EnvOnlyBackend))
             }
         },
-        BackendChoice::Auto => auto_chain_with(keychain_probe, file_probe),
+        BackendChoice::Auto => auto_chain_with(
+            Duration::from_secs(KEYCHAIN_PROBE_TIMEOUT_SECS),
+            keychain_probe,
+            file_probe,
+        ),
     }
 }
 
@@ -543,20 +549,32 @@ fn resolve_backend_with(
 ///
 /// A keychain probe failure other than [`VaultError::NoBackend`] aborts the
 /// chain: silently downgrading to the file backend would store plaintext
-/// secrets while the user believes the keychain holds them.
+/// secrets while the user believes the keychain holds them. A probe that
+/// outlives [`KEYCHAIN_PROBE_TIMEOUT_SECS`] fails the same way, so a parked
+/// keychain service delays startup by the bound and no longer blocks it.
 fn auto_chain(secrets_path: &Path) -> Result<VaultBackendKind, VaultError> {
-    auto_chain_with(KeychainBackend::probe, || FileBackend::probe(secrets_path))
+    auto_chain_with(
+        Duration::from_secs(KEYCHAIN_PROBE_TIMEOUT_SECS),
+        KeychainBackend::probe,
+        || FileBackend::probe(secrets_path),
+    )
 }
 
 /// Probe keychain, then file, then env-only using injectable probes.
+///
+/// `keychain_deadline` bounds the keychain probe; production passes
+/// [`KEYCHAIN_PROBE_TIMEOUT_SECS`] and tests pass a smaller value.
 fn auto_chain_with(
-    keychain_probe: impl FnOnce() -> Result<KeychainBackend, VaultError>,
+    keychain_deadline: Duration,
+    keychain_probe: impl FnOnce() -> Result<KeychainBackend, VaultError> + Send + 'static,
     file_probe: impl FnOnce() -> Result<FileBackend, VaultError>,
 ) -> Result<VaultBackendKind, VaultError> {
-    match keychain_probe() {
+    match KeychainBackend::bounded_probe(keychain_deadline, keychain_probe) {
         Ok(keychain) => return Ok(VaultBackendKind::Keychain(keychain)),
         // No credential store at all — the designed container fallback.
         Err(VaultError::NoBackend) => {}
+        // Already carries the probe's own remedy text; wrapping repeats the prefix.
+        Err(e @ VaultError::BackendUnavailable(_)) => return Err(e),
         Err(e) => return Err(VaultError::BackendUnavailable(e.to_string())),
     }
     if let Ok(file) = file_probe() {

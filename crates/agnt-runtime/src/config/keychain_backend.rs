@@ -5,6 +5,8 @@
 
 // region:    --- Modules
 
+use std::time::Duration;
+
 use keyring::v1::Entry;
 
 use super::vault::{BackendKind, VaultBackend, VaultError};
@@ -22,6 +24,13 @@ pub const INDEX_KEY: &str = "nu-agent:index";
 
 /// Key read by [`KeychainBackend::probe`] to detect a credential store.
 pub const PROBE_KEY: &str = "__vault_probe__";
+
+/// Upper bound, in seconds, on one keychain probe.
+///
+/// The probe reaches the OS credential service through a synchronous call with
+/// no cancellation point, so a parked service would block startup forever. Both
+/// selection chains pass this value; tests pass a smaller deadline.
+pub(crate) const KEYCHAIN_PROBE_TIMEOUT_SECS: u64 = 5;
 
 // endregion: --- Constants
 
@@ -49,6 +58,39 @@ impl KeychainBackend {
         match entry.get_password() {
             Ok(_) | Err(keyring::v1::Error::NoEntry) => Ok(Self),
             Err(e) => Err(map_error(e)),
+        }
+    }
+
+    /// Run `probe` with a hard upper bound on the wait.
+    ///
+    /// The probe is a synchronous OS call with no cancellation point, so the
+    /// bound is a thread plus a channel receive timeout: the probe runs on its
+    /// own thread and the caller stops waiting once `deadline` passes.
+    ///
+    /// A probe that outlives its deadline leaves one parked thread behind. That
+    /// is the accepted price of a bound that holds on every platform; reacting to
+    /// the macOS interaction-required signal instead would cover macOS alone.
+    /// Setting `AGENT_VAULT_BACKEND=env` or `AGENT_VAULT_BACKEND=file` skips the
+    /// probe entirely, which is the escape the timeout message names.
+    pub(crate) fn bounded_probe(
+        deadline: Duration,
+        probe: impl FnOnce() -> Result<Self, VaultError> + Send + 'static,
+    ) -> Result<Self, VaultError> {
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = result_tx.send(probe());
+        });
+        match result_rx.recv_timeout(deadline) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                Err(VaultError::BackendUnavailable(format!(
+                    "keychain probe did not respond within {deadline:?} (the keychain service is \
+                     parked or blocked; set AGENT_VAULT_BACKEND=env|file to proceed)"
+                )))
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(VaultError::Keychain(
+                "the keychain probe thread ended without a result".to_string(),
+            )),
         }
     }
 }

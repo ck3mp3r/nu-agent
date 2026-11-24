@@ -84,6 +84,11 @@ Typical recovery flow:
 2. Tool returns structured failure payload above.
 3. LLM sees payload in tool-result stream and issues corrected tool call.
 
+Connect failures are not fatal either. Each server's startup handshake is bounded, so a server that
+exits, rejects the connection, or never completes its `initialize` handshake is skipped with a
+startup warning that names it, and the remaining servers still connect. Its tools stay absent until
+the agent restarts — the same rule that applies when a connected server drops at runtime.
+
 Fatal errors still remain for unrecoverable command-level failures (for example: invalid top-level
 agent config or LLM provider initialization failures).
 

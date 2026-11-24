@@ -1,10 +1,11 @@
 //! Backend selection and auto-detection tests.
 
+use crate::config::file_backend::FileBackend;
 use crate::utils::env_map::EnvMap;
 
 use super::{
-    BackendChoice, BackendKind, EnvOnlyBackend, Vault, VaultBackend, VaultBackendKind,
-    backend_choice,
+    BackendChoice, BackendKind, EnvOnlyBackend, Vault, VaultBackend, VaultBackendKind, VaultError,
+    auto_chain_with, backend_choice,
 };
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -174,6 +175,41 @@ fn test_vault_auto_detect_uses_the_harness_env_var() -> Result<()> {
         vault.backend().kind(),
         BackendKind::EnvOnly,
         "AGENT_VAULT_BACKEND=env must select the env-only backend without probing the keychain"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_vault_auto_chain_bounds_a_parked_keychain_probe() -> Result<()> {
+    // -- Setup & Fixtures
+    // (the probes are the fixtures — the keychain probe never returns)
+    let deadline = std::time::Duration::from_millis(150);
+
+    // -- Exec
+    let result = auto_chain_with(
+        deadline,
+        || loop {
+            std::thread::park();
+        },
+        || Ok(FileBackend::new("/nonexistent")),
+    );
+
+    // -- Check
+    let error = result
+        .err()
+        .ok_or("a parked keychain probe must not block the selection")?;
+    let VaultError::BackendUnavailable(message) = &error else {
+        return Err(
+            format!("a parked probe must degrade to BackendUnavailable, got: {error:?}").into(),
+        );
+    };
+    assert!(
+        message.contains("did not respond within 150ms"),
+        "the message must name the timeout, got: {message}"
+    );
+    assert!(
+        message.contains("AGENT_VAULT_BACKEND=env|file"),
+        "the message must name the escape, got: {message}"
     );
     Ok(())
 }

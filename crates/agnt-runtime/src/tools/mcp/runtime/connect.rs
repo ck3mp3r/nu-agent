@@ -2,14 +2,16 @@
 //! OAuth auth), the batch that connects the enabled set, and the tool
 //! definitions it discovers.
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::defaults;
 use crate::config::vault::Vault;
 use crate::tools::mcp::MCP_TOOL_NAMESPACE_DELIMITER;
 use crate::tools::mcp::client::McpToolDefinition;
 use crate::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
-use crate::tools::mcp::namespaced::NamespacedClientHandler;
+use crate::tools::mcp::namespaced::{McpClientError, NamespacedClientHandler};
 
 use super::McpRuntime;
 use super::McpSessionHandle;
@@ -20,12 +22,27 @@ use super::servers::{
 };
 use super::stdio::{merged_stdio_env_with_pwd, resolve_caller_cwd, resolve_stdio_cwd};
 
+// region:    --- Constants
+
+/// Upper bound on one server's startup handshake.
+///
+/// rmcp applies no timeout of its own: the stdio child transport carries none,
+/// and a peer-request timeout is applied only when a caller configures one. A
+/// child that never answers the `initialize` request would therefore park
+/// startup forever, so every arm waits at most this long. The HTTP arms keep
+/// their client-level connect and read timeouts; this bound is defense in
+/// depth there.
+pub const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
+
+// endregion: --- Constants
+
 pub async fn connect_servers(
     tool_server_handle: &rig::tool::server::ToolServerHandle,
     servers: &[McpServerConfig],
     caller_cwd: Option<&std::path::Path>,
     max_tool_result_bytes: usize,
     vault: Option<&Arc<Vault>>,
+    connect_deadline: Duration,
 ) -> Result<McpRuntime, String> {
     let mut sessions = Vec::new();
     let mut connected_servers = std::collections::BTreeSet::new();
@@ -33,14 +50,25 @@ pub async fn connect_servers(
     let mut exposed_name_owner: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for server in select_enabled_servers(servers) {
-        let (service, server_tools) = connect_server(
+        let (service, server_tools) = match connect_server(
             tool_server_handle,
             server,
             caller_cwd,
             max_tool_result_bytes,
             vault,
+            connect_deadline,
         )
-        .await?;
+        .await
+        {
+            Ok(connected) => connected,
+            Err(message) => {
+                log::warn!(
+                    "MCP server '{}' unavailable at startup: {message}",
+                    server.name
+                );
+                continue;
+            }
+        };
 
         for tool in &server_tools {
             register_exposed_name(&mut exposed_name_owner, &tool.name, &server.name)?;
@@ -64,6 +92,7 @@ pub(crate) async fn connect_server(
     caller_cwd: Option<&std::path::Path>,
     max_tool_result_bytes: usize,
     vault: Option<&Arc<Vault>>,
+    connect_deadline: Duration,
 ) -> Result<
     (
         rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
@@ -115,10 +144,8 @@ pub(crate) async fn connect_server(
             let transport = rmcp::transport::TokioChildProcess::new(cmd)
                 .map_err(|e| format!("failed to build stdio transport: {e}"))?;
 
-            let (service, raw_tools) = handler
-                .connect(transport)
-                .await
-                .map_err(|e| format!("failed to connect stdio MCP server: {e}"))?;
+            let (service, raw_tools) =
+                bounded_connect("stdio", connect_deadline, handler.connect(transport)).await?;
 
             let discovered_tools = build_tool_definitions(server_name, raw_tools)?;
             Ok((service, discovered_tools))
@@ -133,10 +160,9 @@ pub(crate) async fn connect_server(
                         build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS)?,
                         config,
                     );
-                    let (service, raw_tools) = handler
-                        .connect(transport)
-                        .await
-                        .map_err(|e| format!("failed to connect http MCP server: {e}"))?;
+                    let (service, raw_tools) =
+                        bounded_connect("http", connect_deadline, handler.connect(transport))
+                            .await?;
 
                     let discovered_tools = build_tool_definitions(server_name, raw_tools)?;
                     Ok((service, discovered_tools))
@@ -217,16 +243,36 @@ pub(crate) async fn connect_server(
                         auth_client,
                         config,
                     );
-                    let (service, raw_tools) = handler
-                        .connect(transport)
-                        .await
-                        .map_err(|e| format!("failed to connect http MCP server: {e}"))?;
+                    let (service, raw_tools) =
+                        bounded_connect("http", connect_deadline, handler.connect(transport))
+                            .await?;
 
                     let discovered_tools = build_tool_definitions(server_name, raw_tools)?;
                     Ok((service, discovered_tools))
                 }
             }
         }
+    }
+}
+
+// region:    --- Support
+
+/// Await one server's startup under `deadline`.
+///
+/// `connect` covers rmcp's whole startup: the `initialize` request, the
+/// initialized notification, and the first `tools/list`. A timeout reports the
+/// bound; the caller adds the server name to the startup warning.
+async fn bounded_connect<T>(
+    transport: &str,
+    deadline: Duration,
+    connect: impl Future<Output = Result<T, McpClientError>>,
+) -> Result<T, String> {
+    match tokio::time::timeout(deadline, connect).await {
+        Ok(Ok(connected)) => Ok(connected),
+        Ok(Err(e)) => Err(format!("failed to connect {transport} MCP server: {e}")),
+        Err(_) => Err(format!(
+            "initialize handshake did not complete within {deadline:?}"
+        )),
     }
 }
 
@@ -249,3 +295,5 @@ fn build_tool_definitions(
     }
     Ok(discovered_tools)
 }
+
+// endregion: --- Support

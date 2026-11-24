@@ -1209,6 +1209,10 @@ agent session inspect <id> [--store <type>]
 agent a2a --agent <name> [--port <port>] [--mesh-key <key>]
 ```
 
+### Provider auth (OS keychain)
+
+Provider credentials live in the OS keychain, and the startup probe that detects it is time-bounded. If the keychain service does not answer within 5 seconds, the agent stops waiting and reports the keychain backend as unavailable instead of blocking startup. The report names the escape: set `AGENT_VAULT_BACKEND=env` to read secrets from the environment, or `AGENT_VAULT_BACKEND=file` to use the plaintext file store.
+
 ### A2A serve
 
 `agent a2a` serves this agent on the mesh. A mesh peer must be launched with `--agent <name>`; without it the peer refuses to serve, because its identity, hook envelopes, facts, and agent card all stamp from the persona.

@@ -11,7 +11,7 @@ mod servers;
 mod state;
 mod stdio;
 
-pub use connect::connect_servers;
+pub use connect::{CONNECT_DEADLINE, connect_servers};
 
 #[cfg(test)]
 pub(crate) use http::build_http_transport_config;

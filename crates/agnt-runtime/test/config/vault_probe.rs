@@ -7,6 +7,11 @@ use super::{BackendChoice, VaultBackendKind, VaultError, auto_chain_with, resolv
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// The probe bound the production chains pass; these pins pass the same value
+/// so they exercise the real wait, not a shortened one.
+const PROBE_DEADLINE: std::time::Duration =
+    std::time::Duration::from_secs(super::super::keychain_backend::KEYCHAIN_PROBE_TIMEOUT_SECS);
+
 // region:    --- Tests
 
 #[test]
@@ -18,6 +23,7 @@ fn test_vault_probe_auto_chain_keychain_ok_skips_file_probe() -> Result<()> {
 
     // -- Exec
     let backend = auto_chain_with(
+        PROBE_DEADLINE,
         move || {
             keychain_calls
                 .lock()
@@ -55,6 +61,7 @@ fn test_vault_probe_auto_chain_no_backend_then_file_ok() -> Result<()> {
 
     // -- Exec
     let backend = auto_chain_with(
+        PROBE_DEADLINE,
         || Err(VaultError::NoBackend),
         || Ok(FileBackend::new("/nonexistent")),
     )?;
@@ -73,7 +80,11 @@ fn test_vault_probe_auto_chain_no_backend_then_file_err_falls_back_to_env_only()
     // (probes are the fixtures — no real keychain or filesystem is touched)
 
     // -- Exec
-    let backend = auto_chain_with(|| Err(VaultError::NoBackend), || Err(VaultError::NoDataDir))?;
+    let backend = auto_chain_with(
+        PROBE_DEADLINE,
+        || Err(VaultError::NoBackend),
+        || Err(VaultError::NoDataDir),
+    )?;
 
     // -- Check
     assert!(
@@ -90,6 +101,7 @@ fn test_vault_probe_auto_chain_keychain_locked_is_backend_unavailable() -> Resul
 
     // -- Exec
     let result = auto_chain_with(
+        PROBE_DEADLINE,
         || Err(VaultError::Keychain("locked".to_string())),
         || Ok(FileBackend::new("/nonexistent")),
     );

@@ -140,6 +140,7 @@ impl McpState {
             self.mcp_caller_cwd.as_deref(),
             self.max_tool_result_bytes,
             self.vault.as_ref(),
+            crate::tools::mcp::runtime::CONNECT_DEADLINE,
         )
         .await
         {
