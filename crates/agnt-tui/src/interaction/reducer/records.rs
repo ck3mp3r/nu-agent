@@ -9,7 +9,7 @@ use agnt_runtime::bus::{ControlCommand, LifecycleEvent};
 use agnt_runtime::protocol::events::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NarrationEvent,
     NoticeKind as RecordNotice, PermissionRecord, PromptStamps, SessionLifecycle, SessionRecord,
-    ToolCall, ToolCallId, ToolRecord, TurnRecord,
+    SummaryStage, ToolCall, ToolCallId, ToolRecord, TurnRecord,
 };
 use agnt_runtime::tools::handler::ToolSource;
 
@@ -153,6 +153,15 @@ pub(super) fn reduce_input(state: &mut AppState, input: RenderInput<'_>) -> bool
                 .compaction
                 .started(&mut state.transcript, source_label(Some(*source)))
         }
+        // A split turn streams two passes into one block. The history pass is
+        // the one the surface paints; the turn-prefix pass renders nothing
+        // mid-flight — repainting under it would rewrite the rows the history
+        // pass already showed. Its text still reaches the block through the
+        // merged summary the completion carries.
+        RenderInput::Record(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
+            stage: SummaryStage::TurnPrefix,
+            ..
+        })) => false,
         RenderInput::Record(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source,
             aggregated,

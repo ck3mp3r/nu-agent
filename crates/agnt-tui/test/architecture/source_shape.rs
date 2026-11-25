@@ -217,6 +217,123 @@ fn test_architecture_source_shape_bans_flag_rogue_fixtures() -> Result<()> {
     let derivations = derivation_sites(&sources);
     assert_eq!(derivations.len(), 2, "{derivations:#?}");
     assert!(derivations.iter().any(|site| site.starts_with(rogue)));
+
+    // -- Exec & Check: a consumer naming a gated command is flagged, for either
+    // command of the pair.
+    for command in GATED_COMMANDS {
+        let sources: Vec<(String, String)> = AVAILABILITY_CONSUMERS
+            .iter()
+            .map(|module| {
+                (
+                    module.to_string(),
+                    format!(
+                        "fn rogue(command: SlashCommand) -> bool {{\n    command == SlashCommand::{command}\n}}\n"
+                    ),
+                )
+            })
+            .collect();
+        let leaks = gate_leaks(&sources);
+        assert_eq!(
+            leaks.len(),
+            AVAILABILITY_CONSUMERS.len(),
+            "a consumer naming `{command}` must be flagged: {leaks:?}"
+        );
+    }
+    assert!(gate_leaks(&[]).is_empty());
+
+    // -- Exec & Check: a second derivation of the undo's arm is a second site, so
+    // the pin cannot miss it.
+    let second_derivation = "agnt-tui/src/state/availability_again.rs";
+    let arm = AVAILABILITY_ARMS
+        .iter()
+        .find(|(arm, _)| arm.starts_with("Uncompact"))
+        .ok_or("the undo must be a gated command")?;
+    let source = concat!(
+        "fn rogue(command: SlashCommand) -> Availability {\n",
+        "    match command {\n",
+        "        SlashCommand::Uncompact => Availability::Available,\n",
+        "        _ => Availability::Available,\n",
+        "    }\n",
+        "}\n",
+    )
+    .to_string();
+    let sites = arm_sites(&[(second_derivation.to_string(), source)], arm.0);
+    assert_eq!(sites.len(), 1, "{sites:#?}");
+    assert!(sites[0].0.starts_with(second_derivation));
+    Ok(())
+}
+
+/// The files whose behaviour a gated command must not touch: the palette's rows,
+/// the palette's drawer, and the submit lane. Each derives what it shows and
+/// refuses from `CommandAvailability`, so a third gated command adds one arm to
+/// that impl and nothing here.
+const AVAILABILITY_CONSUMERS: [&str; 3] = [
+    "agnt-tui/src/interaction/reducer/support.rs",
+    "agnt-tui/src/interaction/reducer/submit.rs",
+    "agnt-tui/src/runtime/panels.rs",
+];
+
+/// The one file that maps a command to its availability.
+const AVAILABILITY_DERIVATION: &str = "agnt-tui/src/state/status.rs";
+
+/// Every gated command: the arm it carries in the availability impl, and the pair
+/// field that arm reads. The arm is the one place a command is mapped to whether
+/// it may run, so a second derivation anywhere carries the arm's text.
+const AVAILABILITY_ARMS: [(&str, &str); 2] = [
+    ("Compact => Availability", "command_availability.compact"),
+    (
+        "Uncompact => Availability",
+        "command_availability.uncompact",
+    ),
+];
+
+/// The commands a consumer may not name: naming one is deciding for it.
+const GATED_COMMANDS: [&str; 2] = ["Compact", "Uncompact"];
+
+/// WHEN a command is gated, THEN THE gate SHALL live in one availability impl and
+/// SHALL appear NOWHERE in the consumers: no consumer names a command to decide
+/// whether it may run, so a third gated command touches only its own arm and its
+/// own field of the pair.
+#[test]
+fn test_architecture_command_gates_live_in_one_availability_impl() -> Result<()> {
+    // -- Setup & Fixtures: every production source of the workspace.
+    let sources = workspace_sources()?;
+
+    // -- Exec
+    let sites: Vec<(String, String)> = AVAILABILITY_ARMS
+        .iter()
+        .flat_map(|(arm, _)| arm_sites(&sources, arm))
+        .collect();
+    let leaks = gate_leaks(&sources);
+
+    // -- Check: each gated command's mapping exists once, in the availability
+    // impl, and reads its own field of the pair.
+    for (arm, field) in AVAILABILITY_ARMS {
+        let sites: Vec<&(String, String)> = sites
+            .iter()
+            .filter(|(_, line)| line.contains(arm))
+            .collect();
+        assert_eq!(
+            sites.len(),
+            1,
+            "the `{arm}` mapping must exist once: {sites:?}"
+        );
+        assert!(
+            sites[0].0.starts_with(AVAILABILITY_DERIVATION),
+            "the `{arm}` mapping belongs to the availability impl: {sites:?}"
+        );
+        assert!(
+            sites[0].1.contains(field),
+            "the `{arm}` arm must read `{field}`: {sites:?}"
+        );
+    }
+
+    // -- Check: no consumer carries per-command gate knowledge.
+    assert!(
+        leaks.is_empty(),
+        "the palette builder, the drawer and the submit lane must stay \
+         command-agnostic: {leaks:?}"
+    );
     Ok(())
 }
 
@@ -327,6 +444,38 @@ fn derivation_sites(sources: &[(String, String)]) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Every site carrying one availability arm, as (`module:line`, trimmed line).
+fn arm_sites(sources: &[(String, String)], arm: &str) -> Vec<(String, String)> {
+    sources
+        .iter()
+        .flat_map(|(module, source)| {
+            source
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.contains(arm))
+                .map(|(index, line)| (format!("{module}:{}", index + 1), line.trim().to_string()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Every consumer module that names a gated command, and the command it names:
+/// the name is the per-command knowledge the availability impl alone may hold.
+fn gate_leaks(sources: &[(String, String)]) -> Vec<String> {
+    let mut leaks = Vec::new();
+    for module in AVAILABILITY_CONSUMERS {
+        let Some((_, source)) = sources.iter().find(|(name, _)| name == module) else {
+            continue;
+        };
+        for command in GATED_COMMANDS {
+            if source.contains(command) {
+                leaks.push(format!("{module} names `{command}`"));
+            }
+        }
+    }
+    leaks
 }
 
 // endregion: --- Test Support

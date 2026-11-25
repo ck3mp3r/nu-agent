@@ -8,11 +8,11 @@ mod hub;
 
 pub use agnt_kernel::bus::{
     AgentEvent, AgentRx, AgentTx, BroadcastRx, BroadcastTx, CancelEvent, CancelRx, CancelTx,
-    ChannelError, ChannelResult, Control, ControlCommand, ControlRx, ControlTx, FactRecord, Facts,
-    FactsRx, FactsTx, Lifecycle, LifecycleEvent, LifecycleRx, LifecycleTx, McpServerUsability,
-    MpscRx, MpscTx, Narration, NarrationEvent, NarrationRx, NarrationTx, OneshotRx, OneshotTx,
-    PublishError, ReceiveError, SharedUiAction, Stream, StrictSubscription, Subscription,
-    TryReceiveError, TryRecvError,
+    ChannelError, ChannelResult, CommandFacts, CompactionAvailability, Control, ControlCommand,
+    ControlRx, ControlTx, FactRecord, Facts, FactsRx, FactsTx, Lifecycle, LifecycleEvent,
+    LifecycleRx, LifecycleTx, McpServerUsability, MpscRx, MpscTx, Narration, NarrationEvent,
+    NarrationRx, NarrationTx, OneshotRx, OneshotTx, PublishError, ReceiveError, SharedUiAction,
+    Stream, StrictSubscription, Subscription, TryReceiveError, TryRecvError,
 };
 pub use domain::{
     PermissionCard, RequestCancel, auto_resolve_permission, request_permission, settle_permission,

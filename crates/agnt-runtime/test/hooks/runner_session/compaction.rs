@@ -183,6 +183,7 @@ async fn test_hooks_runner_compaction_summary_chunk_invokes_nothing() -> Result<
         .stream()
         .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
+            stage: SummaryStage::History,
             delta: "chunk".to_string(),
             aggregated: "chunk".to_string(),
         }));

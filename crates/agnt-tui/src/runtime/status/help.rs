@@ -5,7 +5,7 @@ use agnt_render::transcript::ir::ContentLine;
 use crate::rendering::theme::TuiTheme;
 use crate::runtime::panels::wrap_panel_lines;
 use crate::runtime::render::UnhandledPayload;
-use crate::state::{AppState, PickerPayload, PickerRenderKind};
+use crate::state::{AppState, Availability, CommandAvailability, PickerPayload, PickerRenderKind};
 use crate::widgets::text::hint_style;
 
 use super::content::build_status_lines;
@@ -79,7 +79,7 @@ pub(crate) fn inline_slash_lines_for_render(
             } else {
                 Span::raw(marker)
             };
-            let PickerPayload::Slash(command) = &opt.payload else {
+            let PickerPayload::Slash { command, .. } = &opt.payload else {
                 unhandled.warn(&opt.payload);
                 return Line::from(vec![
                     marker_span,
@@ -88,14 +88,26 @@ pub(crate) fn inline_slash_lines_for_render(
                 ]);
             };
             let label = command.label();
-            let summary = command.summary();
-            Line::from(vec![
+            let mut spans = vec![
                 marker_span,
                 Span::raw(" "),
                 Span::styled(label.to_string(), theme.subtle_meta),
                 Span::raw(" — "),
-                Span::styled(summary.to_string(), theme.tool_meta),
-            ])
+                Span::styled(command.summary().to_string(), theme.tool_meta),
+            ];
+            // A command that cannot run now is drawn in the picker's one dimmed
+            // vocabulary — the style the model picker puts on a row it cannot
+            // switch to. The row keeps its label and summary: the style alone says
+            // it cannot act, and the reason stays the submit lane's refusal text.
+            if matches!(
+                command.availability(&state.status),
+                Availability::Unavailable(_)
+            ) {
+                for span in &mut spans {
+                    span.style = theme.picker_row_unavailable;
+                }
+            }
+            Line::from(spans)
         })
         .collect()
 }

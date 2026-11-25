@@ -20,7 +20,7 @@
 
 use crate::records::{
     CompactionSource, InferenceId, NoticeKind, PermissionDecision, PermissionRecord, RequestId,
-    Usage,
+    SummaryStage, Usage,
 };
 
 // region:    --- Types
@@ -187,9 +187,10 @@ pub enum NarrationEvent {
     InferenceCompleted { usage: Usage },
     /// A hook or the user stopped the run.
     InferenceStopped { reason: String },
-    /// One streamed delta of a compaction summary.
+    /// One streamed delta of a compaction summary, of the pass `stage` names.
     CompactionSummaryChunk {
         source: CompactionSource,
+        stage: SummaryStage,
         delta: String,
         aggregated: String,
     },
@@ -237,6 +238,10 @@ pub enum FactRecord {
     McpVisibleToolCount { server: String, count: usize },
     /// Which tools one MCP server exposes to the model.
     McpVisibleToolNames { server: String, names: Vec<String> },
+    /// Whether the compaction commands can run now: `/compact` once a sweep has
+    /// something to cut, `/uncompact` while a summary waits to be put back. One
+    /// read answers both, so no surface can see the two disagree.
+    CommandAvailability(CommandFacts),
 }
 
 /// What the worker is doing now.
@@ -278,4 +283,60 @@ pub enum McpServerUsability {
     Failed,
 }
 
+/// Whether one gated command can run now, and why not when it cannot.
+///
+/// The variant is the whole disposition: a consumer that acts on the difference
+/// matches it, and the reason is content — the producer knows why, and the layer
+/// that prints it owns the sentence it shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionAvailability {
+    /// The command would do its work now.
+    Available,
+    /// The command has nothing to do, for the reason carried.
+    Unavailable(String),
+}
+
+/// The compaction commands' availability, answered by one read of the session's
+/// conversation: one field per gated command.
+///
+/// `/compact` needs something a sweep would summarize; `/uncompact` needs a
+/// leading summary to put back. The two answers are near-complements over the
+/// same state, and they travel as one fact, so every surface folds the same read.
+/// A third gated command adds one field here and one arm on each surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandFacts {
+    /// Whether a sweep would summarize anything.
+    pub compact: CompactionAvailability,
+    /// Whether a summary waits to be put back.
+    pub uncompact: CompactionAvailability,
+}
+
 // endregion: --- Types
+
+// region:    --- Defaults
+
+/// What a surface displays for `/compact` before the runtime has read the
+/// session: nothing waits to be summarized yet, so a sweep has nothing to cut.
+///
+/// The sentence is the kernel's own. The runtime's predicate carries the sweep's
+/// text in the runtime crate, which the kernel must not see; the pre-fact window
+/// is the producer of this text.
+const NOTHING_TO_COMPACT_YET: &str = "Nothing to compact: the session holds no conversation yet.";
+
+/// What a surface displays for `/uncompact` before the runtime has read the
+/// session: nothing was compacted yet, so there is nothing to put back.
+const NOTHING_TO_UNDO_YET: &str = "Nothing to undo: the session holds no compaction yet.";
+
+impl Default for CommandFacts {
+    /// The pre-fact display truth: before the runtime answers, neither command is
+    /// offered, because a session nothing has been read from has nothing to
+    /// compact and nothing to undo.
+    fn default() -> Self {
+        Self {
+            compact: CompactionAvailability::Unavailable(NOTHING_TO_COMPACT_YET.to_string()),
+            uncompact: CompactionAvailability::Unavailable(NOTHING_TO_UNDO_YET.to_string()),
+        }
+    }
+}
+
+// endregion: --- Defaults

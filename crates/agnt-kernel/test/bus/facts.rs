@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::bus::{Bus, FactRecord, McpServerUsability, ReceiveError, WorkerPhase};
+use crate::bus::{
+    Bus, CommandFacts, CompactionAvailability, FactRecord, McpServerUsability, ReceiveError,
+    WorkerPhase,
+};
 
 use crate::test_support::Result;
 
@@ -126,6 +129,49 @@ async fn test_facts_under_capacity_arrive_complete() -> Result<()> {
         seen,
         (0..8).map(|i| format!("model-{i}")).collect::<Vec<_>>(),
         "under capacity, facts must arrive complete and in order"
+    );
+    Ok(())
+}
+
+/// WHEN a surface holds no answer from the runtime yet, THE default pair SHALL
+/// say both gated commands have nothing to do: a session the runtime has not
+/// read offers neither, so the pre-fact window cannot show a command that would
+/// do nothing.
+///
+/// The two reasons are the kernel's own pre-fact texts. The runtime's predicate
+/// carries the sweep's sentence in its own crate; the kernel cannot name it, and
+/// the window that shows this default is the producer of this text.
+#[test]
+fn test_facts_command_facts_default_is_both_unavailable() -> Result<()> {
+    // -- Setup & Fixtures
+    let default = CommandFacts::default();
+
+    // -- Check: no command is offered before the runtime answers.
+    let compact_reason = match &default.compact {
+        CompactionAvailability::Unavailable(reason) => reason,
+        CompactionAvailability::Available => {
+            return Err("a surface with no answer SHALL NOT offer the sweep".into());
+        }
+    };
+    let uncompact_reason = match &default.uncompact {
+        CompactionAvailability::Unavailable(reason) => reason,
+        CompactionAvailability::Available => {
+            return Err("a surface with no answer SHALL NOT offer the undo".into());
+        }
+    };
+
+    // -- Check: each reason is the kernel's own sentence for its command.
+    assert!(
+        compact_reason.starts_with("Nothing to compact"),
+        "the sweep's pre-fact reason names the sweep: {compact_reason:?}"
+    );
+    assert!(
+        uncompact_reason.starts_with("Nothing to undo"),
+        "the undo's pre-fact reason names the undo: {uncompact_reason:?}"
+    );
+    assert_ne!(
+        compact_reason, uncompact_reason,
+        "one reason per command, so a row never prints the other's sentence"
     );
     Ok(())
 }

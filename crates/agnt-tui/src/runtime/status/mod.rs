@@ -13,3 +13,7 @@ pub(crate) mod test;
 #[cfg(test)]
 #[path = "../../../test/runtime/status/help.rs"]
 pub(crate) mod help_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/status/availability.rs"]
+pub(crate) mod availability_test;

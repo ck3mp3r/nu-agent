@@ -746,6 +746,7 @@ the store that was dropped.
 - A request the provider refuses as too long schedules a compaction for the next request, without waiting for the threshold.
 - Manual slash trigger:
   - `/compact` triggers force compaction immediately (bypasses the threshold gate)
+  - a session that ends in its most recent compaction has nothing left to cut: `/compact` answers a warning saying so, publishes no completion block, and the inline suggestion row carries that reason instead of the command's summary — a turn after the compaction makes the command available again
   - `/uncompact` restores what the most recent compaction replaced (with nothing to undo it warns and changes nothing)
   - `/compact <args>` is treated as unknown for now
   - unknown slash commands emit a warning and processing continues

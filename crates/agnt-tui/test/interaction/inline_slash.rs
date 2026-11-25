@@ -1,5 +1,7 @@
 use super::*;
 
+use agnt_runtime::bus::FactRecord;
+
 #[test]
 fn inline_slash_suggestions_open_and_close_table() {
     // Suggestions open on a leading slash.
@@ -28,11 +30,18 @@ fn inline_slash_suggestions_open_and_close_table() {
 
 #[test]
 fn inline_slash_command_routing_table() {
-    // Enter on /compact triggers the compaction path.
+    // Enter on /compact triggers the compaction path once the runtime offers it.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("/compact".to_string()),
         ..Default::default()
     };
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
@@ -64,6 +73,13 @@ fn inline_slash_command_routing_table() {
             input: InputState::default().with_pending_submit_text(command.to_string()),
             ..Default::default()
         };
+        assert!(
+            state
+                .status
+                .reduce_fact_record(FactRecord::CommandAvailability(
+                    crate::test_support::both_commands_available()
+                ))
+        );
 
         let changed =
             dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -77,6 +93,13 @@ fn inline_slash_command_routing_table() {
 
     // Tab on a real inline-slash selection submits the highlighted command.
     let mut state = AppState::default();
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
     state.check_inline_slash("/");
     for _ in 0..5 {
         if let Some(s) = state.picker.active_state_mut() {

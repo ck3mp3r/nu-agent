@@ -5,31 +5,53 @@
 //! started — and returns, so a slow or wedged provider client holds nobody. The
 //! turn executor owns the build, and the next attempt after it lands sweeps.
 
-use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
+use agnt_kernel::{CompactionRecord, CompactionSource, NoticeRecord, SessionRecord};
 
 use super::harness::*;
 use super::*;
 use crate::session::management::SessionPersistence;
 
-/// The compaction rows `rx` carries, in publication order.
-fn compaction_rows(
+/// The session the harness attaches the runtime to.
+const SESSION: &str = "test-session";
+
+/// A conversation the runtime's compactor summarizes: the settings keep one
+/// token, so a short turn is still cut.
+fn seed_messages() -> Vec<crate::types::Message> {
+    vec![
+        crate::types::Message::user("first"),
+        crate::types::Message::assistant("reply"),
+        crate::types::Message::user("second"),
+        crate::types::Message::assistant("second reply"),
+    ]
+}
+
+/// The ladder rows and the notices `rx` carries, in publication order.
+///
+/// A sweep with nothing to summarize publishes no ladder row at all: its answer
+/// is the notice, so the two are drained together or the no-op reads as silence.
+fn ladder_rows(
     rx: &mut agnt_kernel::bus::Subscription<SessionRecord>,
-) -> Vec<CompactionRecord> {
+) -> (Vec<CompactionRecord>, Vec<NoticeRecord>) {
     let mut rows = Vec::new();
+    let mut notices = Vec::new();
     while let Ok(record) = rx.try_recv() {
-        if let SessionRecord::Compaction(row) = record {
-            rows.push(row);
+        match record {
+            SessionRecord::Compaction(row) => rows.push(row),
+            SessionRecord::Notice(notice) => notices.push(notice),
+            _ => {}
         }
     }
-    rows
+    (rows, notices)
 }
 
 /// WHEN a switch left the slot stale, THEN `run_compaction` SHALL publish
 /// `Requested`, start no sweep, and leave the slot stale for the next use.
 #[tokio::test]
 async fn a_stale_slot_yields_the_manual_sweep() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: a conversation the sweep would cut, so the availability
+    // gate answers Available before the slot is read.
     let mut fixture = make_runtime(text_model("unused"))?;
+    seed_conversation(&fixture, SESSION, &seed_messages()).await?;
     let mut rows = fixture.runtime.bus.stream().subscribe();
     fixture.runtime.dyn_model.mark_pending();
 
@@ -41,13 +63,17 @@ async fn a_stale_slot_yields_the_manual_sweep() -> Result<()> {
         .map_err(|e| format!("a yielded sweep is not a failure: {e}"))?;
 
     // -- Check: the request is the only row, and the debt is still owed.
-    let published = compaction_rows(&mut rows);
+    let (published, notices) = ladder_rows(&mut rows);
     assert_eq!(
         published,
         vec![CompactionRecord::Requested {
             source: CompactionSource::Manual
         }],
         "a sweep that cannot read the model reports the request only"
+    );
+    assert!(
+        notices.is_empty(),
+        "a yielded sweep answers nothing: it has not read the conversation"
     );
     assert!(
         !published
@@ -66,8 +92,10 @@ async fn a_stale_slot_yields_the_manual_sweep() -> Result<()> {
 /// way; WHEN that build lands, THEN the next attempt SHALL take the sweep.
 #[tokio::test]
 async fn the_sweep_takes_the_slot_once_the_build_lands() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: a conversation the sweep cuts, so only the model slot
+    // stands between the attempt and the sweep.
     let mut fixture = make_runtime(text_model("unused"))?;
+    seed_conversation(&fixture, SESSION, &seed_messages()).await?;
     let mut rows = fixture.runtime.bus.stream().subscribe();
     fixture.runtime.dyn_model.mark_pending();
 
@@ -79,7 +107,7 @@ async fn the_sweep_takes_the_slot_once_the_build_lands() -> Result<()> {
         .await
         .map_err(|e| format!("the yielded attempt is not a failure: {e}"))?;
     assert_eq!(
-        compaction_rows(&mut rows),
+        ladder_rows(&mut rows).0,
         vec![CompactionRecord::Requested {
             source: CompactionSource::Manual
         }],
@@ -97,8 +125,9 @@ async fn the_sweep_takes_the_slot_once_the_build_lands() -> Result<()> {
         .await
         .map_err(|e| format!("the sweep should run: {e}"))?;
 
-    // -- Check: no second request, and the sweep reached its own ladder.
-    let published = compaction_rows(&mut rows);
+    // -- Check: no second request, and the sweep ran — the conversation now ends
+    // in the summary it spliced, so no no-op notice answers either.
+    let (published, notices) = ladder_rows(&mut rows);
     assert!(
         !published
             .iter()
@@ -106,11 +135,14 @@ async fn the_sweep_takes_the_slot_once_the_build_lands() -> Result<()> {
         "an attempt that reads the model asks for nothing; got {published:?}"
     );
     assert!(
-        published.iter().any(|row| matches!(
-            row,
-            CompactionRecord::Completed { .. } | CompactionRecord::Started { .. }
-        )),
-        "the sweep reached the compaction ladder; got {published:?}"
+        published
+            .iter()
+            .any(|row| matches!(row, CompactionRecord::Completed { .. })),
+        "the sweep completes once the build lands; got {published:?}"
+    );
+    assert!(
+        notices.is_empty(),
+        "a sweep with something to cut answers with its summary, not a notice: {notices:?}"
     );
     Ok(())
 }

@@ -1,7 +1,8 @@
 use super::*;
 use crate::interaction::reducer::{RenderInput, reduce};
+use crate::state::StatusMessageKind;
 use crate::test_support::entry_text;
-use agnt_runtime::bus::ControlCommand;
+use agnt_runtime::bus::{CommandFacts, CompactionAvailability, ControlCommand, FactRecord};
 use agnt_runtime::protocol::contracts::SharedUiAction;
 
 #[test]
@@ -55,6 +56,173 @@ fn dispatch_edit_actions_are_noops() {
     // [User] — no leading or trailing spacer under the unified spacer rule
     assert_eq!(state.transcript.len(), 1);
     assert_eq!(entry_text(&state.transcript.entries()[0]).trim(), "h");
+}
+
+/// WHEN `/compact` is submitted while the runtime answers that nothing is left to
+/// cut, THEN THE submit lane SHALL refuse it with that reason and SHALL enqueue
+/// nothing: no turn starts, nothing reaches the orchestrator, and the command
+/// text is not echoed.
+#[test]
+fn test_interaction_submit_refuses_an_unavailable_compact_with_the_reason() -> Result<()> {
+    // -- Setup & Fixtures: the runtime's answer, folded as the surface receives it.
+    let reason = "the conversation ends with its most recent compaction.";
+    let mut state = AppState::default();
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(CommandFacts {
+                compact: CompactionAvailability::Unavailable(reason.to_string()),
+                ..CommandFacts::default()
+            }))
+    );
+    state.input = InputState::default().with_pending_submit_text("/compact".to_string());
+
+    // -- Exec: one typed submit.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    // -- Check: the refusal is the reason the surface carried, in a warning line.
+    assert!(changed);
+    assert_eq!(state.status.message.status_line(), reason);
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
+
+    // -- Check: nothing was submitted, and nothing is echoed.
+    assert_eq!(state.phase, UiPhase::Idle, "no turn starts");
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        None,
+        "a refused command SHALL NOT reach the orchestrator"
+    );
+    assert_eq!(state.pending_prompt_count(), 0, "no prompt is queued");
+    assert!(
+        state.transcript.entries().is_empty(),
+        "the command text is not echoed"
+    );
+    Ok(())
+}
+
+/// WHEN `/uncompact` is submitted while the runtime answers that no compaction
+/// waits to be undone, THEN THE submit lane SHALL refuse it with that reason and
+/// SHALL enqueue nothing: the undo's gate is the same seam as the sweep's.
+#[test]
+fn test_interaction_submit_refuses_an_unavailable_uncompact_with_the_reason() -> Result<()> {
+    // -- Setup & Fixtures: the runtime's answer, folded as the surface receives it.
+    let reason = "the conversation holds no compaction.";
+    let mut state = AppState::default();
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(CommandFacts {
+                uncompact: CompactionAvailability::Unavailable(reason.to_string()),
+                ..CommandFacts::default()
+            }))
+    );
+    state.input = InputState::default().with_pending_submit_text("/uncompact".to_string());
+
+    // -- Exec: one typed submit.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    // -- Check: the refusal is the reason the surface carried, in a warning line.
+    assert!(changed);
+    assert_eq!(state.status.message.status_line(), reason);
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
+
+    // -- Check: nothing was submitted, and nothing is echoed.
+    assert_eq!(state.phase, UiPhase::Idle, "no undo starts");
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        None,
+        "a refused command SHALL NOT reach the orchestrator"
+    );
+    assert_eq!(state.pending_prompt_count(), 0, "no prompt is queued");
+    assert!(
+        state.transcript.entries().is_empty(),
+        "the command text is not echoed"
+    );
+    Ok(())
+}
+
+/// WHEN the runtime answers that a sweep has work to do, THE same submit SHALL
+/// proceed: `/compact` reaches the orchestrator on the immediate lane.
+#[test]
+fn test_interaction_submit_dispatches_an_available_compact() -> Result<()> {
+    // -- Setup & Fixtures: the runtime answers that both commands have work.
+    let mut state = AppState {
+        input: InputState::default().with_pending_submit_text("/compact".to_string()),
+        ..Default::default()
+    };
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
+
+    // -- Exec
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+
+    // -- Check: the command went out, and no block or prompt row was invented.
+    assert!(changed);
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        Some("/compact".to_string()),
+        "an available command reaches the orchestrator"
+    );
+    assert!(
+        state.transcript.entries().is_empty(),
+        "the command text is not echoed"
+    );
+    Ok(())
+}
+
+/// WHEN the availability changes after the suggestion rows were built, THEN THE
+/// accept lane SHALL still refuse the command with the reason: the reducer's
+/// refusal is the race backstop, and the rows were drawn from the older answer.
+#[test]
+fn test_interaction_submit_refuses_an_unavailable_compact_from_inline_suggestions() -> Result<()> {
+    // -- Setup & Fixtures: `/c` narrows the list onto `/compact` while the
+    // runtime still answers that the command can run, so the row is built as
+    // available.
+    let reason = "the conversation ends with its most recent compaction.";
+    let mut state = AppState::default();
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
+    state.check_inline_slash("/c");
+    assert_eq!(
+        state.picker.selected_slash_label(),
+        Some("/compact".to_string())
+    );
+
+    // -- Exec: the runtime's answer arrives after the rows were built, then the
+    // user accepts the stale row.
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(CommandFacts {
+                compact: CompactionAvailability::Unavailable(reason.to_string()),
+                ..CommandFacts::default()
+            }))
+    );
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
+
+    // -- Check: the submit lane refuses with the reason the surface carries, and
+    // nothing reaches the orchestrator.
+    assert!(changed);
+    assert_eq!(state.status.message.status_line(), reason);
+    assert_eq!(
+        state.take_next_prompt_for_execution(),
+        None,
+        "a refused suggestion SHALL NOT reach the orchestrator"
+    );
+    Ok(())
 }
 
 /// WHEN `/stats` is submitted from the input, THE handle_submit arm SHALL flip

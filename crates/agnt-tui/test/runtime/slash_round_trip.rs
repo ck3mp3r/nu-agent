@@ -11,6 +11,7 @@ use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
 use crate::state::UiPhase;
 use crate::test_support::{session_started_resumed, system_message};
 use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_runtime::bus::FactRecord;
 use agnt_runtime::orchestrator::events::OrchestratorEvent;
 use agnt_runtime::protocol::events::NoticeKind;
 
@@ -123,8 +124,16 @@ async fn test_runtime_slash_round_trip_picker_tab_accept_hands_off() -> Result<(
 /// the highlighted row of the narrowed list, never a stale index.
 #[tokio::test]
 async fn test_runtime_slash_round_trip_picker_narrow_tab_accepts_highlighted() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: the runtime offers both gated commands, so no row is
+    // stepped over and five Down presses count five rows.
     let mut driver = RenderLoopDriver::new(120, 30);
+    assert!(
+        driver
+            .coordinator_mut()
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
 
     // -- Exec: `/` opens the list; five Down presses highlight /status.
     driver

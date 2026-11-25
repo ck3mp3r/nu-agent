@@ -10,11 +10,16 @@ use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
 use crate::tools::closure::EngineInterfaceLike;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use agnt_kernel::bus::{LifecycleEvent, OneshotTx};
-use agnt_kernel::{CompactionRecord, SessionId, SessionLifecycle, SessionRecord};
+use agnt_kernel::bus::{
+    CommandFacts, CompactionAvailability, FactRecord, LifecycleEvent, OneshotTx,
+};
+use agnt_kernel::{
+    CompactionRecord, NoticeKind, NoticeRecord, SessionId, SessionLifecycle, SessionRecord,
+};
 
 use super::managers::{MultiAgentManager, PersonaManager, ProviderManager, ToolManager};
 use super::turn::TurnEnd;
+use crate::conversation::compaction::command_availability;
 use crate::conversation::managers::SessionManager;
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
@@ -368,7 +373,7 @@ where
         // reports is built here, where the response data and the config are in
         // hand. The end travels outward as that classification, so no consumer
         // re-derives it from an error message.
-        match outcome {
+        let end = match outcome {
             Ok(ExecuteOutcome::EarlyReturn(value)) => TurnEnd::Cancelled { value },
             Ok(ExecuteOutcome::Completed) => TurnEnd::Completed {
                 value: build_response(
@@ -379,7 +384,12 @@ where
                 ),
             },
             Err(failure) => TurnEnd::Failed(*failure),
-        }
+        };
+        // The turn's messages are the store's now, so whether `/compact` has
+        // anything left to cut may have changed: publish the answer every surface
+        // derives its command availability from.
+        self.publish_compaction_availability().await;
+        end
     }
 }
 
@@ -729,6 +739,14 @@ where
                 session_id: new_id,
                 hydrated: false,
             });
+        // A fresh session holds nothing to summarize and nothing to undo, and the
+        // pair the session the runtime just left carried does not survive the
+        // switch. The minted pair is the kernel default: it reads no store, and a
+        // session with no conversation yet answers exactly those two reasons.
+        let _ = self
+            .bus
+            .facts()
+            .publish(FactRecord::CommandAvailability(CommandFacts::default()));
     }
 }
 
@@ -761,6 +779,32 @@ where
         let Some(session_id) = self.final_session_id.clone() else {
             return Ok(());
         };
+
+        // One read, computed once and published for every surface: a session the
+        // sweep's own planner prepares nothing for — no conversation yet, only what
+        // a compaction already replaced, or a conversation inside the kept window —
+        // is not dispatched at all, and the refusal is the notice it is owed. The
+        // same read answers the undo, which the pair carries.
+        let facts = command_availability(
+            self.session.inner_memory(),
+            &session_id,
+            self.compaction.settings(),
+        )
+        .await;
+        let _ = self
+            .bus
+            .facts()
+            .publish(FactRecord::CommandAvailability(facts.clone()));
+        if let CompactionAvailability::Unavailable(reason) = facts.compact {
+            let _ = self
+                .bus
+                .stream()
+                .publish(SessionRecord::Notice(NoticeRecord {
+                    kind: NoticeKind::Warning,
+                    text: reason,
+                }));
+            return Ok(());
+        }
 
         // A compaction reads the model, and it is the second consumer of the
         // shared slot: the turn executor owns the build. So the sweep takes the
@@ -796,6 +840,11 @@ where
             self.bus.lifecycle(),
         )
         .await;
+        // The summary has landed, so the pair every surface derives its rows from
+        // is the post-compaction one: the sweep is spent and the undo now has
+        // something to put back. A sweep that failed leaves the store as it was,
+        // so the read answers the same pair it did before.
+        self.publish_compaction_availability().await;
         Ok(())
     }
 
@@ -803,6 +852,30 @@ where
         let Some(session_id) = self.final_session_id.clone() else {
             return Ok(());
         };
+
+        // The undo answers from the same read as its row: with no summary in the
+        // conversation there is nothing to put back, so the undo is not dispatched
+        // and the refusal is the notice it is owed.
+        let facts = command_availability(
+            self.session.inner_memory(),
+            &session_id,
+            self.compaction.settings(),
+        )
+        .await;
+        let _ = self
+            .bus
+            .facts()
+            .publish(FactRecord::CommandAvailability(facts.clone()));
+        if let CompactionAvailability::Unavailable(reason) = facts.uncompact {
+            let _ = self
+                .bus
+                .stream()
+                .publish(SessionRecord::Notice(NoticeRecord {
+                    kind: NoticeKind::Warning,
+                    text: reason,
+                }));
+            return Ok(());
+        }
 
         // The undo reads the session's own rig-memory log and writes the
         // restored conversation back: the entries the newest summary replaced
@@ -820,6 +893,9 @@ where
             // the store answered: clear both session-scoped inputs, as a
             // successful compaction does.
             reset_session_scoped_inputs(&self.store_latch, &self.meter);
+            // The summary is gone, so the pair flips back: the restored entries are
+            // what a sweep would cut, and the undo has nothing left to put back.
+            self.publish_compaction_availability().await;
         }
         result
     }
@@ -849,6 +925,8 @@ where
         // The switch starts a new session's usage: the totals cover the
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
+        // The session the surface now shows is the one `/compact` answers for.
+        self.publish_compaction_availability().await;
 
         Ok(crate::session::resolver::hydrate_transcript_messages(
             &entries,
@@ -880,6 +958,9 @@ where
         // The attach starts a new session's usage: the totals cover the
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
+        // The session the surface now shows is the one `/compact` answers for: a
+        // rehydrated session that ends in its compaction says so at once.
+        self.publish_compaction_availability().await;
 
         let (statuses, turns) = (facts.status_map(), &facts.turns);
         Ok(crate::session::resolver::hydrate_transcript_messages(
@@ -1426,6 +1507,43 @@ impl AgentConversationRuntime {
 // endregion: --- Constructors
 
 // region:    --- Support
+
+impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager<InnerMemory = crate::session::CachedMemory>,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
+    /// Publish whether the compaction commands would do their work in the session
+    /// now.
+    ///
+    /// One read, one publication: a surface derives each command's availability
+    /// from this fact, and both the sweep and the undo consult the same answer
+    /// before they dispatch. Recomputed where the answer changes — a session
+    /// switch, the end of a turn, and the end of a rewrite. A runtime with no
+    /// session attached publishes nothing.
+    ///
+    /// `&mut self` because the bus publication is the effect this method exists
+    /// for, and the borrow keeps the caller's future `Send` without demanding
+    /// `Sync` from every manager a runtime is generic over.
+    async fn publish_compaction_availability(&mut self) {
+        let Some(session_id) = self.final_session_id.as_deref() else {
+            return;
+        };
+        let facts = command_availability(
+            self.session.inner_memory(),
+            session_id,
+            self.compaction.settings(),
+        )
+        .await;
+        let _ = self
+            .bus
+            .facts()
+            .publish(FactRecord::CommandAvailability(facts));
+    }
+}
 
 // endregion: --- Support
 

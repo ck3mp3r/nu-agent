@@ -17,6 +17,9 @@ mod lifecycle;
 #[path = "compaction/markdown.rs"]
 mod markdown;
 
+#[path = "compaction/stages.rs"]
+mod stages;
+
 #[path = "compaction/support.rs"]
 mod support;
 

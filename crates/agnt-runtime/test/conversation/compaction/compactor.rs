@@ -16,6 +16,9 @@ mod disabled;
 #[path = "compactor/failures.rs"]
 mod failures;
 
+#[path = "compactor/fit.rs"]
+mod fit;
+
 #[path = "compactor/model_swap.rs"]
 mod model_swap;
 
@@ -24,6 +27,9 @@ mod planning_spec;
 
 #[path = "compactor/splice.rs"]
 mod splice;
+
+#[path = "compactor/stages.rs"]
+mod stages;
 
 #[path = "compactor/support.rs"]
 mod support;

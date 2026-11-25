@@ -13,6 +13,6 @@ pub use agnt_kernel::bus::{LifecycleEvent, NarrationEvent};
 pub use agnt_kernel::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind,
     PermissionRecord, PromptRecord, PromptStamps, RequestId, SessionId, SessionLifecycle,
-    SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind, ToolName, ToolOutcome,
-    ToolRecord, ToolStatus, TurnRecord, Usage,
+    SessionRecord, StopCause, SummaryStage, ToolCall, ToolCallId, ToolErrorKind, ToolName,
+    ToolOutcome, ToolRecord, ToolStatus, TurnRecord, Usage,
 };

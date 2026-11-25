@@ -254,3 +254,26 @@ pub(super) fn text_model(text: &str) -> MockCompletionModel {
         MockStreamEvent::final_response_with_default_usage(),
     ]])
 }
+
+/// Seed the fixture's conversation with `messages`: the store a compaction reads.
+///
+/// The availability gate asks the sweep's own planner, and a session with no
+/// conversation has nothing to cut — a test that drives a real sweep must seed
+/// the content the sweep would summarize.
+pub(super) async fn seed_conversation(
+    fixture: &RuntimeFixture,
+    id: &str,
+    messages: &[crate::types::Message],
+) -> Result<()> {
+    let store = fixture
+        .runtime
+        .session
+        .inner_memory()
+        .rig_store(id)
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, id)?;
+    conversation.extend(messages.iter().cloned());
+    rig_memory::save(&*store, id, &mut conversation)?;
+    Ok(())
+}

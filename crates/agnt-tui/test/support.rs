@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::entry::TranscriptEntry;
-use agnt_runtime::bus::LifecycleEvent;
+use agnt_runtime::bus::{CommandFacts, CompactionAvailability, LifecycleEvent};
 use agnt_runtime::protocol::events::{
     CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NarrationEvent, NoticeKind,
-    PromptRecord, PromptStamps, SessionId, SessionLifecycle, SessionRecord, ToolCall, ToolOutcome,
-    ToolRecord, TurnRecord, Usage,
+    PromptRecord, PromptStamps, SessionId, SessionLifecycle, SessionRecord, SummaryStage, ToolCall,
+    ToolOutcome, ToolRecord, TurnRecord, Usage,
 };
 
 use crate::interaction::cancel::CancelController;
@@ -56,6 +56,18 @@ pub(crate) fn spine_turn_completed() -> LifecycleEvent {
 pub(crate) fn fold_turn_completed(state: &mut AppState) -> bool {
     let event = spine_turn_completed();
     reduce(state, RenderInput::Lifecycle(&event), None)
+}
+
+/// The pair the runtime publishes when both gated commands have work to do.
+///
+/// A surface offers `/compact` or `/uncompact` only after the runtime answers:
+/// the pre-fact default dims both. A test that drives a gated command therefore
+/// folds this pair first, as the runtime does when a session attaches.
+pub(crate) fn both_commands_available() -> CommandFacts {
+    CommandFacts {
+        compact: CompactionAvailability::Available,
+        uncompact: CompactionAvailability::Available,
+    }
 }
 
 /// The prompt record a surface submission produces.
@@ -244,17 +256,28 @@ pub(crate) fn compaction_started(source: CompactionSource) -> SessionRecord {
     SessionRecord::Compaction(CompactionRecord::Started { source })
 }
 
-/// One streamed compaction-summary delta.
-pub(crate) fn compaction_summary_chunk(
+/// One streamed compaction-summary delta of the pass the record names.
+pub(crate) fn compaction_summary_chunk_at(
     source: CompactionSource,
+    stage: SummaryStage,
     delta: impl Into<String>,
     aggregated: impl Into<String>,
 ) -> SessionRecord {
     SessionRecord::Compaction(CompactionRecord::SummaryChunk {
         source,
+        stage,
         delta: delta.into(),
         aggregated: aggregated.into(),
     })
+}
+
+/// One streamed compaction-summary delta of the history pass.
+pub(crate) fn compaction_summary_chunk(
+    source: CompactionSource,
+    delta: impl Into<String>,
+    aggregated: impl Into<String>,
+) -> SessionRecord {
+    compaction_summary_chunk_at(source, SummaryStage::History, delta, aggregated)
 }
 
 /// The record that finishes a compaction sweep.

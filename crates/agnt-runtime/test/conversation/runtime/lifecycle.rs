@@ -6,6 +6,11 @@ use super::*;
 use crate::session::management::{SessionPersistence, SessionState};
 use crate::session::prefix::dir_prefix;
 
+use agnt_kernel::bus::{CommandFacts, CompactionAvailability, FactRecord};
+use agnt_kernel::{CompactionRecord, NoticeKind, SessionRecord};
+
+use crate::conversation::compaction::availability::{NOTHING_TO_SUMMARIZE, NOTHING_TO_UNDO};
+
 /// Seed the rig-memory store of `id` with `messages`, then write the state
 /// records so the session's `meta.json` listing carries the message count.
 async fn seed_session(
@@ -121,10 +126,17 @@ async fn run_compaction_without_a_session_is_a_noop() -> Result<()> {
     Ok(())
 }
 
+/// WHEN `/compact` runs on a session holding no conversation, THEN THE runtime
+/// SHALL publish the pair that says a sweep would cut nothing and SHALL answer
+/// the refusal notice, running no sweep at all: the gate and the sweep's own
+/// planner agree, so the command the surface dims and the answer it prints are
+/// one truth.
 #[tokio::test]
 async fn run_compaction_on_an_empty_session_is_a_noop() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: a runtime attached to an empty in-memory conversation.
     let mut fixture = make_runtime(text_model("unused"))?;
+    let mut rows = fixture.runtime.bus.stream().subscribe();
+    let mut facts = fixture.runtime.bus.facts().subscribe();
 
     // -- Exec
     fixture
@@ -133,7 +145,37 @@ async fn run_compaction_on_an_empty_session_is_a_noop() -> Result<()> {
         .await
         .map_err(|e| format!("compaction of an empty session must succeed: {e}"))?;
 
-    // -- Check
+    // -- Check: the pair the gate read says neither command has work.
+    assert_eq!(
+        facts.try_recv()?,
+        FactRecord::CommandAvailability(CommandFacts {
+            compact: CompactionAvailability::Unavailable(NOTHING_TO_SUMMARIZE.to_string()),
+            uncompact: CompactionAvailability::Unavailable(NOTHING_TO_UNDO.to_string()),
+        }),
+        "an empty session publishes the both-dim pair"
+    );
+
+    // -- Check: the refusal is the notice, and no sweep started.
+    let mut records = Vec::new();
+    while let Ok(record) = rows.try_recv() {
+        records.push(record);
+    }
+    assert_eq!(records.len(), 1, "the refusal answers once: {records:?}");
+    assert!(
+        matches!(
+            &records[0],
+            SessionRecord::Notice(notice)
+                if notice.kind == NoticeKind::Warning && notice.text == NOTHING_TO_SUMMARIZE
+        ),
+        "the refusal publishes the pair's reason as a warning: {records:?}"
+    );
+    assert!(
+        !records.iter().any(|record| matches!(
+            record,
+            SessionRecord::Compaction(CompactionRecord::Started { .. })
+        )),
+        "no sweep ran: {records:?}"
+    );
     assert_eq!(fixture.runtime.current_session_id(), Some("test-session"));
     Ok(())
 }

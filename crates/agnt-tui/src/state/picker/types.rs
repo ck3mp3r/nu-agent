@@ -35,6 +35,11 @@ pub enum PickerSortKeyPart {
 pub trait PickerItem: Clone {
     fn display(&self) -> String;
     fn id(&self) -> String;
+    /// Whether the selection may land on this row, and whether accepting it
+    /// submits. A row that cannot act is still drawn; only the walk steps over it.
+    fn selectable(&self) -> bool {
+        true
+    }
     fn matches_query(&self, query: &str) -> bool {
         let q = query.to_ascii_lowercase();
         fuzzy_matches(&q, &self.display().to_ascii_lowercase())
@@ -62,6 +67,12 @@ impl PickerItem for PickerOption {
     }
     fn id(&self) -> String {
         self.id.clone()
+    }
+    fn selectable(&self) -> bool {
+        match &self.payload {
+            PickerPayload::Slash { available, .. } => *available,
+            _ => true,
+        }
     }
     fn matches_query(&self, query: &str) -> bool {
         let q = query.to_ascii_lowercase();
@@ -96,7 +107,13 @@ pub enum PickerPayload {
     },
     Theme,
     Command(CommandPaletteAction),
-    Slash(SlashCommand),
+    /// A slash command as the list was built, with the availability the runtime
+    /// published then. The drawer asks the live fact for the row's style; the
+    /// stored one decides whether navigation and the accept may land on it.
+    Slash {
+        command: SlashCommand,
+        available: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,24 +193,34 @@ impl<T: PickerItem> PickerState<T> {
         self.filtered().get(self.selection).cloned()
     }
     pub fn move_up(&mut self) {
-        let len = self.filtered().len();
-        if len == 0 {
-            self.selection = 0;
-            return;
-        }
-        self.selection = if self.selection == 0 {
-            len.saturating_sub(1)
-        } else {
-            self.selection.saturating_sub(1)
-        };
+        self.step(false);
     }
     pub fn move_down(&mut self) {
-        let len = self.filtered().len();
+        self.step(true);
+    }
+    /// One line step over the filtered view, skipping the rows the selection may
+    /// not land on. The walk wraps, and its last step is the row it started from,
+    /// so a view where nothing is selectable keeps the selection where it was.
+    fn step(&mut self, forward: bool) {
+        let options = self.filtered();
+        let len = options.len();
         if len == 0 {
             self.selection = 0;
             return;
         }
-        self.selection = (self.selection + 1) % len;
+        let start = self.selection.min(len - 1);
+        for step in 1..=len {
+            let idx = if forward {
+                (start + step) % len
+            } else {
+                (start + len - (step % len)) % len
+            };
+            if options[idx].selectable() {
+                self.selection = idx;
+                return;
+            }
+        }
+        self.selection = start;
     }
     /// Move the selection one page up, clamped to the first row.
     pub fn move_page_up(&mut self) {
@@ -266,7 +293,7 @@ impl PickerPayload {
             Self::Session { .. } => "Session",
             Self::Theme => "Theme",
             Self::Command(_) => "Command",
-            Self::Slash(_) => "Slash",
+            Self::Slash { .. } => "Slash",
         }
     }
 }

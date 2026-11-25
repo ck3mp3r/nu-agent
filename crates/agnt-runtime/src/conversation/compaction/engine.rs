@@ -7,7 +7,7 @@
 use futures::StreamExt;
 
 use agnt_kernel::bus::{LifecycleEvent, NarrationEvent};
-use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
+use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord, SummaryStage};
 
 use rig::DynModel;
 use rig::completion::CompletionRequest;
@@ -34,6 +34,10 @@ pub(super) struct Wires<'a> {
 
 /// Stream `request` to `model` and return its validated text.
 ///
+/// `stage` names the pass the request belongs to, and every delta this call
+/// streams carries it: a split turn runs two passes into one block, and the
+/// records say which pass painted which text.
+///
 /// Every failure — the stream does not open, a stream item fails, the user
 /// cancels, or the folded answer cannot be compaction text — publishes
 /// `CompactionRecord::Failed` and returns the error.
@@ -42,6 +46,7 @@ pub(super) async fn stream_text(
     model: &DynModel<Completion>,
     request: CompletionRequest,
     source: CompactionSource,
+    stage: SummaryStage,
 ) -> Result<String, MemoryError> {
     // `DynModel::stream` opens the reply synchronously; a failure to open
     // (transport, auth, malformed request) surfaces here rather than as a
@@ -76,6 +81,7 @@ pub(super) async fn stream_text(
                             let _ = wires.stream.publish_text(SessionRecord::Compaction(
                                 CompactionRecord::SummaryChunk {
                                     source,
+                                    stage,
                                     delta: text.clone(),
                                     aggregated: aggregated.clone(),
                                 },
@@ -83,6 +89,7 @@ pub(super) async fn stream_text(
                             let _ = wires.narration.publish(
                                 NarrationEvent::CompactionSummaryChunk {
                                     source,
+                                    stage,
                                     delta: text,
                                     aggregated: aggregated.clone(),
                                 },

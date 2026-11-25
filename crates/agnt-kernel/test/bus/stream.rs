@@ -3,8 +3,8 @@
 
 use crate::bus::{Bus, ReceiveError};
 use crate::records::{
-    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, SessionRecord, TurnRecord,
-    Usage,
+    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, SessionRecord, SummaryStage,
+    TurnRecord, Usage,
 };
 
 use crate::test_support::Result;
@@ -104,6 +104,7 @@ async fn test_stream_text_burst_never_costs_an_event() -> Result<()> {
     });
     let summary_chunk = SessionRecord::Compaction(CompactionRecord::SummaryChunk {
         source: CompactionSource::Auto,
+        stage: SummaryStage::History,
         delta: "s".to_string(),
         aggregated: "s".to_string(),
     });

@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use agnt_runtime::bus::{FactRecord, McpServerUsability};
+use agnt_runtime::bus::{CommandFacts, CompactionAvailability, FactRecord, McpServerUsability};
 use agnt_runtime::llm::SessionCost;
+use agnt_runtime::protocol::slash::SlashCommand;
 
 use super::*;
 
@@ -12,6 +13,11 @@ pub struct StatusState {
     pub(crate) tokens: TokenUsage,
     pub(crate) identity: IdentityState,
     pub(crate) mcp: McpSkillsState,
+    /// Whether each gated command can run now: the runtime's answer, published as
+    /// one fact, and the one input every gated command's availability derives from
+    /// — so the row a surface offers and the refusal it prints cannot disagree
+    /// with the runtime it asks.
+    pub(crate) command_availability: CommandFacts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -203,9 +209,68 @@ impl StatusState {
                     .set_mcp_visible_tool_names_by_server_name(&server, names);
                 true
             }
+            FactRecord::CommandAvailability(facts) => {
+                let changed = self.command_availability != facts;
+                self.command_availability = facts;
+                changed
+            }
             FactRecord::WorkerPhase(_)
             | FactRecord::PermissionGate(_)
             | FactRecord::SessionUsage(_) => false,
         }
     }
 }
+
+// region:    --- Availability
+
+/// Whether a command can run now, and why not when it cannot.
+///
+/// The runtime ships the disposition; the reason is the runtime's own text,
+/// borrowed so the row a surface offers and the line a refusal prints are one
+/// sentence, not two copies of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Availability<'a> {
+    Available,
+    Unavailable(&'a str),
+}
+
+impl<'a> From<&'a CompactionAvailability> for Availability<'a> {
+    fn from(availability: &'a CompactionAvailability) -> Self {
+        match availability {
+            CompactionAvailability::Available => Self::Available,
+            CompactionAvailability::Unavailable(reason) => Self::Unavailable(reason),
+        }
+    }
+}
+
+/// Whether a command can run now, derived from the facts the surface holds.
+///
+/// A surface asks this before it offers a command's row and before it submits the
+/// command. A command that gains a gate adds one arm to the impl below; the row
+/// builders and every submit lane stay as they are.
+pub(crate) trait CommandAvailability {
+    fn availability<'a>(&self, status: &'a StatusState) -> Availability<'a>;
+}
+
+impl CommandAvailability for SlashCommand {
+    fn availability<'a>(&self, status: &'a StatusState) -> Availability<'a> {
+        match self {
+            // Each gated command reads its own field of the one pair the runtime
+            // publishes, so no row can disagree with the read it came from.
+            Self::Compact => Availability::from(&status.command_availability.compact),
+            Self::Uncompact => Availability::from(&status.command_availability.uncompact),
+            Self::Mcp
+            | Self::Help
+            | Self::Stats
+            | Self::Status
+            | Self::Models
+            | Self::Agent
+            | Self::New
+            | Self::Session
+            | Self::Theme
+            | Self::Skills => Availability::Available,
+        }
+    }
+}
+
+// endregion: --- Availability

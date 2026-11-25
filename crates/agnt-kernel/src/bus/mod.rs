@@ -34,8 +34,9 @@ pub use channel::{
 };
 pub use control::Control;
 pub use events::{
-    AgentEvent, CancelEvent, ControlCommand, FactRecord, LifecycleEvent, McpServerUsability,
-    NarrationEvent, PermissionGate, PromptStamps, SharedUiAction, WorkerPhase,
+    AgentEvent, CancelEvent, CommandFacts, CompactionAvailability, ControlCommand, FactRecord,
+    LifecycleEvent, McpServerUsability, NarrationEvent, PermissionGate, PromptStamps,
+    SharedUiAction, WorkerPhase,
 };
 pub use facts::Facts;
 pub use lifecycle::Lifecycle;

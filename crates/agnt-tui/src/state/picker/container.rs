@@ -5,8 +5,8 @@ use crate::interaction::input::Key;
 use crate::state::CommandPaletteAction;
 
 use super::types::{
-    ActivePicker, PickerContainer, PickerEntry, PickerKeyOutcome, PickerOption, PickerPayload,
-    PickerRenderKind, PickerState, SubmitAction, SwitchRequest,
+    ActivePicker, PickerContainer, PickerEntry, PickerItem, PickerKeyOutcome, PickerOption,
+    PickerPayload, PickerRenderKind, PickerState, SubmitAction, SwitchRequest,
 };
 
 impl Default for PickerContainer {
@@ -143,7 +143,7 @@ impl PickerContainer {
     pub fn selected_slash_label(&self) -> Option<String> {
         let opt = self.active_state()?.selected()?;
         match &opt.payload {
-            PickerPayload::Slash(command) => Some(command.label().to_string()),
+            PickerPayload::Slash { command, .. } => Some(command.label().to_string()),
             _ => None,
         }
     }
@@ -162,7 +162,7 @@ impl PickerContainer {
             | ActivePicker::Session
             | ActivePicker::Theme => Self::query_picker(entry, key, true),
             ActivePicker::InlineSlash => match key {
-                Key::Enter | Key::Tab => PickerKeyOutcome::Submit(SubmitAction::SlashAccept),
+                Key::Enter | Key::Tab => Self::accept_slash(entry),
                 Key::Esc => {
                     entry.state.close();
                     PickerKeyOutcome::Consumed(true)
@@ -227,6 +227,20 @@ impl PickerContainer {
             Key::Char(ch) if edit_query => {
                 entry.state.append_query_char(ch);
                 PickerKeyOutcome::Consumed(true)
+            }
+            _ => PickerKeyOutcome::Consumed(true),
+        }
+    }
+
+    /// The inline-slash accept: the row UNDER THE CURSOR decides. A row that can
+    /// act is submitted; a row that cannot does nothing — the picker stays open,
+    /// the selection stays on that row, nothing is queued, and the typed text
+    /// stays in the input. The accept never substitutes a neighbour: only the
+    /// walk moves the cursor, and it steps over the rows that cannot act.
+    fn accept_slash(entry: &PickerEntry) -> PickerKeyOutcome {
+        match entry.state.selected() {
+            Some(option) if option.selectable() => {
+                PickerKeyOutcome::Submit(SubmitAction::SlashAccept)
             }
             _ => PickerKeyOutcome::Consumed(true),
         }

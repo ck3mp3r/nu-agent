@@ -66,6 +66,8 @@ mod switching;
 mod tools;
 #[path = "runtime/turn.rs"]
 mod turn;
+#[path = "runtime/uncompact_gate.rs"]
+mod uncompact_gate;
 #[cfg(all(test, feature = "integration"))]
 #[path = "runtime/wiremock.rs"]
 mod wiremock_tests;

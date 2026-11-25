@@ -7,12 +7,12 @@ pub(super) use crate::interaction::reducer::{RenderInput, reduce};
 pub(super) use crate::state::{AppState, replay_records};
 pub(super) use crate::test_support::{
     compaction_completed, compaction_failed, compaction_started, compaction_summary_chunk,
-    entry_text,
+    compaction_summary_chunk_at, entry_text,
 };
 pub(super) use agnt_render::transcript::entry::TranscriptEntry;
 pub(super) use agnt_render::transcript::ir::MessageRole;
 pub(super) use agnt_render::transcript::ir::StyleHint;
-pub(super) use agnt_runtime::protocol::events::{CompactionSource, SessionRecord};
+pub(super) use agnt_runtime::protocol::events::{CompactionSource, SessionRecord, SummaryStage};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -46,6 +46,15 @@ pub(super) fn failed(source: CompactionSource, message: &str) -> SessionRecord {
 
 pub(super) fn chunk(source: CompactionSource, delta: &str, aggregated: &str) -> SessionRecord {
     compaction_summary_chunk(source, delta, aggregated)
+}
+
+pub(super) fn chunk_at(
+    source: CompactionSource,
+    stage: SummaryStage,
+    delta: &str,
+    aggregated: &str,
+) -> SessionRecord {
+    compaction_summary_chunk_at(source, stage, delta, aggregated)
 }
 
 /// Return raw markdown strings stored in all assistant markdown entries.

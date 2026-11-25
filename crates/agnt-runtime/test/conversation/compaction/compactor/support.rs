@@ -13,6 +13,7 @@ pub(super) use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
 
 pub(super) use rig::DynModel;
 pub(super) use rig::catalog::ModelSpec;
+pub(super) use rig::completion::CompletionRequest;
 pub(super) use rig::operation::Completion;
 pub(super) use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 pub(super) use rig_memory::{CompactionSettings, Store, summarized_in_log, summary_author};
@@ -121,7 +122,15 @@ pub(super) fn user_text(msg: &Message) -> String {
 pub(super) fn last_request_prompt(model: &MockCompletionModel) -> Result<String> {
     let requests = model.requests();
     let last = requests.last().ok_or("at least one request recorded")?;
-    let prompt = last.chat_history.last().ok_or("chat_history non-empty")?;
+    request_prompt(last)
+}
+
+/// Extract the last (prompt) message text from one recorded request.
+pub(super) fn request_prompt(request: &CompletionRequest) -> Result<String> {
+    let prompt = request
+        .chat_history
+        .last()
+        .ok_or("chat_history non-empty")?;
     match &**prompt {
         Message::User { content } => Ok(content
             .iter()

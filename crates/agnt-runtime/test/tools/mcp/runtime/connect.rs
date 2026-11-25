@@ -386,13 +386,17 @@ async fn connect_servers_records_no_failure_for_a_healthy_server() -> Result<()>
     ];
 
     // -- Exec
+    // The injected deadline covers the batch's handshakes, not just the
+    // silent one: a spawned `sh` stub answers in well under a second on an idle
+    // machine and over it under a full parallel run, so a tight deadline would
+    // record the healthy server as a failure.
     let runtime = crate::tools::mcp::runtime::connect_servers(
         &handle,
         &servers,
         Some(temp.path()),
         20_000,
         None,
-        std::time::Duration::from_millis(300),
+        std::time::Duration::from_secs(5),
     )
     .await
     .map_err(|e| format!("a silent server must not abort startup: {e}"))?;

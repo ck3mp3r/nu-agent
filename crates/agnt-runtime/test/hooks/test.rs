@@ -82,8 +82,8 @@ use agnt_kernel::ToolName;
 use agnt_kernel::bus::LifecycleEvent;
 use agnt_kernel::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, PermissionRecord,
-    RequestId as KernelRequestId, SessionRecord, ToolErrorKind, ToolOutcome, ToolRecord,
-    ToolSource, ToolStatus, TurnRecord, Usage,
+    RequestId as KernelRequestId, SessionRecord, SummaryStage, ToolErrorKind, ToolOutcome,
+    ToolRecord, ToolSource, ToolStatus, TurnRecord, Usage,
 };
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

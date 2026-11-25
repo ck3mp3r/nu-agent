@@ -12,7 +12,7 @@ use crate::config::{Config, PluginConfig, defaults};
 use crate::session::MemoryError;
 use crate::types::Message;
 
-use agnt_kernel::CompactionSource;
+use agnt_kernel::{CompactionSource, SummaryStage};
 
 use rig::DynModel;
 use rig::catalog::{Catalog, ModelSpec};
@@ -21,7 +21,7 @@ use rig::operation::Completion;
 use rig::providers::registry::{Format, ProviderId};
 use rig_memory::{CompactionPreparation, CompactionSettings, SummaryState};
 
-use super::engine;
+use super::{engine, summary};
 
 /// What a compaction that ran left behind.
 #[derive(Debug, Clone)]
@@ -413,34 +413,33 @@ impl NuCompactor {
         let history = if preparation.to_summarize.is_empty() {
             rig_memory::no_history(previous)
         } else {
-            let request = match rig_memory::summary_request(
-                &preparation.to_summarize,
-                (previous, ""),
-                spec,
-                None,
-            ) {
-                Ok(request) => request,
-                Err(e) => {
-                    let message = format!("Compaction request error: {e}");
-                    self.emit_failed(source, &message).await;
-                    return Err(MemoryError::backend(message));
-                }
-            };
-            self.complete(model, request, source).await?
+            let request = self
+                .request_or_fail(
+                    summary::history_request(
+                        &preparation.to_summarize,
+                        previous,
+                        "",
+                        spec,
+                        self.settings,
+                    ),
+                    source,
+                )
+                .await?;
+            self.complete(model, request, source, SummaryStage::History)
+                .await?
         };
         if preparation.turn_prefix.is_empty() {
             return Ok(history);
         }
-        let request =
-            match rig_memory::turn_prefix_request(&preparation.turn_prefix, "", spec, None) {
-                Ok(request) => request,
-                Err(e) => {
-                    let message = format!("Compaction request error: {e}");
-                    self.emit_failed(source, &message).await;
-                    return Err(MemoryError::backend(message));
-                }
-            };
-        let prefix = self.complete(model, request, source).await?;
+        let request = self
+            .request_or_fail(
+                summary::turn_prefix_request(&preparation.turn_prefix, "", spec, self.settings),
+                source,
+            )
+            .await?;
+        let prefix = self
+            .complete(model, request, source, SummaryStage::TurnPrefix)
+            .await?;
         Ok(rig_memory::merge_split_turn(&history, &prefix))
     }
 
@@ -473,8 +472,22 @@ impl NuCompactor {
         }
     }
 
+    /// `request`, or the failure it names: emits `CompactionRecord::Failed` and
+    /// answers the error.
+    async fn request_or_fail(
+        &self,
+        request: Result<CompletionRequest, summary::RequestError>,
+        source: CompactionSource,
+    ) -> Result<CompletionRequest, MemoryError> {
+        let request = request.map_err(|e| e.to_string());
+        if let Err(message) = &request {
+            self.emit_failed(source, message).await;
+        }
+        request.map_err(MemoryError::backend)
+    }
+
     /// Run one self-contained compaction call: stream `request` to `model` and
-    /// return its validated text.
+    /// return its validated text, with every delta it streams stamped `stage`.
     ///
     /// The summary engine sends the requests `prepare_compaction` asks for: the
     /// history summary, and a split turn's earlier part.
@@ -489,8 +502,9 @@ impl NuCompactor {
         model: &DynModel<Completion>,
         request: CompletionRequest,
         source: CompactionSource,
+        stage: SummaryStage,
     ) -> Result<String, MemoryError> {
-        engine::stream_text(self.wires(), model, request, source).await
+        engine::stream_text(self.wires(), model, request, source, stage).await
     }
 
     /// Emit the compaction pipeline's `Started` rows.

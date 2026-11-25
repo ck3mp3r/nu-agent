@@ -1,7 +1,7 @@
 //! Compaction narration contracts: the summary sweep bracket and its failure.
 
 use crate::bus::Bus;
-use crate::records::{CompactionRecord, CompactionSource, SessionRecord, TurnRecord};
+use crate::records::{CompactionRecord, CompactionSource, SessionRecord, SummaryStage, TurnRecord};
 
 use crate::test_support::Result;
 
@@ -29,6 +29,7 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
     bus.stream()
         .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
+            stage: SummaryStage::History,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
@@ -36,6 +37,7 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
     bus.stream()
         .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
+            stage: SummaryStage::History,
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))

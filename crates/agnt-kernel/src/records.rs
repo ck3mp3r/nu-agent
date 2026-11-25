@@ -483,6 +483,21 @@ pub enum CompactionSource {
     Manual,
 }
 
+/// Which pass of a split-turn compaction streamed a summary delta: the history
+/// summary, or the earlier part of the turn the cut splits.
+///
+/// A split turn runs both passes into one block. The history pass is the larger,
+/// primary text and the pass a surface paints; the turn-prefix pass is the
+/// secondary one, whose text reaches the block through the merged summary the
+/// completion carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryStage {
+    /// The history summary: the region the sweep replaces.
+    History,
+    /// The earlier part of the turn the cut splits.
+    TurnPrefix,
+}
+
 /// The compaction pipeline: the transcript-mutating sweep. A compaction that
 /// runs brackets its summary stream (`Started` … chunks … `Completed`); one
 /// that fails narrates `Failed` instead of `Completed`. The summary text is the
@@ -493,10 +508,11 @@ pub enum CompactionRecord {
     Requested { source: CompactionSource },
     /// The compaction sweep started.
     Started { source: CompactionSource },
-    /// One streamed delta of the compaction summary; `aggregated` accumulates
-    /// from the sweep start.
+    /// One streamed delta of the compaction summary; `stage` names the pass it
+    /// belongs to, and `aggregated` accumulates from that pass's start.
     SummaryChunk {
         source: CompactionSource,
+        stage: SummaryStage,
         delta: String,
         aggregated: String,
     },

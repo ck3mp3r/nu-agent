@@ -17,10 +17,11 @@ use rig::operation::Completion;
 use rig_memory::request_tokens;
 
 use agnt_kernel::bus::LifecycleEvent;
-use agnt_kernel::{CompactionRecord, CompactionSource, SessionRecord};
+use agnt_kernel::{CompactionRecord, CompactionSource, NoticeKind, NoticeRecord, SessionRecord};
 use agnt_storage::StorageError;
 
 use crate::bus::{LifecycleTx, Stream};
+use crate::conversation::compaction::NOTHING_TO_SUMMARIZE;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::anchor_meter::AnchorMeter;
 
@@ -309,9 +310,8 @@ fn store_refusal_text(error: &crate::session::MemoryError) -> String {
 /// worker command. The events after the request, the hook envelopes, and the
 /// store carry the source as text, so `compaction_source_text` derives it here
 /// once. `compact()` emits all `Started`/`SummaryChunk`/`Completed`/`Failed`
-/// events; this function emits a `Completed` with an empty summary when there
-/// was nothing to summarize, so the TUI still gets feedback that the `/compact`
-/// command ran.
+/// events; a sweep with nothing to summarize publishes a warning notice instead,
+/// because no compaction ran and no completion is owed.
 ///
 /// The conversation is read from the rig-memory store of the session, which is
 /// what a run loads at its start: the splice `compact()` makes IS the context
@@ -360,14 +360,14 @@ pub(crate) async fn run_compaction(
             Some(outcome.messages)
         }
         Ok(None) => {
-            let _ = stream.publish(SessionRecord::Compaction(CompactionRecord::Completed {
-                source: Some(source),
-                summary: String::new(),
+            // Nothing was summarized, so nothing completed: the completion a
+            // surface draws a block from would report a sweep that never ran.
+            // The notice is the honest record, and it is the same text the
+            // availability fact carries.
+            let _ = stream.publish(SessionRecord::Notice(NoticeRecord {
+                kind: NoticeKind::Warning,
+                text: NOTHING_TO_SUMMARIZE.to_string(),
             }));
-            let _ = lifecycle.publish(LifecycleEvent::CompactionCompleted {
-                source,
-                summary: String::new(),
-            });
             None
         }
         // `compact()` already emitted `Failed`; fall back to the full history so

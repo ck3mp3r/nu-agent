@@ -4,7 +4,7 @@
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 use agnt_kernel::{
     CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, PermissionRecord, RequestId,
-    SessionRecord, StopCause, TurnRecord, Usage,
+    SessionRecord, StopCause, SummaryStage, TurnRecord, Usage,
 };
 use agnt_runtime::bus::NarrationEvent;
 use agnt_runtime::protocol::event::PermissionDecision;
@@ -425,6 +425,7 @@ fn test_translator_compaction_summary_chunk_produces_none() -> Result<()> {
     // -- Setup & Fixtures
     let event = SessionRecord::Compaction(CompactionRecord::SummaryChunk {
         source: CompactionSource::Auto,
+        stage: SummaryStage::History,
         delta: "sum".to_string(),
         aggregated: "summary".to_string(),
     });

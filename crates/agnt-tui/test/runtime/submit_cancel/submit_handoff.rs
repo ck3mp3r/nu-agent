@@ -1,6 +1,7 @@
 use super::*;
 
 use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_runtime::bus::FactRecord;
 
 /// Idle startup does not show a spinner; a submit handoff keeps input editable
 /// and preserves the transcript preview.
@@ -79,8 +80,15 @@ async fn slash_commands_handoff() -> Result<()> {
     assert!(driver.state().prompt_items().is_empty());
     assert!(driver.state().transcript.entries().is_empty());
 
-    // -- Setup & Fixtures: /compact.
+    // -- Setup & Fixtures: /compact, with the runtime offering the command.
     let mut compact = RenderLoopDriver::new(120, 30);
+    assert!(
+        compact
+            .coordinator_mut()
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
     let script: Vec<DriveEvent> = "/compact"
         .chars()
         .map(|c| key(TerminalKey::Char(c)))
@@ -162,6 +170,13 @@ async fn immediate_slash_commands_do_not_set_busy_or_spinner() -> Result<()> {
     for command in ["/compact", "/mcp", "/help", "/status"] {
         // -- Setup & Fixtures
         let mut driver = RenderLoopDriver::new(120, 30);
+        assert!(
+            driver
+                .coordinator_mut()
+                .reduce_fact_record(FactRecord::CommandAvailability(
+                    crate::test_support::both_commands_available()
+                ))
+        );
         driver.coordinator_mut().textarea =
             ratatui_textarea::TextArea::new(vec![command.to_string()]);
 

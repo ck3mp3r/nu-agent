@@ -338,7 +338,12 @@ impl AppState {
                 search_text: c.label().to_string(),
                 section: None,
                 sort_key: Vec::new(),
-                payload: PickerPayload::Slash(c),
+                payload: PickerPayload::Slash {
+                    // The row carries the answer the list was built on, so the walk
+                    // and the accept never land on a command that cannot act.
+                    available: matches!(c.availability(&self.status), Availability::Available),
+                    command: c,
+                },
             })
             .collect();
     }

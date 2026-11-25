@@ -4,6 +4,8 @@
 use super::super::*;
 use super::*;
 
+use agnt_kernel::{CompactionRecord, NoticeKind};
+
 /// WHEN the decision crosses the threshold, THEN THE decision SHALL take the
 /// side-call: the request goes unpatched, no worker compaction is scheduled, and
 /// the summary waits for the executor's between-runs splice — which is what the
@@ -96,10 +98,13 @@ async fn side_call_lands_between_the_runs_and_the_next_load_sees_it() -> Result<
 }
 
 #[tokio::test]
-async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Result<()> {
-    // -- Setup & Fixtures
+async fn test_hook_chain_compaction_with_nothing_to_do_reports_a_notice_not_a_completion()
+-> Result<()> {
+    // -- Setup & Fixtures: an empty conversation, both lanes subscribed before the
+    // request so the refusal's records are seen.
     let fx = decide_fixture()?;
-    let mut rx = fx.bus.lifecycle().subscribe();
+    let mut stream_rx = fx.bus.stream().subscribe();
+    let mut lifecycle_rx = fx.bus.lifecycle().subscribe();
 
     // -- Exec
     let result = run_compaction(
@@ -117,24 +122,44 @@ async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Re
     )
     .await;
 
-    // -- Check
+    // -- Check: nothing was compacted.
     assert!(
         result.is_none(),
         "an empty conversation must return None (nothing to compact)"
     );
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .map_err(|_| "should receive Completed within timeout")?
-        .map_err(|_| "should receive Completed")?;
+
+    // -- Check: the surface is told in a warning notice, and no completion block
+    // is published for a sweep that never ran.
+    let mut notices = Vec::new();
+    let mut completions = 0;
+    while let Ok(record) = stream_rx.try_recv() {
+        match record {
+            SessionRecord::Notice(notice) => notices.push(notice),
+            SessionRecord::Compaction(CompactionRecord::Completed { .. }) => completions += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        completions, 0,
+        "a sweep with nothing to summarize SHALL NOT publish a completion"
+    );
+    let notice = notices
+        .first()
+        .ok_or("the surface must be told there was nothing to compact")?;
+    assert_eq!(notice.kind, NoticeKind::Warning, "the notice is a warning");
+    assert!(
+        notice.text.starts_with("Nothing to compact"),
+        "got {}",
+        notice.text
+    );
+
+    // -- Check: the spine carries no completion either.
     assert!(
         matches!(
-            &completed,
-            crate::bus::LifecycleEvent::CompactionCompleted {
-                source,
-                summary,
-            } if *source == CompactionSource::Manual && summary.is_empty()
+            lifecycle_rx.try_recv(),
+            Err(crate::bus::TryReceiveError::Empty)
         ),
-        "an empty conversation must emit Completed with empty summary, got {completed:?}"
+        "no compaction completed, so the spine SHALL hold no completion row"
     );
     Ok(())
 }

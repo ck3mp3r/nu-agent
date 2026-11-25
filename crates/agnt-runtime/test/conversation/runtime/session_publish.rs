@@ -11,6 +11,8 @@ use super::*;
 use crate::protocol::events::{LifecycleEvent, SessionLifecycle, SessionRecord};
 use crate::session::management::SessionState;
 
+use agnt_kernel::bus::{CommandFacts, CompactionAvailability, FactRecord};
+
 /// WHEN `new_session` mints a session, THE runtime SHALL publish exactly one
 /// `Started { hydrated: false }` record on the stream and exactly one
 /// `SessionStarted { hydrated: false }` on the lifecycle spine, both naming the
@@ -73,6 +75,40 @@ async fn new_session_publishes_the_started_record_and_the_spine_row() -> Result<
     assert!(
         lifecycle.try_recv().is_err(),
         "the mint publishes exactly one spine row"
+    );
+    Ok(())
+}
+
+/// WHEN `new_session` mints a session, THEN THE runtime SHALL publish the pair
+/// that says a sweep would cut nothing and no summary waits to be undone: a
+/// minted session holds no conversation, so a surface offers neither command,
+/// and the pair the session the runtime just left carried does not survive the
+/// switch.
+#[tokio::test]
+async fn new_session_publishes_the_both_dim_availability_pair() -> Result<()> {
+    // -- Setup & Fixtures: subscribe before the mint — facts are latest-wins and
+    // not replayed, so a later subscriber would see nothing.
+    let mut fixture = make_runtime(text_model("unused"))?;
+    let mut facts = fixture.runtime.bus.facts().subscribe();
+
+    // -- Exec
+    fixture.runtime.new_session();
+
+    // -- Check: the minted pair dims both commands.
+    let fact = facts
+        .try_recv()
+        .map_err(|e| format!("the mint must publish the availability pair: {e}"))?;
+    let FactRecord::CommandAvailability(pair) = fact else {
+        return Err(format!("expected the availability pair; got {fact:?}").into());
+    };
+    let CommandFacts { compact, uncompact } = pair;
+    assert!(
+        matches!(compact, CompactionAvailability::Unavailable(_)),
+        "a minted session has nothing to compact: {compact:?}"
+    );
+    assert!(
+        matches!(uncompact, CompactionAvailability::Unavailable(_)),
+        "a minted session has nothing to undo: {uncompact:?}"
     );
     Ok(())
 }

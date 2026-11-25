@@ -1,6 +1,9 @@
 //! The submit lanes: one typed submission, and the picker's accept.
 
-use crate::state::{ActivePicker, AppState, PromptFacts, SubmitAction, SwitchRequest};
+use crate::state::{
+    ActivePicker, AppState, Availability, CommandAvailability, PromptFacts, SubmitAction,
+    SwitchRequest,
+};
 use agnt_runtime::protocol::contracts::SharedUiAction;
 use agnt_runtime::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
 
@@ -14,7 +17,20 @@ pub(super) fn handle_submit(
         return false;
     }
 
-    match parse_slash_command(&submitted_text) {
+    let parsed = parse_slash_command(&submitted_text);
+    // A command that cannot run is refused here, before any lane takes it: the
+    // reason is the sentence the row carried, so a command the surface offers as
+    // unavailable is never a silent no-op. No command is named to gate it — the
+    // answer comes from the facts the surface holds.
+    if let SlashParseResult::Command(command) = &parsed
+        && let Availability::Unavailable(reason) = command.availability(&state.status)
+    {
+        let reason = reason.to_string();
+        state.status.message.set_warning(reason);
+        return true;
+    }
+
+    match parsed {
         SlashParseResult::Command(agnt_runtime::protocol::slash::SlashCommand::Models) => {
             state.queue_launch_request(SharedUiAction::Models);
             return true;

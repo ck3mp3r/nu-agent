@@ -1,5 +1,6 @@
 use super::*;
 use crate::interaction::input::Key;
+use agnt_runtime::bus::FactRecord;
 
 /// PgUp/PgDn page the selection 8 rows in every picker kind, clamped to the
 /// first and last row instead of wrapping; single-row moves stay one row.
@@ -130,8 +131,16 @@ fn picker_page_moves_clamp_on_short_and_filtered_lists() -> Result<()> {
 /// None of them leak to the transcript.
 #[test]
 fn inline_slash_line_moves_share_the_picker_key_set() -> Result<()> {
-    // -- Setup & Fixtures: the canonical slash list (`/compact` … `/skills`).
+    // -- Setup & Fixtures: the canonical slash list (`/compact` … `/skills`), with
+    // both gated commands offered so every row can receive the selection.
     let mut state = AppState::default();
+    assert!(
+        state
+            .status
+            .reduce_fact_record(FactRecord::CommandAvailability(
+                crate::test_support::both_commands_available()
+            ))
+    );
     state.check_inline_slash("/");
     assert_eq!(
         state

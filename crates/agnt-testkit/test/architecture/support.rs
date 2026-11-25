@@ -102,7 +102,7 @@ pub const BASELINES: [(&str, &[&str]); 10] = [
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-tty/src/renderer/ui_renderer.rs:8: `RenderInput` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/interaction/reducer/fold.rs:25: `RenderInput` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:566: `TurnOutcome` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:582: `TurnOutcome` is declared 2 times in the workspace",
             "ARCH-4 agnt-runtime/src/orchestrator/turn_outcome.rs:12: `TurnOutcome` is declared 2 times in the workspace",
         ],
     ),

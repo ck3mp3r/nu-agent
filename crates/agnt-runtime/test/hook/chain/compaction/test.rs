@@ -6,6 +6,9 @@
 
 // region:    --- Modules
 
+#[path = "availability.rs"]
+mod availability;
+
 #[path = "decide.rs"]
 mod decide;
 

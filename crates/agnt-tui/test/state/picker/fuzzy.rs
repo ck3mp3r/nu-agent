@@ -136,7 +136,10 @@ fn slash_row(command: SlashCommand) -> PickerOption {
         search_text: label,
         section: None,
         sort_key: Vec::new(),
-        payload: PickerPayload::Slash(command),
+        payload: PickerPayload::Slash {
+            command,
+            available: true,
+        },
     }
 }
 

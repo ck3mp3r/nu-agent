@@ -7,8 +7,8 @@
 use super::*;
 
 use agnt_runtime::protocol::events::{
-    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, StopCause, ToolCall,
-    ToolOutcome, ToolRecord, ToolStatus, Usage,
+    CompactionRecord, CompactionSource, InferenceId, InferenceRecord, StopCause, SummaryStage,
+    ToolCall, ToolOutcome, ToolRecord, ToolStatus, Usage,
 };
 
 /// WHEN the final text chunk and the turn's stop record are pending at one
@@ -361,10 +361,11 @@ fn tool_call(label: &str) -> ToolCall {
 }
 
 /// The text-lane record a compaction's summary stream emits: one delta carrying
-/// the whole summary so far.
+/// the whole summary so far, of the history pass.
 fn summary_chunk(aggregated: &str) -> SessionRecord {
     SessionRecord::Compaction(CompactionRecord::SummaryChunk {
         source: CompactionSource::Auto,
+        stage: SummaryStage::History,
         delta: aggregated.to_string(),
         aggregated: aggregated.to_string(),
     })

@@ -12,8 +12,8 @@ use agnt_kernel::bus::{
 use agnt_kernel::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind,
     NoticeRecord, PermissionDecision, PermissionRecord, PromptRecord, PromptStamps, RequestId,
-    SessionId, SessionLifecycle, SessionRecord, StopCause, ToolCall, ToolCallId, ToolErrorKind,
-    ToolOutcome, ToolRecord, ToolSource, ToolStatus, TurnRecord, Usage,
+    SessionId, SessionLifecycle, SessionRecord, StopCause, SummaryStage, ToolCall, ToolCallId,
+    ToolErrorKind, ToolOutcome, ToolRecord, ToolSource, ToolStatus, TurnRecord, Usage,
 };
 
 // region:    --- Tests
@@ -138,6 +138,7 @@ fn test_records_stream_vocabulary_covers_every_family() -> Result<()> {
         }),
         SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
+            stage: SummaryStage::History,
             delta: "sum".to_string(),
             aggregated: "sum".to_string(),
         }),
@@ -267,6 +268,7 @@ fn test_events_spine_narration_and_control_cover_every_family() -> Result<()> {
         },
         NarrationEvent::CompactionSummaryChunk {
             source: CompactionSource::Auto,
+            stage: SummaryStage::History,
             delta: "sum".to_string(),
             aggregated: "sum".to_string(),
         },
