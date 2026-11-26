@@ -5,9 +5,7 @@
 /// Engine stub for ACP mode.
 ///
 /// An ACP session has no Nushell engine: there is no span source and no closure
-/// evaluation. The stub supplies the session working directory — the only
-/// engine capability the runtime needs — and reports every other capability as
-/// unavailable.
-pub use agnt_runtime::tools::closure::CwdEngine as AcpEngineStub;
+/// evaluation. The stub reports every capability as unavailable.
+pub use agnt_runtime::tools::closure::NoopEvaluator as AcpEngineStub;
 
 // endregion: --- Types

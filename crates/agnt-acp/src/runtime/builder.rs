@@ -14,7 +14,7 @@ use agnt_runtime::conversation::state::memory::MemoryState;
 use agnt_runtime::conversation::state::{MultiAgentState, PersonaState, ProviderState, ToolState};
 use agnt_runtime::protocol::model_switching::ModelSwitching;
 use agnt_runtime::tools::authz::PermissionsConfig;
-use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use agnt_runtime::tools::closure::{ClosureEvaluator, ClosureRegistry};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::handler::builtin_tool::register_builtin;
 use agnt_runtime::tools::mcp::config::McpConfig;
@@ -222,8 +222,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         .map_err(|e| AcpError::Runtime(format!("failed to build compactor model: {e}")))?;
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
 
-    let engine: Arc<dyn EngineInterfaceLike> =
-        Arc::new(AcpEngineStub::new(cwd.to_string_lossy().to_string()));
+    let engine: Arc<dyn ClosureEvaluator> = Arc::new(AcpEngineStub);
 
     // -- Interactive permission bridge: ACP prompts the client, so the runtime
     // must publish `PermissionRecord::Requested` and await the bridge's decision.

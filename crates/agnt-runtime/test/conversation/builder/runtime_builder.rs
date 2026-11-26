@@ -8,7 +8,7 @@ use super::*;
 
 use crate::bus::Bus;
 use crate::conversation::builder::{AgentRuntimeBuilder, BuildInput};
-use crate::tools::closure::{ClosureParameter, ClosureRegistry, CwdEngine, ResolvedClosure};
+use crate::tools::closure::{ClosureParameter, ClosureRegistry, NoopEvaluator, ResolvedClosure};
 use crate::tools::handler::tree_sitter::GrammarStores;
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
@@ -92,7 +92,7 @@ async fn build_with(
         tool_server_handle: &handle,
         closure_registry: registry,
         cwd: cwd.clone(),
-        engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
+        engine: std::sync::Arc::new(NoopEvaluator),
         span: Span::unknown(),
         tool_timeout: Duration::from_secs(5),
         session: None,

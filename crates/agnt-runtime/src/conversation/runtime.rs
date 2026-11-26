@@ -8,7 +8,7 @@ use nu_protocol::{LabeledError, Span};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
-use crate::tools::closure::EngineInterfaceLike;
+use crate::tools::closure::ClosureEvaluator;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_kernel::bus::{
     CommandFacts, CompactionAvailability, FactRecord, LifecycleEvent, OneshotTx,
@@ -97,7 +97,7 @@ where
     tool_server_handle: rig::tool::server::ToolServerHandle,
     mcp_state: super::state::mcp::McpState,
     permission_state: super::state::permission::PermissionState,
-    engine: Arc<dyn EngineInterfaceLike>,
+    engine: Arc<dyn ClosureEvaluator>,
     final_session_id: Option<String>,
     cwd: PathBuf,
     /// The resolved application paths.
@@ -1239,7 +1239,7 @@ where
     ///
     /// The part is carried for the surfaces that execute Nu closures against it;
     /// no path in this crate reads it back.
-    pub fn engine(&self) -> Arc<dyn EngineInterfaceLike> {
+    pub fn engine(&self) -> Arc<dyn ClosureEvaluator> {
         Arc::clone(&self.engine)
     }
 

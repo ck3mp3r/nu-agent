@@ -1,7 +1,7 @@
 //! Inference and turn narration contracts: the sequence promises every
 //! producer of [`SessionRecord`]s must honor.
 
-use crate::bus::Bus;
+use crate::bus::Stream;
 use crate::records::{InferenceId, InferenceRecord, SessionRecord, StopCause, TurnRecord, Usage};
 
 use crate::test_support::Result;
@@ -11,31 +11,31 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_records_single_call_orders_usage_before_turn_completion() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let inference = InferenceId::mint();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Started {
             inference,
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             inference,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             inference,
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))
         .map_err(|e| format!("publish chunk b: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Completed {
             usage: Usage {
                 input_tokens: 1,
@@ -46,12 +46,12 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
             },
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 2,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut aggregate: Option<String> = None;
@@ -113,31 +113,31 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
 #[tokio::test]
 async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let inference = InferenceId::mint();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Started {
             inference,
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             inference,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             inference,
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))
         .map_err(|e| format!("publish chunk ab: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Completed {
             usage: Usage {
                 input_tokens: 2,
@@ -148,12 +148,12 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
             },
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 7,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();
@@ -204,35 +204,35 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
 #[tokio::test]
 async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let inference = InferenceId::mint();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Started {
             inference,
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             inference,
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Stopped {
             cause: StopCause::OutputRepetition,
             reason: "the assistant kept repeating the same output".to_string(),
         }))
         .map_err(|e| format!("publish stopped: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 4,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();

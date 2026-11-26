@@ -1,14 +1,10 @@
-use crate::types::ToolCall;
 use agnt_kernel::BuiltinKind;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::tools::authz::AskContext;
 
-use super::ToolSource;
 use super::builtin_tool::Previewable;
 use super::edit::EditTool;
-use super::resolve::resolve_fs_path_generic;
-use crate::tools::closure::EngineInterfaceLike;
 
 #[derive(Debug, Clone, Default)]
 pub struct PreAuthorizeOutput {
@@ -22,7 +18,7 @@ pub struct PreAuthorizeOutput {
 /// against the target file. No writes, no process spawn. `Some` means the gate
 /// has a card for this call; `preview` carries only the content a surface cannot
 /// derive from the call's own arguments (a `nu` command needs none).
-pub fn pre_authorize_fs_tool(
+pub(crate) fn pre_authorize_fs_tool(
     kind: Option<BuiltinKind>,
     arguments: &JsonMap<String, JsonValue>,
     cwd: &std::path::Path,
@@ -55,26 +51,6 @@ pub fn pre_authorize_fs_tool(
         },
         preview,
     })
-}
-
-pub fn pre_authorize_tool_call<E: EngineInterfaceLike>(
-    tool_call: &ToolCall,
-    source: ToolSource,
-    engine: &E,
-) -> PreAuthorizeOutput {
-    match source {
-        ToolSource::Closure | ToolSource::Builtin => {
-            let builtin_cwd = match resolve_fs_path_generic(".", engine) {
-                Ok(path) => path,
-                Err(_) => return PreAuthorizeOutput::default(),
-            };
-
-            let kind = tool_call.function.name.parse::<BuiltinKind>().ok();
-            pre_authorize_fs_tool(kind, &tool_call.function.arguments, &builtin_cwd)
-                .unwrap_or_default()
-        }
-        ToolSource::Mcp | ToolSource::Unknown => PreAuthorizeOutput::default(),
-    }
 }
 
 #[cfg(test)]

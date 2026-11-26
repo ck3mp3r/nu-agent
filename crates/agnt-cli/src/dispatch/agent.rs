@@ -15,7 +15,7 @@ use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
-use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
+use agnt_runtime::tools::closure::{ClosureEvaluator, ClosureRegistry, NoopEvaluator};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::config::McpConfig;
 use agnt_runtime::types::ToolServer;
@@ -212,7 +212,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
     // Signal bus shared by tool registration and the runtime.
     let bus = agnt_runtime::bus::Bus::default();
 
-    let engine = CwdEngine::shared(cwd.to_string_lossy().to_string());
+    let engine: Arc<dyn ClosureEvaluator> = Arc::new(NoopEvaluator);
 
     let () = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,

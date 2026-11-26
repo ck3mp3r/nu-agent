@@ -1,6 +1,6 @@
 //! Compaction narration contracts: the summary sweep bracket and its failure.
 
-use crate::bus::Bus;
+use crate::bus::Stream;
 use crate::records::{CompactionRecord, CompactionSource, SessionRecord, SummaryStage, TurnRecord};
 
 use crate::test_support::Result;
@@ -11,22 +11,22 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
-    let mut text_rx = bus.stream().subscribe_text();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
+    let mut text_rx = stream.subscribe_text();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Requested {
             source: CompactionSource::Auto,
         }))
         .map_err(|e| format!("publish requested: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Started {
             source: CompactionSource::Auto,
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
             stage: SummaryStage::History,
@@ -34,7 +34,7 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish_text(SessionRecord::Compaction(CompactionRecord::SummaryChunk {
             source: CompactionSource::Auto,
             stage: SummaryStage::History,
@@ -42,18 +42,18 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
             aggregated: "ab".to_string(),
         }))
         .map_err(|e| format!("publish chunk ab: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Completed {
             source: Some(CompactionSource::Auto),
             summary: "ab".to_string(),
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 3,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check: the event lane brackets the sweep, in order, with no deltas
     let mut tags: Vec<&str> = Vec::new();
@@ -165,16 +165,16 @@ async fn test_records_compaction_brackets_summary_stream() -> Result<()> {
 #[tokio::test]
 async fn test_records_uncompacted_is_a_terminal_row() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Uncompacted {
             source: CompactionSource::Manual,
         }))
         .map_err(|e| format!("publish uncompacted: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let record = rx.recv().await?;
@@ -194,32 +194,32 @@ async fn test_records_uncompacted_is_a_terminal_row() -> Result<()> {
 #[tokio::test]
 async fn test_records_compaction_failure_narrates_failed_not_completed() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Requested {
             source: CompactionSource::Manual,
         }))
         .map_err(|e| format!("publish requested: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Started {
             source: CompactionSource::Manual,
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Compaction(CompactionRecord::Failed {
             source: CompactionSource::Manual,
             message: "summary model unavailable".to_string(),
         }))
         .map_err(|e| format!("publish failed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 4,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();

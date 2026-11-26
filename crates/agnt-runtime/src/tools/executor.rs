@@ -1,5 +1,5 @@
 use super::audit::{AuditEntry, AuditLogger, AuditResult};
-use super::closure::EngineInterfaceLike;
+use super::closure::ClosureEvaluator;
 use super::handler::{ToolErrorKind, ToolHandlerError};
 use chrono::Utc;
 use nu_protocol::shell_error::generic::GenericError;
@@ -10,14 +10,14 @@ use tokio::time::timeout as tokio_timeout;
 
 #[derive(Clone)]
 pub struct ToolExecutor {
-    engine: Arc<dyn EngineInterfaceLike>,
+    engine: Arc<dyn ClosureEvaluator>,
     audit_logger: Arc<AuditLogger>,
     timeout: Duration,
 }
 
 impl ToolExecutor {
     pub fn new(
-        engine: Arc<dyn EngineInterfaceLike>,
+        engine: Arc<dyn ClosureEvaluator>,
         audit_logger: Arc<AuditLogger>,
         timeout: Duration,
     ) -> Self {
@@ -84,7 +84,7 @@ impl ToolExecutor {
                 let positional = args_clone;
                 let input = None;
 
-                // Call EngineInterfaceLike.eval_closure()
+                // Call ClosureEvaluator.eval_closure()
                 // This evaluates the closure in the plugin's engine context
                 engine
                     .eval_closure(&closure_clone, positional, input)
@@ -163,7 +163,7 @@ impl ToolExecutor {
         return_value
     }
 
-    pub fn engine(&self) -> &dyn EngineInterfaceLike {
+    pub fn engine(&self) -> &dyn ClosureEvaluator {
         self.engine.as_ref()
     }
 }

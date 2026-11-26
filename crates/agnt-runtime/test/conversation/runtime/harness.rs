@@ -24,7 +24,7 @@ use crate::conversation::state::tool::ToolState;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
-use crate::tools::closure::{ClosureRegistry, CwdEngine};
+use crate::tools::closure::{ClosureRegistry, NoopEvaluator};
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
@@ -194,7 +194,7 @@ where
             SessionGrantCache::default(),
             "test permissions summary".to_string(),
         ),
-        engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
+        engine: Arc::new(NoopEvaluator),
         final_session_id: Some("test-session".to_string()),
         cwd,
         paths: crate::test_support::paths_in(temp_dir.path()),

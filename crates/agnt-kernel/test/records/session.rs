@@ -1,6 +1,6 @@
 //! Session lifecycle narration contracts: identity, switches, and the close.
 
-use crate::bus::Bus;
+use crate::bus::Stream;
 use crate::records::{SessionId, SessionLifecycle, SessionRecord};
 
 use crate::test_support::Result;
@@ -10,42 +10,42 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_records_session_lifecycle_orders_start_switches_and_close() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let first = SessionId::new("s-1");
     let second = SessionId::new("s-2");
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Session(SessionLifecycle::Started {
             session_id: first.clone(),
             hydrated: true,
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Session(SessionLifecycle::AgentSwitched {
             from: None,
             to: "maker".to_string(),
         }))
         .map_err(|e| format!("publish agent switched: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Session(SessionLifecycle::ModelSwitched {
             from: "openai/gpt-5".to_string(),
             to: "anthropic/claude".to_string(),
         }))
         .map_err(|e| format!("publish model switched: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Session(SessionLifecycle::Switched {
             from: Some(first.clone()),
             to: second.clone(),
         }))
         .map_err(|e| format!("publish switched: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Session(SessionLifecycle::Ended {
             session_id: second.clone(),
         }))
         .map_err(|e| format!("publish ended: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();

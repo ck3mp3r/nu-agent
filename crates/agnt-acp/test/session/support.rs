@@ -200,8 +200,8 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         };
         let provider =
             ProviderState::with_client(config.clone(), CachedProviderClient::Mock(model));
-        let engine: Arc<dyn agnt_runtime::tools::closure::EngineInterfaceLike> =
-            Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string()));
+        let engine: Arc<dyn agnt_runtime::tools::closure::ClosureEvaluator> =
+            Arc::new(crate::AcpEngineStub);
         // The composed runtime gates on rig's `reserve_tokens` and the turn's own
         // spec, so the builder states how many tokens of that window the decision
         // must leave free for the count it wants to trip it.

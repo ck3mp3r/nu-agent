@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::bus::{
-    Bus, CommandFacts, CompactionAvailability, FactRecord, McpServerUsability, ReceiveError,
+    CommandFacts, CompactionAvailability, FactRecord, Facts, McpServerUsability, ReceiveError,
     WorkerPhase,
 };
 
@@ -15,16 +15,14 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_facts_lagged_prefix_folds_to_latest_state() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.facts().subscribe();
+    let facts = Facts::new();
+    let mut rx = facts.subscribe();
     const FLOOD: usize = 1_000;
 
     // -- Exec
     for i in 0..FLOOD {
-        let _ = bus
-            .facts()
-            .publish(FactRecord::ActiveModelIdentity(format!("model-{i}")));
-        let _ = bus.facts().publish(FactRecord::McpServerState {
+        let _ = facts.publish(FactRecord::ActiveModelIdentity(format!("model-{i}")));
+        let _ = facts.publish(FactRecord::McpServerState {
             server: "files".to_string(),
             state: if i % 2 == 0 {
                 McpServerUsability::Enabled
@@ -33,15 +31,13 @@ async fn test_facts_lagged_prefix_folds_to_latest_state() -> Result<()> {
             },
             error: None,
         });
-        let _ = bus
-            .facts()
-            .publish(FactRecord::WorkerPhase(if i + 1 == FLOOD {
-                WorkerPhase::Idle
-            } else {
-                WorkerPhase::Busy
-            }));
+        let _ = facts.publish(FactRecord::WorkerPhase(if i + 1 == FLOOD {
+            WorkerPhase::Idle
+        } else {
+            WorkerPhase::Busy
+        }));
     }
-    drop(bus);
+    drop(facts);
 
     // -- Check
     let mut models: Vec<String> = Vec::new();
@@ -102,16 +98,16 @@ async fn test_facts_lagged_prefix_folds_to_latest_state() -> Result<()> {
 #[tokio::test]
 async fn test_facts_under_capacity_arrive_complete() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.facts().subscribe();
+    let facts = Facts::new();
+    let mut rx = facts.subscribe();
 
     // -- Exec
     for i in 0..8 {
-        bus.facts()
+        facts
             .publish(FactRecord::ActiveModelIdentity(format!("model-{i}")))
             .map_err(|e| format!("facts should accept with a subscriber: {e:?}"))?;
     }
-    drop(bus);
+    drop(facts);
 
     // -- Check
     let mut seen: Vec<String> = Vec::new();

@@ -5,10 +5,8 @@ pub const ROWS: &[&str] = &[
     "ARCH-6 agnt-kernel/src/bus/channel.rs:64: `Metrics` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/channel.rs:74: `NoMetrics` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/events.rs:249: `WorkerPhase` has no consumer outside `agnt-kernel`",
-    "ARCH-6 agnt-kernel/src/bus/mod.rs:55: `Bus` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/ring.rs:119: `Ring` has no consumer outside `agnt-kernel`",
     "ARCH-6 agnt-kernel/src/bus/ring.rs:193: `Strict` has no consumer outside `agnt-kernel`",
-    "ARCH-6 agnt-kernel/src/records.rs:582: `TurnOutcome` has no consumer outside `agnt-kernel`",
 ];
 
 /// The impl-member rows: a `pub` member on a type this crate surfaces, with no

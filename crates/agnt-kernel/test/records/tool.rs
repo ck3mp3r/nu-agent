@@ -1,6 +1,6 @@
 //! Tool narration contracts: the call window bracket and its dispositions.
 
-use crate::bus::Bus;
+use crate::bus::Stream;
 use crate::records::{SessionRecord, ToolCall, ToolOutcome, ToolRecord, ToolStatus, TurnRecord};
 
 use crate::test_support::Result;
@@ -11,8 +11,8 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let first = ToolCall::new(
         "nu__shell",
         crate::ToolSource::Builtin,
@@ -30,12 +30,12 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
     );
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Started {
             call: first.clone(),
         }))
         .map_err(|e| format!("publish tool started a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Completed {
             call: first.clone(),
             outcome: ToolOutcome {
@@ -47,12 +47,12 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
             },
         }))
         .map_err(|e| format!("publish tool completed a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Started {
             call: second.clone(),
         }))
         .map_err(|e| format!("publish tool started b: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Completed {
             call: second.clone(),
             outcome: ToolOutcome {
@@ -64,12 +64,12 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
             },
         }))
         .map_err(|e| format!("publish tool completed b: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 9,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();
@@ -124,8 +124,8 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
 #[tokio::test]
 async fn test_records_denied_call_settles_cancelled_without_running() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let call = ToolCall::new(
         "nu__shell",
         crate::ToolSource::Builtin,
@@ -133,12 +133,12 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
     );
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Started {
             call: call.clone(),
         }))
         .map_err(|e| format!("publish tool started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Completed {
             call: call.clone(),
             outcome: ToolOutcome {
@@ -150,12 +150,12 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
             },
         }))
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 3,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::bus::{Bus, LifecycleEvent, PromptStamps};
+use crate::bus::{Lifecycle, LifecycleEvent, PromptStamps};
 
 use crate::test_support::Result;
 
@@ -13,8 +13,8 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_lifecycle_spine_ordered_with_matching_task_ids() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.lifecycle().subscribe();
+    let lifecycle = Lifecycle::new();
+    let mut rx = lifecycle.subscribe();
     const TASKS: usize = 3;
     const ROUNDS: usize = 2_000;
 
@@ -29,22 +29,22 @@ async fn test_lifecycle_spine_ordered_with_matching_task_ids() -> Result<()> {
                 model: Some("m".to_string()),
                 agent: None,
             };
-            bus.lifecycle().publish(LifecycleEvent::PromptSubmitted {
+            lifecycle.publish(LifecycleEvent::PromptSubmitted {
                 text: format!("prompt-{round}"),
                 task_id: task_id.clone(),
                 stamps,
             })?;
-            bus.lifecycle().publish(LifecycleEvent::TurnStarted {
+            lifecycle.publish(LifecycleEvent::TurnStarted {
                 prompt: format!("prompt-{round}"),
                 task_id: task_id.clone(),
             })?;
-            bus.lifecycle().publish(LifecycleEvent::TurnCompleted {
+            lifecycle.publish(LifecycleEvent::TurnCompleted {
                 task_id,
                 duration_ms: 1,
             })?;
         }
     }
-    drop(bus);
+    drop(lifecycle);
 
     // -- Check
     let mut spine: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
@@ -106,10 +106,10 @@ async fn test_lifecycle_spine_ordered_with_matching_task_ids() -> Result<()> {
 #[test]
 fn test_lifecycle_publish_without_subscribers_reports_error() {
     // -- Setup & Fixtures
-    let bus = Bus::new();
+    let lifecycle = Lifecycle::new();
 
     // -- Exec & Check
-    let result = bus.lifecycle().publish(LifecycleEvent::TurnCompleted {
+    let result = lifecycle.publish(LifecycleEvent::TurnCompleted {
         task_id: None,
         duration_ms: 0,
     });

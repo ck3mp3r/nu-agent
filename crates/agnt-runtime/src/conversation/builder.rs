@@ -6,7 +6,7 @@ use nu_protocol::{LabeledError, Span};
 use crate::bus::Bus;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
-use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use crate::tools::closure::{ClosureEvaluator, ClosureRegistry, ClosureToolSpec};
 use crate::tools::executor::ToolExecutor;
 use crate::tools::handler::tree_sitter::GrammarStores;
 use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
@@ -424,11 +424,11 @@ pub fn assemble_tool_definitions(
         .names()
         .filter_map(|name| {
             let resolved = closure_registry.get(name)?;
-            Some(crate::tools::closure::closure_to_tool_definition(
-                name.clone(),
-                &resolved.params,
+            Some(ToolDefinition::try_from(ClosureToolSpec::new(
+                name.as_str(),
+                resolved.params.as_slice(),
                 None,
-            ))
+            )))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -498,7 +498,7 @@ pub struct BuildInput<'a> {
     pub tool_server_handle: &'a ToolServerHandle,
     pub closure_registry: &'a ClosureRegistry,
     pub cwd: PathBuf,
-    pub engine: Arc<dyn EngineInterfaceLike>,
+    pub engine: Arc<dyn ClosureEvaluator>,
     /// Span used for error labels (call.head in the binary).
     pub span: Span,
     pub tool_timeout: std::time::Duration,

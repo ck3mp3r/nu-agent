@@ -3,7 +3,7 @@
 use super::*;
 
 use crate::tools::audit::AuditLogger;
-use crate::tools::closure::{ClosureParameter, EngineInterfaceLike};
+use crate::tools::closure::{ClosureEvaluator, ClosureParameter};
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
 use std::sync::Mutex;
@@ -20,8 +20,8 @@ type TestResult<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// A scripted engine: `eval_closure` records every positional argument list it
 /// receives and returns the queued reply.
 ///
-/// `CwdEngine` cannot evaluate closures, so the adapter's real execution path is
-/// driven through this stand-in — the same `EngineInterfaceLike` seam the
+/// `NoopEvaluator` cannot evaluate closures, so the adapter's real execution
+/// path is driven through this stand-in — the same `ClosureEvaluator` seam the
 /// production `nu_plugin::EngineInterface` implements.
 struct RecordingEngine {
     reply: Mutex<Option<core::result::Result<Value, String>>>,
@@ -44,7 +44,7 @@ impl RecordingEngine {
     }
 }
 
-impl EngineInterfaceLike for RecordingEngine {
+impl ClosureEvaluator for RecordingEngine {
     fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
         Ok(Vec::new())
     }

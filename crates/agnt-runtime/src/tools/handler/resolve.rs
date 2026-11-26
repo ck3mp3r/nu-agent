@@ -1,5 +1,3 @@
-use super::{ToolErrorKind, ToolHandlerError};
-use crate::tools::closure::EngineInterfaceLike;
 use agnt_kernel::BuiltinKind;
 
 pub fn is_builtin_tool_name(tool_name: &str) -> bool {
@@ -13,19 +11,4 @@ pub fn resolve_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::
     } else {
         cwd.join(raw)
     }
-}
-
-/// Resolve `path` against the engine's current working directory. Generic
-/// over [`EngineInterfaceLike`] so tests can supply a stand-in engine; the
-/// real nu_plugin::EngineInterface satisfies the bound via its blanket impl.
-pub(crate) fn resolve_fs_path_generic<E: EngineInterfaceLike>(
-    path: &str,
-    engine: &E,
-) -> Result<std::path::PathBuf, ToolHandlerError> {
-    let cwd = engine.get_current_dir().map_err(|e| ToolHandlerError {
-        kind: ToolErrorKind::Other,
-        message: format!("Unable to resolve current working directory: {e}"),
-        details: None,
-    })?;
-    Ok(resolve_fs_path_for_cwd(path, std::path::Path::new(&cwd)))
 }

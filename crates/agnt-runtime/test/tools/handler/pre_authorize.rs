@@ -1,66 +1,41 @@
-use std::path::PathBuf;
-
-use nu_protocol::Span;
 use serde_json::json;
 
 use super::*;
-use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
-
-// Test-support nu_plugin::EngineInterface implementation. The real
-// EngineInterface cannot be constructed outside plugin context (see
-// tools/executor_test.rs for the in-tree precedent), so tests supply their
-// own `engine: EngineInterfaceLike` value. Production code is unaffected:
-// `EngineInterfaceLike` is blanket-impl'd for the real `EngineInterface`
-// and the functions take `impl` generics.
-struct TestEngine {
-    cwd: PathBuf,
-}
-
-impl EngineInterfaceLike for TestEngine {
-    fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
-        Err("span contents not needed by pre-authorize tests".to_string())
-    }
-
-    fn get_current_dir(&self) -> core::result::Result<String, String> {
-        Ok(self.cwd.to_string_lossy().to_string())
-    }
-}
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-fn make_tool_call(name: &str, arguments: serde_json::Value) -> Result<ToolCall> {
-    let tool_name = ToolName::new(name).map_err(|_| "tool name must not be empty")?;
-    Ok(ToolCall::new(
-        CallId::from_wire("test-id"),
-        ToolFunction::new(tool_name, arguments),
-    ))
-}
-
 #[test]
-fn test_pre_authorize_tool_call_nu_carries_no_producer_preview() -> Result<()> {
+fn test_pre_authorize_fs_tool_nu_carries_no_producer_preview() -> Result<()> {
     // -- Setup & Fixtures: a nu call whose command is in the arguments. The
     // code block a gate card shows is derived by the surface from that
-    // command, so the producer owes no preview for it.
-    let cases: Vec<(&str, serde_json::Value)> = vec![
+    // command, so the producer owes no preview for it. A nu call without a
+    // non-empty command has no card at all.
+    let cases: Vec<(&str, serde_json::Value, bool)> = vec![
         (
             "string command",
             json!({"command": "ls | where size > 1mb"}),
+            true,
         ),
-        ("missing command", json!({})),
-        ("non-string command", json!({"command": 42})),
+        ("missing command", json!({}), false),
+        ("non-string command", json!({"command": 42}), false),
     ];
 
     // -- Exec & Check
-    for (name, arguments) in cases {
-        let tool_call = make_tool_call("nu", arguments)?;
-        let output = pre_authorize_tool_call(
-            &tool_call,
-            ToolSource::Builtin,
-            &TestEngine {
-                cwd: PathBuf::from("/tmp"),
-            },
-        );
+    for (name, arguments, has_card) in cases {
+        let args = arguments
+            .as_object()
+            .ok_or("case arguments must be an object")?;
+        let output =
+            pre_authorize_fs_tool(Some(BuiltinKind::Nu), args, std::path::Path::new("/tmp"));
 
+        if !has_card {
+            assert!(
+                output.is_none(),
+                "case '{name}': a nu call without a command has no card"
+            );
+            continue;
+        }
+        let output = output.ok_or("a nu call with a command must carry a card")?;
         assert!(
             output.preview.is_none(),
             "case '{name}': nu carries no producer preview"
@@ -74,59 +49,24 @@ fn test_pre_authorize_tool_call_nu_carries_no_producer_preview() -> Result<()> {
 }
 
 #[test]
-fn test_pre_authorize_tool_call_edit_path_unchanged_missing_command() -> Result<()> {
-    // The edit path goes through pre_authorize_fs_tool, which returns None
-    // when the arguments do not form a valid apply plan. These arguments
-    // fail validation (search_replace without operation.search), so the
-    // unchanged None → default path runs without touching disk.
+fn test_pre_authorize_fs_tool_edit_path_unchanged_missing_command() -> Result<()> {
+    // The edit path returns None when the arguments do not form a valid
+    // apply plan. These arguments fail validation (no operation), so the
+    // unchanged None path runs without touching disk.
     // -- Setup & Fixtures
-    let tool_call = make_tool_call("edit", json!({"path": "nonexistent-file.txt"}))?;
+    let arguments = json!({"path": "nonexistent-file.txt"});
+    let args = arguments
+        .as_object()
+        .ok_or("edit arguments must be an object")?;
 
     // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: PathBuf::from("/tmp"),
-        },
-    );
+    let output = pre_authorize_fs_tool(Some(BuiltinKind::Edit), args, std::path::Path::new("/tmp"));
 
     // -- Check
     assert!(
-        output.preview.is_none(),
-        "edit path behavior must stay unchanged (no preview for a non-applicable edit)"
+        output.is_none(),
+        "edit path behavior must stay unchanged (no card for a non-applicable edit)"
     );
-    assert!(output.ask_context.preview.is_none());
-    Ok(())
-}
-
-#[test]
-fn test_pre_authorize_tool_call_source_defaults_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases = [
-        ("mcp source", ToolSource::Mcp),
-        ("unknown source", ToolSource::Unknown),
-    ];
-
-    // -- Exec & Check
-    for (name, source) in cases {
-        let tool_call = make_tool_call("nu", json!({"command": "ls"}))?;
-        let output = pre_authorize_tool_call(
-            &tool_call,
-            source,
-            &TestEngine {
-                cwd: PathBuf::from("/tmp"),
-            },
-        );
-        assert!(
-            output.preview.is_none(),
-            "case '{name}': display must be None"
-        );
-        assert!(
-            output.ask_context.preview.is_none(),
-            "case '{name}': ask_context must stay empty"
-        );
-    }
     Ok(())
 }
 
@@ -210,18 +150,16 @@ fn test_pre_authorize_fs_tool_edit_preview_table() -> Result<()> {
         if let Some(seed) = case.seed {
             std::fs::write(&target, seed)?;
         }
-        let tool_call = make_tool_call("edit", (case.build_args)(&target))?;
+        let arguments = (case.build_args)(&target);
+        let args = arguments
+            .as_object()
+            .ok_or("case arguments must be an object")?;
 
-        let output = pre_authorize_tool_call(
-            &tool_call,
-            ToolSource::Builtin,
-            &TestEngine {
-                cwd: tmp.path().to_path_buf(),
-            },
-        );
+        let output = pre_authorize_fs_tool(Some(BuiltinKind::Edit), args, tmp.path());
 
         match case.expected_diff {
             Some((removed, added)) => {
+                let output = output.ok_or("a valid edit plan must produce a card")?;
                 let preview = output
                     .preview
                     .ok_or("a valid edit plan must produce the proposed diff")?;
@@ -242,13 +180,8 @@ fn test_pre_authorize_fs_tool_edit_preview_table() -> Result<()> {
             }
             None => {
                 assert!(
-                    output.preview.is_none(),
-                    "case '{}': no diff to approve; pre-authorize must produce no preview",
-                    case.name
-                );
-                assert!(
-                    output.ask_context.preview.is_none(),
-                    "case '{}': ask_context must stay empty",
+                    output.is_none(),
+                    "case '{}': no diff to approve; pre-authorize must produce no card",
                     case.name
                 );
             }

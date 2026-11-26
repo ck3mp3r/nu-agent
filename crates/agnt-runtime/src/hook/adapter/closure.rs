@@ -4,7 +4,7 @@ use nu_protocol::{Span, Value};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use std::sync::Arc;
 
-use crate::tools::closure::{ClosureRegistry, ResolvedClosure};
+use crate::tools::closure::{ClosureRegistry, ClosureToolSpec, ResolvedClosure};
 use crate::tools::executor::ToolExecutor;
 use crate::tools::handler::{execution_error_for_kind, json_to_nu_value, nu_value_to_json};
 
@@ -42,11 +42,11 @@ impl ClosureToolAdapter {
         span: Span,
         max_tool_result_bytes: usize,
     ) -> Result<Self, EmptyToolName> {
-        let definition = crate::tools::closure::closure_to_tool_definition(
-            name.clone(),
-            &resolved.params,
+        let definition = ToolDefinition::try_from(ClosureToolSpec::new(
+            name.as_str(),
+            resolved.params.as_slice(),
             None,
-        )?;
+        ))?;
 
         Ok(Self {
             name,

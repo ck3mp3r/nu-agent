@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::bus::Bus;
-use crate::tools::closure::EngineInterfaceLike;
+use crate::tools::closure::ClosureEvaluator;
 
 use super::state::{MultiAgentState, PersonaState, ProviderState, ToolState};
 use crate::conversation::state::memory::MemoryState;
@@ -24,7 +24,7 @@ pub struct RuntimeParts {
     pub session: MemoryState,
     pub persona: PersonaState,
     pub multi: MultiAgentState,
-    pub engine: Arc<dyn EngineInterfaceLike>,
+    pub engine: Arc<dyn ClosureEvaluator>,
     pub bus: Bus,
 }
 

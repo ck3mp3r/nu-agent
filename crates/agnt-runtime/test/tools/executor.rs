@@ -38,7 +38,7 @@ impl MockEngine {
     }
 }
 
-impl EngineInterfaceLike for MockEngine {
+impl ClosureEvaluator for MockEngine {
     fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
         Ok(Vec::new())
     }

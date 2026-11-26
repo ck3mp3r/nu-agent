@@ -1,7 +1,7 @@
 //! Stream-contract tests: ordering on each lane, lag resync, zero retention,
 //! and the text lane's independence from the event lane.
 
-use crate::bus::{Bus, ReceiveError};
+use crate::bus::{ReceiveError, Stream};
 use crate::records::{
     CompactionRecord, CompactionSource, InferenceId, InferenceRecord, SessionRecord, SummaryStage,
     TurnRecord, Usage,
@@ -14,24 +14,24 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_stream_delivers_records_in_publish_order() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
-    let mut text_rx = bus.stream().subscribe_text();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
+    let mut text_rx = stream.subscribe_text();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Started {
             inference: InferenceId::mint(),
         }))
         .map_err(|e| format!("stream should accept with a subscriber: {e:?}"))?;
-    bus.stream()
+    stream
         .publish_text(SessionRecord::Inference(InferenceRecord::Chunk {
             inference: InferenceId::mint(),
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("the text lane should accept: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Completed {
             usage: Usage {
                 input_tokens: 1,
@@ -42,7 +42,7 @@ async fn test_stream_delivers_records_in_publish_order() -> Result<()> {
             },
         }))
         .map_err(|e| format!("stream should accept: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check: the event lane carries the discrete records alone, in order
     let first = rx
@@ -94,9 +94,9 @@ async fn test_stream_delivers_records_in_publish_order() -> Result<()> {
 #[tokio::test]
 async fn test_stream_text_burst_never_costs_an_event() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
-    let mut text_rx = bus.stream().subscribe_text();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
+    let mut text_rx = stream.subscribe_text();
     let chunk = SessionRecord::Inference(InferenceRecord::Chunk {
         inference: InferenceId::mint(),
         delta: "d".to_string(),
@@ -117,22 +117,18 @@ async fn test_stream_text_burst_never_costs_an_event() -> Result<()> {
         } else {
             summary_chunk.clone()
         };
-        let _ = bus.stream().publish_text(record);
+        let _ = stream.publish_text(record);
     }
     for index in 0..64 {
-        let _ = bus
-            .stream()
-            .publish(SessionRecord::Turn(TurnRecord::Completed {
-                duration_ms: index,
-            }));
-        let _ = bus
-            .stream()
-            .publish(SessionRecord::Compaction(CompactionRecord::Completed {
-                source: Some(CompactionSource::Auto),
-                summary: format!("summary {index}"),
-            }));
+        let _ = stream.publish(SessionRecord::Turn(TurnRecord::Completed {
+            duration_ms: index,
+        }));
+        let _ = stream.publish(SessionRecord::Compaction(CompactionRecord::Completed {
+            source: Some(CompactionSource::Auto),
+            summary: format!("summary {index}"),
+        }));
     }
-    drop(bus);
+    drop(stream);
 
     // -- Check: every event arrives, in order, with no lag
     for index in 0..64 {
@@ -183,14 +179,12 @@ async fn test_stream_text_burst_never_costs_an_event() -> Result<()> {
 #[test]
 fn test_stream_publish_without_subscribers_reports_error() {
     // -- Setup & Fixtures
-    let bus = Bus::new();
+    let stream = Stream::new();
 
     // -- Exec & Check
-    let result = bus
-        .stream()
-        .publish(SessionRecord::Inference(InferenceRecord::Started {
-            inference: InferenceId::mint(),
-        }));
+    let result = stream.publish(SessionRecord::Inference(InferenceRecord::Started {
+        inference: InferenceId::mint(),
+    }));
     assert!(
         result.is_err(),
         "a zero-subscriber ring should report the send failure"
@@ -204,8 +198,8 @@ async fn test_stream_lagged_consumer_resyncs_at_tail() -> Result<()> {
     // -- Setup & Fixtures
     // The stream ring capacity is 1024: 1026 publishes guarantee the
     // subscriber misses exactly the first two records.
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe_text();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe_text();
 
     // -- Exec
     for i in 0..1026 {
@@ -214,9 +208,9 @@ async fn test_stream_lagged_consumer_resyncs_at_tail() -> Result<()> {
             delta: i.to_string(),
             aggregated: i.to_string(),
         });
-        let _published = bus.stream().publish_text(record);
+        let _published = stream.publish_text(record);
     }
-    drop(bus);
+    drop(stream);
     let mut seen: Vec<String> = Vec::new();
     loop {
         match rx.recv().await {
@@ -262,31 +256,31 @@ async fn test_stream_lagged_consumer_resyncs_at_tail() -> Result<()> {
 #[tokio::test]
 async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
-    let mut text_rx = bus.stream().subscribe_text();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
+    let mut text_rx = stream.subscribe_text();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Started {
             inference: InferenceId::mint(),
         }))
         .map_err(|e| format!("publish started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish_text(SessionRecord::Inference(InferenceRecord::Chunk {
             inference: InferenceId::mint(),
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
-    bus.stream()
+    stream
         .publish_text(SessionRecord::Inference(InferenceRecord::Chunk {
             inference: InferenceId::mint(),
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))
         .map_err(|e| format!("publish chunk b: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Inference(InferenceRecord::Completed {
             usage: Usage {
                 input_tokens: 1,
@@ -297,12 +291,12 @@ async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<
             },
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 2,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check: the text lane's aggregates accumulate monotonically
     let mut aggregate: Option<String> = None;

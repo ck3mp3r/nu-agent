@@ -21,7 +21,7 @@ use agnt_runtime::hooks::HookAgentContext;
 use agnt_runtime::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
-use agnt_runtime::tools::{closure::EngineInterfaceLike, handler::McpToolRegistry};
+use agnt_runtime::tools::{closure::ClosureEvaluator, handler::McpToolRegistry};
 
 /// Run the `agent` command in pipeline mode.
 ///
@@ -35,7 +35,7 @@ pub(super) fn run_command(
     call: &EvaluatedCall,
     input: &Value,
 ) -> Result<Value, LabeledError> {
-    let engine_arc: Arc<dyn EngineInterfaceLike> = Arc::new(engine.clone());
+    let engine_arc: Arc<dyn ClosureEvaluator> = Arc::new(engine.clone());
 
     let cwd = std::path::PathBuf::from(engine.get_current_dir().map_err(|e| {
         LabeledError::new("Failed to resolve working directory")
@@ -100,7 +100,7 @@ pub(super) fn run_command(
     let tools_map = extract_tools_from_call(call)?;
     let mut closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
     for (name, closure) in tools_map {
-        let params = agnt_runtime::tools::closure::resolve_closure_params(&closure, engine);
+        let params = engine.resolve_closure_params(&closure);
         closure_registry.register(
             name,
             agnt_runtime::tools::closure::ResolvedClosure { closure, params },

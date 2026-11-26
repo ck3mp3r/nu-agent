@@ -9,7 +9,7 @@ use crate::conversation::runtime_parts::RuntimeParts;
 use crate::hooks::HookAgentContext;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
-use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use crate::tools::closure::{ClosureEvaluator, ClosureRegistry};
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::config::McpServerConfig;
 use crate::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
@@ -32,7 +32,7 @@ pub struct RuntimeBuildParams {
     pub mcp_caller_cwd: Option<std::path::PathBuf>,
     pub vault: Option<Arc<Vault>>,
     pub mcp_registry: McpToolRegistry,
-    pub engine: Arc<dyn EngineInterfaceLike>,
+    pub engine: Arc<dyn ClosureEvaluator>,
     /// The rig-memory store config the session's store is made from.
     pub rig: crate::session::RigStoreConfig,
     pub final_session_id: Option<String>,

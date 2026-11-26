@@ -214,7 +214,7 @@ the spec does not grant it, stop and report it.
 - ❌ NO: `pub(crate)` fields or `#[cfg(test)]` accessors to expose internal state for tests
 - ✅ YES: Design the public API so tests use the same methods as production code. If the API doesn't expose enough to verify a behavior, the API is missing a method.
 
-**The DI boundary is where the trait object lives.** `Arc<dyn RuntimeBuilder>` on `AcpSessionManager` is the same exception as `dyn EngineInterfaceLike` on `AgentRuntime` — it is the crate boundary, not internal code.
+**The DI boundary is where the trait object lives.** `Arc<dyn RuntimeBuilder>` on `AcpSessionManager` is the same exception as `dyn ClosureEvaluator` on `AgentRuntime` — it is the crate boundary, not internal code.
 
 ### What counts as production code
 
@@ -458,7 +458,7 @@ the dead code.
 
 - ❌ NO: `Box<dyn Trait>`, `&dyn Trait`, trait objects in internal code
 - ✅ YES: Generics with trait bounds `T: Trait`
-- ✅ EXCEPTION: nu-plugin API boundary, rig's `ModelHandle`/`ConversationMemory`, and crate-level DI boundaries (`dyn EngineInterfaceLike`, `dyn RuntimeBuilder`) can use dynamic dispatch (required by the framework or for testability)
+- ✅ EXCEPTION: nu-plugin API boundary, rig's `ModelHandle`/`ConversationMemory`, and crate-level DI boundaries (`dyn ClosureEvaluator`, `dyn RuntimeBuilder`) can use dynamic dispatch (required by the framework or for testability)
 - Follow SOLID principles throughout:
   - **S**ingle Responsibility: One reason to change
   - **O**pen/Closed: Open for extension, closed for modification

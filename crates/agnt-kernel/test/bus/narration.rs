@@ -1,6 +1,6 @@
 //! Narration-contract tests: order-critical with an oldest-droppable tail.
 
-use crate::bus::{Bus, NarrationEvent, ReceiveError};
+use crate::bus::{Narration, NarrationEvent, ReceiveError};
 use crate::records::InferenceId;
 
 use crate::test_support::Result;
@@ -11,19 +11,19 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_narration_lagged_consumer_keeps_receipt_order() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.narration().subscribe();
+    let narration = Narration::new();
+    let mut rx = narration.subscribe();
     const FLOOD: usize = 4_000;
 
     // -- Exec
     for i in 0..FLOOD {
-        let _ = bus.narration().publish(NarrationEvent::InferenceChunk {
+        let _ = narration.publish(NarrationEvent::InferenceChunk {
             inference: InferenceId::mint(),
             delta: i.to_string(),
             aggregated: i.to_string(),
         });
     }
-    drop(bus);
+    drop(narration);
 
     // -- Check
     let mut lagged_at_least_once = false;
@@ -75,19 +75,19 @@ async fn test_narration_lagged_consumer_keeps_receipt_order() -> Result<()> {
 #[tokio::test]
 async fn test_narration_under_capacity_arrives_complete() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.narration().subscribe();
+    let narration = Narration::new();
+    let mut rx = narration.subscribe();
 
     // -- Exec
-    bus.narration()
+    narration
         .publish(NarrationEvent::InferenceStarted)
         .map_err(|e| format!("narration should accept with a subscriber: {e:?}"))?;
-    bus.narration()
+    narration
         .publish(NarrationEvent::InferenceStopped {
             reason: "done".to_string(),
         })
         .map_err(|e| format!("narration should accept: {e:?}"))?;
-    drop(bus);
+    drop(narration);
 
     // -- Check
     let first = rx.recv().await.map_err(|e| format!("first: {e:?}"))?;

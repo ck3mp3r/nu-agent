@@ -1,6 +1,5 @@
-use super::{
-    ClosureParameter, EngineInterfaceLike, closure_to_tool_definition, resolve_closure_params,
-};
+use super::{ClosureEvaluator, ClosureParameter, ClosureToolSpec};
+use crate::types::ToolDefinition;
 use nu_protocol::{BlockId, Span, Spanned, engine::Closure};
 use serde_json::json;
 
@@ -10,14 +9,14 @@ struct MockEngine {
     source: String,
 }
 
-impl EngineInterfaceLike for MockEngine {
+impl ClosureEvaluator for MockEngine {
     fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
         Ok(self.source.as_bytes().to_vec())
     }
 }
 
 #[test]
-fn closure_to_tool_definition_table() -> Result<()> {
+fn tool_definition_from_closure_table() -> Result<()> {
     // -- Setup & Fixtures
     struct Case {
         name: &'static str,
@@ -31,7 +30,7 @@ fn closure_to_tool_definition_table() -> Result<()> {
     let cases = vec![
         Case {
             name: "no parameters",
-            params: super::parse_closure_parameters("{|| 42}"),
+            params: ClosureParameter::parse("{|| 42}"),
             description: Some("Returns 42"),
             expected_description: Some("Returns 42"),
             expected_properties: vec![],
@@ -39,7 +38,7 @@ fn closure_to_tool_definition_table() -> Result<()> {
         },
         Case {
             name: "one parameter",
-            params: super::parse_closure_parameters("{|x| $x * 2}"),
+            params: ClosureParameter::parse("{|x| $x * 2}"),
             description: Some("Double a number"),
             expected_description: Some("Double a number"),
             expected_properties: vec!["x"],
@@ -47,7 +46,7 @@ fn closure_to_tool_definition_table() -> Result<()> {
         },
         Case {
             name: "two parameters",
-            params: super::parse_closure_parameters("{|x, y| $x + $y}"),
+            params: ClosureParameter::parse("{|x, y| $x + $y}"),
             description: Some("Add two numbers"),
             expected_description: Some("Add two numbers"),
             expected_properties: vec!["x", "y"],
@@ -55,7 +54,7 @@ fn closure_to_tool_definition_table() -> Result<()> {
         },
         Case {
             name: "optional parameter",
-            params: super::parse_closure_parameters("{|x, y?| $x + ($y | default 0)}"),
+            params: ClosureParameter::parse("{|x, y?| $x + ($y | default 0)}"),
             description: None,
             expected_description: None,
             expected_properties: vec!["x", "y"],
@@ -82,11 +81,11 @@ fn closure_to_tool_definition_table() -> Result<()> {
 
     // -- Exec & Check
     for case in cases {
-        let tool_def = closure_to_tool_definition(
-            "tool".to_string(),
-            &case.params,
+        let tool_def = ToolDefinition::try_from(ClosureToolSpec::new(
+            "tool",
+            case.params.as_slice(),
             case.description.map(String::from),
-        )?;
+        ))?;
 
         assert_eq!(tool_def.name, "tool", "case '{}': name", case.name);
         match case.expected_description {
@@ -158,9 +157,10 @@ fn closure_to_tool_definition_table() -> Result<()> {
 
 #[test]
 fn uses_default_description_when_none_provided() -> Result<()> {
-    let params = super::parse_closure_parameters("{|x| $x}");
+    let params = ClosureParameter::parse("{|x| $x}");
 
-    let tool_def = closure_to_tool_definition("identity".to_string(), &params, None)?;
+    let tool_def =
+        ToolDefinition::try_from(ClosureToolSpec::new("identity", params.as_slice(), None))?;
 
     assert_eq!(tool_def.name, "identity");
     assert!(tool_def.description.starts_with("Nushell closure tool:"));
@@ -169,7 +169,7 @@ fn uses_default_description_when_none_provided() -> Result<()> {
 }
 
 #[test]
-fn parse_closure_parameters_table() {
+fn closure_parameter_parse_table() {
     // -- Setup & Fixtures
     type Case = (&'static str, &'static str, Vec<(&'static str, bool)>);
 
@@ -215,7 +215,7 @@ fn parse_closure_parameters_table() {
 
     // -- Exec & Check
     for (name, source, expected) in cases {
-        let params = super::parse_closure_parameters(source);
+        let params = ClosureParameter::parse(source);
         let expected: Vec<ClosureParameter> = expected
             .into_iter()
             .map(|(param_name, is_required)| ClosureParameter {
@@ -238,7 +238,7 @@ fn create_test_closure() -> Spanned<Closure> {
 }
 
 #[test]
-fn closure_to_tool_definition_takes_params_not_engine() -> Result<()> {
+fn tool_definition_from_closure_takes_params_not_engine() -> Result<()> {
     let params = vec![
         ClosureParameter {
             name: "city".to_string(),
@@ -249,7 +249,7 @@ fn closure_to_tool_definition_takes_params_not_engine() -> Result<()> {
             is_required: false,
         },
     ];
-    let def = closure_to_tool_definition("weather".to_string(), &params, None)?;
+    let def = ToolDefinition::try_from(ClosureToolSpec::new("weather", params.as_slice(), None))?;
     let schema: serde_json::Value = serde_json::from_str(&def.parameters.to_string())?;
     assert!(schema["properties"]["city"].is_object());
     assert!(
@@ -270,13 +270,13 @@ fn closure_to_tool_definition_takes_params_not_engine() -> Result<()> {
 #[test]
 fn resolve_closure_params_returns_empty_on_engine_error() {
     struct FailingEngine;
-    impl EngineInterfaceLike for FailingEngine {
+    impl ClosureEvaluator for FailingEngine {
         fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
             Err("no active call context".to_string())
         }
     }
     let closure = create_test_closure();
-    let params = resolve_closure_params(&closure, &FailingEngine);
+    let params = FailingEngine.resolve_closure_params(&closure);
     assert!(params.is_empty());
 }
 
@@ -286,7 +286,7 @@ fn resolve_closure_params_extracts_from_source() {
         source: "{|city_name: string| $city_name}".to_string(),
     };
     let closure = create_test_closure();
-    let params = resolve_closure_params(&closure, &engine);
+    let params = engine.resolve_closure_params(&closure);
     assert_eq!(params.len(), 1);
     assert_eq!(params[0].name, "city_name");
 }

@@ -25,7 +25,7 @@ use crate::config::{AgentsConfig, ModelConfig, PluginConfig, ProviderConfig, def
 use crate::session::management::SessionPersistence;
 use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
-use crate::tools::closure::{ClosureRegistry, CwdEngine};
+use crate::tools::closure::{ClosureRegistry, NoopEvaluator};
 use crate::tools::handler::McpToolRegistry;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -62,7 +62,7 @@ fn make_params(
         mcp_caller_cwd: None,
         vault: None,
         mcp_registry: McpToolRegistry::empty(),
-        engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
+        engine: std::sync::Arc::new(NoopEvaluator),
         rig: RigStoreConfig::new(store_type),
         final_session_id: None,
         base_permissions: PermissionsConfig::safe_defaults(true),

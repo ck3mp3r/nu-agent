@@ -2,12 +2,12 @@
 //!
 //! | concern | payload | delivery |
 //! |---|---|---|
-//! | [`stream`](Bus::stream) | `SessionRecord` | ordered, lossy under lag — event lane and text lane |
-//! | [`cancel`](Bus::cancel) | `CancelEvent` | subscribe-before-publish, never dropped |
-//! | [`control`](Bus::control) | `ControlCommand` | never dropped, ordered |
-//! | [`lifecycle`](Bus::lifecycle) | `LifecycleEvent` | ordered, complete |
-//! | [`narration`](Bus::narration) | `NarrationEvent` | ordered, oldest-droppable tail |
-//! | [`facts`](Bus::facts) | `FactRecord` | latest-wins, droppable |
+//! | [`stream`](Stream) | `SessionRecord` | ordered, lossy under lag — event lane and text lane |
+//! | [`cancel`](Cancel) | `CancelEvent` | subscribe-before-publish, never dropped |
+//! | [`control`](Control) | `ControlCommand` | never dropped, ordered |
+//! | [`lifecycle`](Lifecycle) | `LifecycleEvent` | ordered, complete |
+//! | [`narration`](Narration) | `NarrationEvent` | ordered, oldest-droppable tail |
+//! | [`facts`](Facts) | `FactRecord` | latest-wins, droppable |
 //!
 //! The generic mechanisms are private: the public consumable surface is the
 //! concern types themselves, named for behavior. Capacities live here, beside
@@ -47,69 +47,3 @@ pub use ring::{
 pub use stream::Stream;
 
 // endregion: --- Modules
-
-// region:    --- Types
-
-/// The kernel bus: the composition root of the six concerns.
-#[derive(Clone)]
-pub struct Bus {
-    stream: Stream,
-    cancel: Cancel,
-    control: Control,
-    lifecycle: Lifecycle,
-    narration: Narration,
-    facts: Facts,
-}
-
-impl Bus {
-    /// A bus with the standard capacities: stream 1024 on each lane, cancel 64,
-    /// narration 1024, facts 256; control and lifecycle are uncapped.
-    pub fn new() -> Self {
-        Self {
-            stream: Stream::new(),
-            cancel: Cancel::new(),
-            control: Control::new(),
-            lifecycle: Lifecycle::new(),
-            narration: Narration::new(),
-            facts: Facts::new(),
-        }
-    }
-
-    /// The record stream concern: the ordered session log, on two lanes.
-    pub fn stream(&self) -> &Stream {
-        &self.stream
-    }
-
-    /// The strict cancel concern.
-    pub fn cancel(&self) -> &Cancel {
-        &self.cancel
-    }
-
-    /// The control concern: commands addressed to the loop owner.
-    pub fn control(&self) -> &Control {
-        &self.control
-    }
-
-    /// The lifecycle concern: the ordered, complete turn spine.
-    pub fn lifecycle(&self) -> &Lifecycle {
-        &self.lifecycle
-    }
-
-    /// The narration concern: text for a human to read.
-    pub fn narration(&self) -> &Narration {
-        &self.narration
-    }
-
-    /// The facts concern: latest-wins snapshots of kernel state.
-    pub fn facts(&self) -> &Facts {
-        &self.facts
-    }
-}
-
-impl Default for Bus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// endregion: --- Types

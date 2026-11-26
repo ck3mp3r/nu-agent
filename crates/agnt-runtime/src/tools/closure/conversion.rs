@@ -2,17 +2,11 @@ use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 use nu_plugin::EngineInterface;
 use nu_protocol::{Span, Spanned, Value, engine::Closure};
 use serde_json::json;
-use std::sync::Arc;
 
-/// Trait to abstract engine interface for testing
-pub trait EngineInterfaceLike: Send + Sync {
+/// The closure contract the tool runtime depends on: read a closure's source
+/// span, then evaluate the closure with values.
+pub trait ClosureEvaluator: Send + Sync {
     fn get_span_contents(&self, span: Span) -> Result<Vec<u8>, String>;
-
-    /// Current working directory. Optional: only engines that can resolve a
-    /// cwd need to override it; the real nu_plugin::EngineInterface does.
-    fn get_current_dir(&self) -> Result<String, String> {
-        Err("current dir not available for this engine implementation".to_string())
-    }
 
     /// Evaluate a Nushell closure. Optional: only engines that can run
     /// closures need to override it; the real nu_plugin::EngineInterface does.
@@ -24,18 +18,34 @@ pub trait EngineInterfaceLike: Send + Sync {
     ) -> Result<Value, String> {
         Err("eval_closure not available for this engine implementation".to_string())
     }
+
+    /// Resolve closure parameters eagerly using the engine's span contents.
+    ///
+    /// This must be called with the original EngineInterface before cloning,
+    /// as cloned engines produce dead contexts where `get_span_contents` fails.
+    fn resolve_closure_params(&self, closure: &Spanned<Closure>) -> Vec<ClosureParameter> {
+        match self.get_span_contents(closure.span) {
+            Ok(bytes) => {
+                let source = String::from_utf8_lossy(&bytes).to_string();
+                ClosureParameter::parse(&source)
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to extract closure source for parameter resolution: {}. \
+                     Tool will have no parameters.",
+                    e
+                );
+                vec![]
+            }
+        }
+    }
 }
 
 /// Implementation for nu_plugin::EngineInterface
-impl EngineInterfaceLike for EngineInterface {
+impl ClosureEvaluator for EngineInterface {
     fn get_span_contents(&self, span: Span) -> Result<Vec<u8>, String> {
         self.get_span_contents(span)
             .map_err(|e| format!("Failed to get span contents: {e}"))
-    }
-
-    fn get_current_dir(&self) -> Result<String, String> {
-        self.get_current_dir()
-            .map_err(|e| format!("Failed to get current dir: {e}"))
     }
 
     fn eval_closure(
@@ -51,88 +61,101 @@ impl EngineInterfaceLike for EngineInterface {
 
 /// Engine stand-in for hosts without a Nushell engine (ACP, CLI).
 ///
-/// Such hosts have no span source and no closure evaluation. The stub supplies
-/// the working directory — the only engine capability the runtime needs — and
-/// reports every other capability as unavailable.
-pub struct CwdEngine {
-    cwd: String,
-}
+/// Such hosts have no span source and no closure evaluation, so the stub
+/// reports every capability as unavailable.
+#[derive(Default)]
+pub struct NoopEvaluator;
 
-impl CwdEngine {
-    /// Create a stub that reports `cwd` as the current working directory.
-    pub fn new(cwd: impl Into<String>) -> Self {
-        Self { cwd: cwd.into() }
-    }
-
-    /// Create a shared `CwdEngine` as a trait object.
-    pub fn shared(cwd: impl Into<String>) -> Arc<dyn EngineInterfaceLike> {
-        Arc::new(Self::new(cwd))
-    }
-}
-
-impl EngineInterfaceLike for CwdEngine {
+impl ClosureEvaluator for NoopEvaluator {
     fn get_span_contents(&self, _span: Span) -> Result<Vec<u8>, String> {
         Err("span contents are not available for this engine".to_string())
     }
+}
 
-    fn get_current_dir(&self) -> Result<String, String> {
-        Ok(self.cwd.clone())
+/// The resolved closure a [`ToolDefinition`] is derived from: its name, its
+/// pre-resolved parameters, and an optional description.
+///
+/// The spec is the local half of the conversion: `ToolDefinition` and `TryFrom`
+/// are both foreign, so the tuple the conversion reads has to name a local type.
+pub(crate) struct ClosureToolSpec<'a> {
+    name: &'a str,
+    params: &'a [ClosureParameter],
+    description: Option<String>,
+}
+
+impl<'a> ClosureToolSpec<'a> {
+    /// `name`, its pre-resolved `params`, and an optional `description`.
+    pub(crate) fn new(
+        name: &'a str,
+        params: &'a [ClosureParameter],
+        description: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            params,
+            description,
+        }
     }
 }
 
-/// Convert a Nushell closure to a rig-rs ToolDefinition with named parameters.
+/// A tool definition derived from a resolved Nushell closure.
 ///
-/// Takes pre-resolved parameters instead of extracting them from engine,
-/// avoiding the dead-context problem with cloned EngineInterface.
+/// Takes pre-resolved parameters instead of extracting them from an engine,
+/// avoiding the dead-context problem with a cloned `EngineInterface`.
 ///
 /// # Errors
 ///
-/// Returns [`EmptyToolName`] when `name` is empty.
-pub fn closure_to_tool_definition(
-    name: String,
-    params: &[ClosureParameter],
-    description: Option<String>,
-) -> Result<ToolDefinition, EmptyToolName> {
-    let desc = description.unwrap_or_else(|| format!("Nushell closure tool: {name}"));
+/// Returns [`EmptyToolName`] when the spec's name is empty.
+impl TryFrom<ClosureToolSpec<'_>> for ToolDefinition {
+    type Error = EmptyToolName;
 
-    if params.is_empty() {
-        return fallback_tool_definition(name, desc);
-    }
+    fn try_from(spec: ClosureToolSpec<'_>) -> Result<Self, Self::Error> {
+        let ClosureToolSpec {
+            name,
+            params,
+            description,
+        } = spec;
+        let desc = description.unwrap_or_else(|| format!("Nushell closure tool: {name}"));
 
-    let mut properties = serde_json::Map::new();
-    let mut required = Vec::new();
-
-    for param in params {
-        properties.insert(
-            param.name.clone(),
-            json!({
-                "type": "string",
-                "description": format!("Parameter: {}", param.name)
-            }),
-        );
-
-        if param.is_required {
-            required.push(param.name.clone());
+        if params.is_empty() {
+            return fallback_tool_definition(name, &desc);
         }
+
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        for param in params {
+            properties.insert(
+                param.name.clone(),
+                json!({
+                    "type": "string",
+                    "description": format!("Parameter: {}", param.name)
+                }),
+            );
+
+            if param.is_required {
+                required.push(param.name.clone());
+            }
+        }
+
+        let schema = json!({
+            "type": "object",
+            "properties": properties,
+            "required": required
+        });
+
+        Ok(Self {
+            annotations: ToolAnnotations::default(),
+            name: ToolName::new(name)?,
+            description: desc,
+            parameters: schema,
+        })
     }
-
-    let schema = json!({
-        "type": "object",
-        "properties": properties,
-        "required": required
-    });
-
-    Ok(ToolDefinition {
-        annotations: ToolAnnotations::default(),
-        name: ToolName::new(name)?,
-        description: desc,
-        parameters: schema,
-    })
 }
 
 fn fallback_tool_definition(
-    name: String,
-    description: String,
+    name: &str,
+    description: &str,
 ) -> Result<ToolDefinition, EmptyToolName> {
     let schema = json!({
         "type": "object",
@@ -143,7 +166,7 @@ fn fallback_tool_definition(
     Ok(ToolDefinition {
         annotations: ToolAnnotations::default(),
         name: ToolName::new(name)?,
-        description,
+        description: description.to_string(),
         parameters: schema,
     })
 }
@@ -154,70 +177,48 @@ pub struct ClosureParameter {
     pub is_required: bool,
 }
 
-/// Parse parameter names from closure source code.
-pub fn parse_closure_parameters(source: &str) -> Vec<ClosureParameter> {
-    let source = source.trim();
+impl ClosureParameter {
+    /// Parse parameter names from closure source code.
+    pub fn parse(source: &str) -> Vec<Self> {
+        let source = source.trim();
 
-    let after_brace = if let Some(pos) = source.find('{') {
-        source[pos + 1..].trim_start()
-    } else {
-        return vec![];
-    };
+        let after_brace = if let Some(pos) = source.find('{') {
+            source[pos + 1..].trim_start()
+        } else {
+            return vec![];
+        };
 
-    let rest = if let Some(r) = after_brace.strip_prefix('|') {
-        r
-    } else {
-        return vec![];
-    };
+        let rest = if let Some(r) = after_brace.strip_prefix('|') {
+            r
+        } else {
+            return vec![];
+        };
 
-    let param_str = if let Some(end) = rest.find('|') {
-        &rest[..end]
-    } else {
-        return vec![];
-    };
+        let param_str = if let Some(end) = rest.find('|') {
+            &rest[..end]
+        } else {
+            return vec![];
+        };
 
-    param_str
-        .split(',')
-        .map(|p| p.trim())
-        .filter(|p| !p.is_empty())
-        .map(|p| {
-            let name_part = p.split(':').next().unwrap_or(p).trim();
-            if let Some(name) = name_part.strip_suffix('?') {
-                ClosureParameter {
-                    name: name.trim().to_string(),
-                    is_required: false,
+        param_str
+            .split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .map(|p| {
+                let name_part = p.split(':').next().unwrap_or(p).trim();
+                if let Some(name) = name_part.strip_suffix('?') {
+                    Self {
+                        name: name.trim().to_string(),
+                        is_required: false,
+                    }
+                } else {
+                    Self {
+                        name: name_part.to_string(),
+                        is_required: true,
+                    }
                 }
-            } else {
-                ClosureParameter {
-                    name: name_part.to_string(),
-                    is_required: true,
-                }
-            }
-        })
-        .collect()
-}
-
-/// Resolve closure parameters eagerly using the engine's span contents.
-///
-/// This must be called with the original EngineInterface before cloning,
-/// as cloned engines produce dead contexts where `get_span_contents` fails.
-pub fn resolve_closure_params<E: EngineInterfaceLike>(
-    closure: &Spanned<Closure>,
-    engine: &E,
-) -> Vec<ClosureParameter> {
-    match engine.get_span_contents(closure.span) {
-        Ok(bytes) => {
-            let source = String::from_utf8_lossy(&bytes).to_string();
-            parse_closure_parameters(&source)
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to extract closure source for parameter resolution: {}. \
-                 Tool will have no parameters.",
-                e
-            );
-            vec![]
-        }
+            })
+            .collect()
     }
 }
 

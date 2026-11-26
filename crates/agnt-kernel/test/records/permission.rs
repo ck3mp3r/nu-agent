@@ -1,7 +1,7 @@
 //! Authorization narration contracts: the ask-path bracket, the policy path,
 //! and the notice surface.
 
-use crate::bus::Bus;
+use crate::bus::Stream;
 use crate::records::{
     AutoResolution, NoticeKind, NoticeRecord, PermissionDecision, PermissionRecord, RequestId,
     SessionRecord, ToolCall, ToolOutcome, ToolRecord, ToolStatus, TurnRecord,
@@ -15,8 +15,8 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let call = ToolCall::new(
         "nu__shell",
         crate::ToolSource::Builtin,
@@ -25,12 +25,12 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
     let request_id = RequestId::from_minted("req-1");
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Started {
             call: call.clone(),
         }))
         .map_err(|e| format!("publish tool started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Permission(PermissionRecord::Requested {
             request_id: request_id.clone(),
             call_id: call.id().clone(),
@@ -46,14 +46,14 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
             preview: Some("--- a/x\n+++ b/x\n".to_string()),
         }))
         .map_err(|e| format!("publish permission requested: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Permission(PermissionRecord::Decided {
             request_id: request_id.clone(),
             decision: PermissionDecision::Deny,
             rule_identity: "deny_rm".to_string(),
         }))
         .map_err(|e| format!("publish permission decided: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Completed {
             call: call.clone(),
             outcome: ToolOutcome {
@@ -65,12 +65,12 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
             },
         }))
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 2,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();
@@ -125,8 +125,8 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
 #[tokio::test]
 async fn test_records_policy_path_narrates_auto_resolution_without_request() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
     let call = ToolCall::new(
         "nu__shell",
         crate::ToolSource::Builtin,
@@ -134,12 +134,12 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
     );
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Started {
             call: call.clone(),
         }))
         .map_err(|e| format!("publish tool started: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Permission(PermissionRecord::AutoResolved {
             rule_identity: "allow_ls".to_string(),
             action: AutoResolution::Allow,
@@ -149,7 +149,7 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
             preview: None,
         }))
         .map_err(|e| format!("publish auto resolved: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Tool(ToolRecord::Completed {
             call: call.clone(),
             outcome: ToolOutcome {
@@ -161,12 +161,12 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
             },
         }))
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 6,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();
@@ -210,28 +210,28 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
 #[tokio::test]
 async fn test_records_notice_carries_enumerated_kind_and_content() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.stream().subscribe();
+    let stream = Stream::new();
+    let mut rx = stream.subscribe();
 
     // -- Exec
-    bus.stream()
+    stream
         .publish(SessionRecord::Notice(NoticeRecord {
             kind: NoticeKind::Warning,
             text: "conversation exceeds the context window".to_string(),
         }))
         .map_err(|e| format!("publish warning: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Notice(NoticeRecord {
             kind: NoticeKind::TurnError,
             text: "provider returned 500".to_string(),
         }))
         .map_err(|e| format!("publish turn error: {e:?}"))?;
-    bus.stream()
+    stream
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             duration_ms: 5,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
-    drop(bus);
+    drop(stream);
 
     // -- Check
     let mut notices: Vec<NoticeRecord> = Vec::new();

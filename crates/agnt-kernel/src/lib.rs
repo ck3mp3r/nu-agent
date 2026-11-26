@@ -18,7 +18,7 @@ pub use records::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceId, InferenceRecord, NoticeKind,
     NoticeRecord, PermissionDecision, PermissionRecord, PromptRecord, PromptStamps, RequestId,
     SessionId, SessionLifecycle, SessionRecord, StopCause, SummaryStage, ToolCall, ToolCallId,
-    ToolErrorKind, ToolOutcome, ToolRecord, ToolSource, ToolStatus, TurnOutcome, TurnRecord, Usage,
+    ToolErrorKind, ToolOutcome, ToolRecord, ToolSource, ToolStatus, TurnRecord, Usage,
 };
 
 // endregion: --- Modules

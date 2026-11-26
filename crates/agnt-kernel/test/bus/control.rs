@@ -1,6 +1,6 @@
 //! Control-contract tests: the never-dropped command fan-out.
 
-use crate::bus::{Bus, ControlCommand, ReceiveError};
+use crate::bus::{Control, ControlCommand, ReceiveError};
 
 use crate::test_support::Result;
 
@@ -10,13 +10,13 @@ use crate::test_support::Result;
 #[tokio::test]
 async fn test_control_never_dropped_under_flood() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let mut rx = bus.control().subscribe();
+    let control = Control::new();
+    let mut rx = control.subscribe();
     const FLOOD: usize = 10_000;
 
     // -- Exec
     for i in 0..FLOOD {
-        bus.control()
+        control
             .publish(ControlCommand::EnqueueExternalPrompt {
                 task_id: format!("task-{i}"),
                 prompt: format!("prompt-{i}"),
@@ -51,10 +51,10 @@ async fn test_control_never_dropped_under_flood() -> Result<()> {
 #[test]
 fn test_control_publish_without_subscribers_reports_error() {
     // -- Setup & Fixtures
-    let bus = Bus::new();
+    let control = Control::new();
 
     // -- Exec & Check
-    let result = bus.control().publish(ControlCommand::CompactionRequested {
+    let result = control.publish(ControlCommand::CompactionRequested {
         source: crate::records::CompactionSource::Auto,
     });
     assert!(
@@ -67,18 +67,18 @@ fn test_control_publish_without_subscribers_reports_error() {
 #[tokio::test]
 async fn test_control_delivers_past_a_dropped_subscriber() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
-    let dropped = bus.control().subscribe();
-    let mut live = bus.control().subscribe();
+    let control = Control::new();
+    let dropped = control.subscribe();
+    let mut live = control.subscribe();
 
     // -- Exec
     drop(dropped);
-    bus.control()
+    control
         .publish(ControlCommand::CompactionRequested {
             source: crate::records::CompactionSource::Manual,
         })
         .map_err(|e| format!("control should accept with a live subscriber: {e:?}"))?;
-    drop(bus);
+    drop(control);
 
     // -- Check
     let command = live
